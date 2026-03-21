@@ -1,0 +1,41 @@
+# Ignore node_modules directories
+frontend/node_modules/
+**/node_modules/
+
+# Ignore log files and logs
+npm-debug.log
+*.log
+*.tmp
+*.temp
+
+# Ignore version control directories
+.git
+.gitignore
+
+# Ignore cache directories
+__pycache__
+*.pyc
+.env
+.venv
+env/
+venv/
+.dist
+.build
+.coverage
+htmlcov
+.tox
+.nox
+.cache
+
+# Ignore temporary and system files
+.DS_Store
+Thumbs.db
+
+# Ignore Dockerfile and docker-compose.yml? No, we need them for the build.
+# But note: we are building from the current directory, so we need the Dockerfile and docker-compose.yml.
+# However, if we are using a remote Docker daemon, we might need to send them. We'll not ignore them.
+
+# Ignore any local environment files
+.env.local
+.env.development
+.env.production

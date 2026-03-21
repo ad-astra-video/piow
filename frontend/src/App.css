@@ -1,0 +1,80 @@
+.App {
+  text-align: center;
+}
+
+.App-header {
+  background-color: #282c34;
+  padding: 20px;
+  color: white;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.controls > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.controls label {
+  font-size: 1rem;
+}
+
+.controls select, .controls input[type="number"], .controls button {
+  padding: 5px;
+  font-size: 1rem;
+}
+
+.controls button {
+  background-color: #61dafb;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 10px 15px;
+}
+
+.controls button:hover {
+  background-color: #21a9cd;
+}
+
+.controls button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+  min-height: 20px;
+}
+
+.transcription {
+  margin-top: 20px;
+  max-height: 300px;
+  overflow-y: auto;
+  text-align: left;
+  width: 100%;
+  padding: 10px;
+  background-color: #f9f9f9;
+  border-radius: 4px;
+}
+
+audio {
+  margin-top: 20px;
+  width: 100%;
+  max-width: 500px;
+}
