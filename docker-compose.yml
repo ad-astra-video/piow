@@ -1,36 +1,80 @@
 services:
+  caddy:
+    image: caddy:latest
+    container_name: live-translation-app-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.template:/etc/caddy/Caddyfile.template
+      - ./start-caddy.sh:/start-caddy.sh
+      - ./frontend:/frontend
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - HOST_IP=${HOST_IP}
+      - HTTPS_EMAIL=${HTTPS_EMAIL}
+    command: ["/start-caddy.sh"]
+    depends_on:
+      - vllm
   backend:
     build: .
     ports:
       - "8000:8000"
+      - "40000-40100:40000-40100/udp"
+    sysctls:
+      - net.ipv4.ip_local_port_range=40000 40100
+    cap_add:
+      - SYS_ADMIN
     volumes:
       - ./backend:/app/backend
       - ./frontend:/app/frontend
+      - ./models:/models
     environment:
+      - DEBUG_AUDIO_WAV=1
       - PYTHONUNBUFFERED=1
+      # Host IP for SDP munging - CRITICAL for WebRTC in Docker
+      # Replaces container's internal IP with host IP in SDP responses
+      - HOST_IP=${HOST_IP:-127.0.0.1}
+      # ICE servers for WebRTC NAT traversal
+      # Default: Google STUN server
+      # For production, add TURN servers
+      - ICE_SERVERS=${ICE_SERVERS:-stun:stun.l.google.com:19302}
+      # TURN server configuration (optional, for complex NAT scenarios)
+      - TURN_SERVER=${TURN_SERVER:-}
+      - TURN_USERNAME=${TURN_USERNAME:-}
+      - TURN_PASSWORD=${TURN_PASSWORD:-}
     depends_on:
-      - vllm
-    
+      vllm:
+        condition: service_healthy
+    restart: unless-stopped
   vllm:
-    image: vllm/vllm-openai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
     ports:
-      - "8001:8001"
-    environment:
-      - VLLM_MODEL_ID=mistralai/Voxtral-Mini-4B-Realtime-2602
-      - VLLM_PORT=8001
-      - VLLM_HOST=0.0.0.0
-      - VLLM_API_KEY=token-abc123
-      - VLLM_ENABLE_REALTIME_MODE=True
-    command: [
-      "--model", "mistralai/Voxtral-Mini-4B-Realtime-2602",
-      "--host", "0.0.0.0",
-      "--port", "8001",
-      "--api-key", "token-abc123",
-      "--enforce-eager",
-      "--trust-remote-code"
-      ]
+      - "6000:6000"
+    ipc: "host"
+    command:
+      - "--model"
+      - "mistralai/Voxtral-Mini-4B-Realtime-2602"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "6000"
+      - "--gpu-memory-utilization"
+      - "0.90"
+      - "--max-model-len"
+      - "45500"
+      - "--kv-cache-dtype"
+      - "fp8"
+      - "--attention-backend"
+      - "TRITON_ATTN"
+      - "--compilation_config"
+      - '{"cudagraph_mode": "PIECEWISE"}'
+      - "--trust-remote-code"
     volumes:
-      - vllm_cache:/root/.cache/vllm
+      - vllm_models:/root/.cache
     deploy:
       resources:
         reservations:
@@ -38,6 +82,53 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-
+        limits:
+          cpus: "4.0"
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+  coturn:
+    image: coturn/coturn:latest
+    container_name: live-translation-app-coturn
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      - "40000-40100:40000-40100/udp"
+      - "40000-40100:40000-40100/tcp"
+    environment:
+      - TURN_SERVER_REALM=live-translation-app
+      - TURN_SERVER_USERNAME=turn_user
+      - TURN_SERVER_PASSWORD=turn_password_123
+      - EXTERNAL_IP=${HOST_IP:-127.0.0.1}
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      - "--realm=live-translation-app"
+      - "--listening-port=3478"
+      - "--tls-listening-port=5349"
+      - "--min-port=40000"
+      - "--max-port=40100"
+      - "--user=turn_user:turn_password_123"
+      - "--external-ip=${HOST_IP:-127.0.0.1}"
+      - "--listening-ip=0.0.0.0"
+      - "--no-cli"
+      - "--no-tls"
+      - "--no-dtls"
+      - "--fingerprint"
+      - "--no-loopback-peers"
+      - "--no-multicast-peers"
+      - "--verbose"
+    restart: unless-stopped
+    networks:
+      - default
 volumes:
-  vllm_cache:
+  vllm_models:
+  caddy_data:
+  caddy_config:

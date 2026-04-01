@@ -1,0 +1,212 @@
+# Live Translation App - Dual Platform System
+
+A real-time translation application with Chrome Extension and Web App, featuring Web3 authentication and crypto payments.
+
+## Features
+
+- 🌐 **Dual Platform**: Chrome Extension + Responsive Web App
+- 🔐 **Web3 Authentication**: Sign-In with Ethereum (SIWE) + Google OAuth
+- 💰 **Crypto Payments**: Accept USDC, BTC, ETH via Stripe Crypto
+- 🔄 **Real-time Sync**: Supabase Realtime for instant state synchronization
+- 📦 **Monorepo**: Turborepo-powered TypeScript monorepo
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    CLIENT LAYER                              │
+│  ┌─────────────────┐         ┌─────────────────────────┐    │
+│  │ Chrome Extension│         │      Web Application    │    │
+│  │  (Manifest V3)  │         │    (React + Vite)       │    │
+│  └─────────────────┘         └─────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   SHARED LIBRARIES                           │
+│  @lib/ui │ @lib/supabase │ @lib/web3 │ @lib/types          │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    SUPABASE                                  │
+│  Auth (SIWE + OAuth) │ Database │ Realtime │ Edge Functions │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    STRIPE                                    │
+│  Credit Cards │ Crypto (USDC/BTC/ETH) │ Subscriptions       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js 18+
+- pnpm 8+
+- Supabase CLI
+- MetaMask or compatible Web3 wallet
+
+### Installation
+
+```bash
+# Clone repository
+git clone https://github.com/your-org/live-translation-app.git
+cd live-translation-app
+
+# Install dependencies
+pnpm install
+
+# Copy environment variables
+cp .env.example .env
+# Edit .env with your Supabase and Stripe credentials
+
+# Start Supabase locally (optional)
+supabase start
+
+# Run database migrations
+pnpm db:migrate
+
+# Start development servers
+pnpm dev
+```
+
+### Development
+
+```bash
+# Run all apps in development mode
+pnpm dev
+
+# Run specific app
+pnpm dev:web      # Web app only
+pnpm dev:extension # Chrome extension only
+
+# Type checking
+pnpm typecheck
+
+# Linting
+pnpm lint
+
+# Testing
+pnpm test
+```
+
+## Project Structure
+
+```
+live-translation-app/
+├── apps/
+│   ├── chrome-extension/    # Chrome Extension (Manifest V3)
+│   ├── web-app/             # React Web Application
+│   └── api/                 # API routes (optional)
+├── packages/
+│   ├── ui/                  # Shared UI components
+│   ├── supabase/            # Supabase client & utilities
+│   ├── web3/                # Web3/SIWE authentication
+│   ├── types/               # Shared TypeScript types
+│   └── config/              # Shared configs (eslint, tsconfig)
+├── supabase/
+│   ├── migrations/          # Database migrations
+│   ├── functions/           # Supabase Edge Functions
+│   └── config.toml          # Supabase configuration
+├── backend/                 # Backend services
+└── infra/                   # Infrastructure (Terraform)
+```
+
+## Authentication
+
+### Ethereum Sign-In (SIWE)
+
+1. Connect your Web3 wallet (MetaMask, etc.)
+2. Sign the SIWE message to authenticate
+3. Supabase Edge Function verifies the signature
+4. Session is created and synced across platforms
+
+### Google OAuth
+
+1. Click "Sign in with Google"
+2. Complete OAuth flow via Supabase
+3. Session is created automatically
+
+## Payments
+
+### Supported Payment Methods
+
+- **Credit/Debit Cards**: Visa, Mastercard, American Express
+- **Cryptocurrency**: 
+  - USDC (Ethereum, Solana, Polygon)
+  - Bitcoin (BTC)
+  - Ethereum (ETH)
+
+### Subscription Plans
+
+| Plan | Monthly | Yearly | Features |
+|------|---------|--------|----------|
+| Free | $0 | $0 | 100 translations/month |
+| Pro | $9.99 | $99.99 | Unlimited + Audio output |
+| Enterprise | $49.99 | $499.99 | API access + SLA |
+
+## Chrome Extension
+
+### Installation (Development)
+
+1. Build the extension:
+   ```bash
+   pnpm --filter chrome-extension build
+   ```
+
+2. Load in Chrome:
+   - Open `chrome://extensions/`
+   - Enable "Developer mode"
+   - Click "Load unpacked"
+   - Select `apps/chrome-extension/dist`
+
+### Publishing to Chrome Web Store
+
+1. Create a ZIP of the `dist` folder
+2. Upload to [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)
+3. Complete the review process
+
+## Database Schema
+
+Key tables:
+- `users` - User accounts (email + Ethereum address)
+- `user_preferences` - Translation settings
+- `subscriptions` - Stripe subscription data
+- `transactions` - Payment history (including crypto)
+- `translations` - Translation history
+- `siwe_nonces` - SIWE authentication nonces
+
+## Security
+
+- **Row Level Security (RLS)** on all database tables
+- **Content Security Policy (CSP)** for extension and web app
+- **JWT tokens** with short expiry (1 hour)
+- **Refresh tokens** stored securely
+- **SIWE signatures** verified server-side
+
+## Documentation
+
+- [Technical Specification V2](docs/TECHNICAL_SPECIFICATION_V2.md)
+- [Supabase Setup Guide](docs/SUPABASE_SETUP.md)
+- [Chrome Extension Guide](docs/CHROME_EXTENSION_GUIDE.md)
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests and linting
+5. Submit a pull request
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details
+
+## Support
+
+For issues and questions:
+- GitHub Issues: https://github.com/your-org/live-translation-app/issues
+- Email: support@livetranslation.app

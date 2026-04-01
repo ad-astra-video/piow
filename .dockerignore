@@ -39,3 +39,6 @@ Thumbs.db
 .env.local
 .env.development
 .env.production
+
+# Ignore models folder
+models

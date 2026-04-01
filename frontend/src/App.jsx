@@ -1,32 +1,98 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './App.css';
 
-const WHIP_ENDPOINT = 'http://localhost:8000/whip';
-const WS_ENDPOINT = 'ws://localhost:8000/ws';
+const WHIP_ENDPOINT = `${window.location.origin}/whip`;
+const WS_ENDPOINT = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
+
+// WHIP Client class
+class WHIPClient {
+    constructor(whipEndpoint) {
+        this.whipEndpoint = whipEndpoint;
+        this.pc = null;
+    }
+
+    async start(tracks) {
+        // Validate input tracks
+        if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
+            throw new Error('Invalid tracks parameter: expected non-empty array of MediaStreamTrack objects');
+        }
+        
+        // Validate each track is a MediaStreamTrack
+        for (let i = 0; i < tracks.length; i++) {
+            const track = tracks[i];
+            if (!(track instanceof MediaStreamTrack)) {
+                throw new Error(`Invalid track at index ${i}: expected MediaStreamTrack, got ${typeof track}`);
+            }
+            // Optional: check if track is ended
+            if (track.readyState === 'ended') {
+                throw new Error(`Track at index ${i} is already ended`);
+            }
+        }
+
+        this.pc = new RTCPeerConnection({
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        // Add tracks properly - create a MediaStream from the tracks
+        const mediaStream = new MediaStream(tracks);
+        mediaStream.getTracks().forEach(track => this.pc.addTrack(track, mediaStream));
+
+        // Create offer
+        const offer = await this.pc.createOffer();
+        await this.pc.setLocalDescription(offer);
+
+        // Send to WHIP endpoint via HTTP POST
+        const response = await fetch(this.whipEndpoint, {
+            method: 'POST',
+            body: this.pc.localDescription.sdp,
+            headers: {
+                'Content-Type': 'application/sdp'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`WHIP failed: ${response.status}`);
+        }
+
+        const answerSdp = await response.text();
+        const answer = new RTCSessionDescription({ type: 'answer', sdp: answerSdp });
+        await this.pc.setRemoteDescription(answer);
+        
+        return this.pc;
+    }
+
+    stop() {
+        if (this.pc) {
+            this.pc.getSenders().forEach(sender => sender.track.stop());
+            this.pc.close();
+            this.pc = null;
+        }
+    }
+}
 
 function App() {
-  const [sourceLang, setSourceLang] = useState('en');
-  const [targetLang, setTargetLang] = useState('es');
-  const [outputMode, setOutputMode] = useState('text');
-  const [temperature, setTemperature] = useState(0.7);
-  const [maxTokens, setMaxTokens] = useState(256);
-  const [status, setStatus] = useState('Ready.');
-  const [transcription, setTranscription] = useState('');
+  const [status, setStatus] = useState('Ready for live transcription.');
+  const [transcriptEntries, setTranscriptEntries] = useState([]);
+  const [partialTranscript, setPartialTranscript] = useState('');
   const [isStarted, setIsStarted] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const whipClientRef = useRef(null);
   const wsRef = useRef(null);
   const localStreamRef = useRef(null);
-  const outputAudioRef = useRef(null);
+  const isStartedRef = useRef(false);
+
+  useEffect(() => {
+    isStartedRef.current = isStarted;
+  }, [isStarted]);
 
   useEffect(() => {
     return () => {
-      // Cleanup on unmount
-      if (isStarted) {
-        stopTranslation();
+      if (isStartedRef.current) {
+        stopTranscription({ preserveStatus: false });
       }
     };
-  }, [isStarted]);
+  }, []);
 
   const createBlackVideoTrack = async () => {
     const canvas = document.createElement('canvas');
@@ -39,111 +105,11 @@ function App() {
     return stream.getVideoTracks()[0];
   };
 
-  const startTranslation = async () => {
-    if (isStarted) return;
+  const stopTranscription = ({ preserveStatus = false } = {}) => {
+    const wasStarted = isStartedRef.current;
 
-    try {
-      setStatus('Getting user media...');
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioTrack = audioStream.getAudioTracks()[0];
-
-      const videoTrack = await createBlackVideoTrack();
-
-      localStreamRef.current = new MediaStream([audioTrack, videoTrack]);
-      // Note: We don't have a local video preview in the React version for simplicity
-      // But we can add it if needed.
-
-      setStatus('Connecting to WHIP endpoint...');
-
-      // WHIP client logic (simplified, we'll create a class or use a hook)
-      // For brevity, we'll assume we have a WHIP client class or we'll inline the logic.
-      // Due to complexity, we'll note that this part needs to be implemented.
-      // We'll set a placeholder.
-
-      // In a real implementation, we would:
-      // 1. Create an RTCPeerConnection
-      // 2. Add the tracks
-      // 3. Create an offer and send to WHIP endpoint
-      // 4. Handle the answer
-
-      // For now, we'll simulate the connection and move to WebSocket.
-      // But note: the user might want the full functionality.
-
-      // Let's assume we have a whipClient that we start.
-      // We'll create a simple WHIP client class inside this function or use a ref.
-
-      // We'll create a WHIP client instance and start it.
-      // Since we don't have the full implementation, we'll skip to WebSocket for now.
-      // However, to keep the structure, we'll set a flag and then open WebSocket.
-
-      // We'll set a timeout to simulate the WHIP connection.
-      setTimeout(async () => {
-        setStatus('Connected. Opening WebSocket...');
-
-        // Open WebSocket for receiving translations
-        const ws = new WebSocket(WS_ENDPOINT);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          // Send configuration
-          const config = {
-            type: 'config',
-            sourceLang: sourceLang,
-            targetLang: targetLang,
-            outputMode: outputMode,
-            temperature: parseFloat(temperature),
-            maxTokens: parseInt(maxTokens, 10)
-          };
-          ws.send(JSON.stringify(config));
-          setStatus('WebSocket connected. Translation started.');
-          setIsStarted(true);
-        };
-
-        ws.onmessage = (event) => {
-          if (event.data instanceof Blob) {
-            // Audio data
-            if (outputMode === 'audio') {
-              const url = URL.createObjectURL(event.data);
-              outputAudioRef.current.src = url;
-              outputAudioRef.current.play();
-            }
-          } else {
-            // Text data
-            const message = JSON.parse(event.data);
-            if (message.type === 'translation') {
-              setTranscription(prev => prev + `<p><strong>${message.targetLang}:</strong> ${message.text}</p>`);
-            } else if (message.type === 'status') {
-              setStatus(message.text);
-            }
-          }
-        };
-
-        ws.onclose = () => {
-          setStatus('WebSocket disconnected');
-          if (isStarted) {
-            stopTranslation();
-          }
-        };
-
-        ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
-          setStatus('WebSocket error');
-        };
-      }, 2000); // Simulate delay for WHIP connection
-
-    } catch (err) {
-      console.error('Error starting translation:', err);
-      setStatus(`Error: ${err.message}`);
-      stopTranslation();
-    }
-  };
-
-  const stopTranslation = () => {
-    if (!isStarted) return;
-
+    isStartedRef.current = false;
     setIsStarted(false);
-
-    setStatus('Stopping...');
 
     if (whipClientRef.current) {
       whipClientRef.current.stop();
@@ -156,96 +122,211 @@ function App() {
     }
 
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
 
-    outputAudioRef.current.src = '';
-
-    setStatus('Stopped.');
+    setPartialTranscript('');
+    if (!preserveStatus && wasStarted) {
+      setStatus('Transcription stopped.');
+    }
   };
 
+  const startTranscription = async () => {
+    if (isStarted) return;
+
+    try {
+      setErrorMessage('');
+      setTranscriptEntries([]);
+      setPartialTranscript('');
+      setStatus('Getting user media...');
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioTrack = audioStream.getAudioTracks()[0];
+
+      const videoTrack = await createBlackVideoTrack();
+
+      localStreamRef.current = new MediaStream([audioTrack, videoTrack]);
+      // Note: We don't have a local video preview in the React version for simplicity
+      // But we can add it if needed.
+
+      setStatus('Connecting to WHIP endpoint...');
+
+      // Create WHIP client instance and start it
+      const whipClient = new WHIPClient(WHIP_ENDPOINT);
+      whipClientRef.current = whipClient;
+      
+      try {
+        const pc = await whipClient.start([audioTrack, videoTrack]);
+        setStatus('WHIP connected. Opening WebSocket...');
+
+        // Handle incoming tracks from WHIP (if needed)
+        pc.ontrack = (event) => {
+          console.log('Received track from WHIP:', event.track.kind);
+          // We could use this for remote video preview if we wanted to
+        };
+
+        // Open WebSocket for receiving transcriptions
+        setStatus('Connected. Opening WebSocket...');
+        const ws = new WebSocket(WS_ENDPOINT);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: 'config' }));
+          setStatus('Listening for speech...');
+          setIsStarted(true);
+          isStartedRef.current = true;
+        };
+
+        ws.onmessage = (event) => {
+          if (event.data instanceof Blob) {
+            return;
+          }
+
+          const message = JSON.parse(event.data);
+          if (message.type === 'transcription') {
+            const chunk = typeof message.text === 'string' ? message.text : '';
+            if (!chunk) {
+              return;
+            }
+
+            if (message.is_final) {
+              setTranscriptEntries((previous) => [...previous, chunk.trim()]);
+              setPartialTranscript('');
+            } else {
+              setPartialTranscript((previous) => `${previous}${chunk}`);
+            }
+            setStatus('Receiving live transcript...');
+          } else if (message.type === 'status') {
+            setStatus(message.text);
+          }
+        };
+
+        ws.onclose = () => {
+          if (isStartedRef.current) {
+            stopTranscription({ preserveStatus: true });
+            setStatus('WebSocket disconnected.');
+          }
+        };
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          setErrorMessage('Realtime connection failed. Check the backend and try again.');
+          setStatus('WebSocket error');
+        };
+      } catch (whipError) {
+        console.error('WHIP connection failed:', whipError);
+        setStatus(`WHIP connection failed: ${whipError.message}`);
+        setErrorMessage('Could not establish the WHIP session.');
+        // Clean up WHIP client if it failed
+        if (whipClientRef.current) {
+          whipClientRef.current.stop();
+          whipClientRef.current = null;
+        }
+        throw whipError;
+      }
+    } catch (err) {
+      console.error('Error starting transcription:', err);
+      setStatus(`Error: ${err.message}`);
+      setErrorMessage(err.message);
+      stopTranscription({ preserveStatus: true });
+    }
+  };
+
+  const transcriptCount = transcriptEntries.length + (partialTranscript ? 1 : 0);
+  const isLive = isStarted && !errorMessage;
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>Live Translation App</h1>
-        <div className="controls">
-          <div>
-            <label>Source Language:
-              <select value={sourceLang} onChange={(e) => setSourceLang(e.target.value)}>
-                <option value="en">English</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-                <option value="ja">Japanese</option>
-                <option value="zh">Chinese</option>
-              </select>
-            </label>
+    <div className="app-shell">
+      <div className="ambient ambient-left" />
+      <div className="ambient ambient-right" />
+
+      <main className={`page-grid ${isStarted ? 'session-active' : ''}`}>
+        <section className={`hero-panel panel-glass ${isStarted ? 'hero-panel-collapsed' : ''}`}>
+          <div className="hero-content">
+            <div className="hero-copy-block">
+              <p className="eyebrow">Realtime speech capture</p>
+              <h1>Live Transcript Studio</h1>
+              <p className="hero-copy">
+                Stream your microphone into Voxtral and watch the transcript build in real time.
+                This interface is tuned for a single job: fast, readable speech-to-text.
+              </p>
+
+              <p className="supports-line">
+                Supports: Arabic, Chinese, Dutch, English, French, German, Hindi, Italian, Japanese, Korean, Portuguese, Russian, Spanish.
+              </p>
+            </div>
+
+            <div className="hero-controls">
+              <div className="stat-strip compact-strip">
+                <article>
+                  <span>Mode</span>
+                  <strong>Transcription only</strong>
+                </article>
+                <article>
+                  <span>Entries</span>
+                  <strong>{transcriptCount}</strong>
+                </article>
+                <article>
+                  <span>Engine</span>
+                  <strong>Voxtral Realtime</strong>
+                </article>
+              </div>
+
+              <div className="hero-actions">
+                <button className="primary-button" onClick={startTranscription} disabled={isStarted}>
+                  {isStarted ? 'Listening…' : 'Start Session'}
+                </button>
+                <button className="secondary-button" onClick={() => stopTranscription()} disabled={!isStarted}>
+                  Stop Session
+                </button>
+              </div>
+            </div>
           </div>
-          <div>
-            <label>Target Language:
-              <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
-                <option value="es">Spanish</option>
-                <option value="en">English</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-                <option value="ja">Japanese</option>
-                <option value="zh">Chinese</option>
-              </select>
-            </label>
+
+          <div className="status-card">
+            <span className={`status-dot ${isLive ? 'live' : ''}`} />
+            <div>
+              <p className="status-label">Session status</p>
+              <p className="status-text">{status}</p>
+            </div>
           </div>
-          <div>
-            <label>Output Mode:
-              <select value={outputMode} onChange={(e) => setOutputMode(e.target.value)}>
-                <option value="text">Text</option>
-                <option value="audio">Audio</option>
-              </select>
-            </label>
+
+          {errorMessage ? <p className="error-banner">{errorMessage}</p> : null}
+        </section>
+
+        <section className={`transcript-panel panel-glass ${isStarted ? 'transcript-panel-expanded' : ''}`}>
+          <div className="panel-heading transcript-heading">
+            <div>
+              <p className="eyebrow">Output</p>
+              <h2>Transcript feed</h2>
+            </div>
+            <p className="transcript-note">Partial text stays live until the model finalizes the segment.</p>
           </div>
-          <div>
-            <label>Temperature:
-              <input
-                type="number"
-                min="0"
-                max="2"
-                step="0.1"
-                value={temperature}
-                onChange={(e) => setTemperature(parseFloat(e.target.value))}
-              />
-            </label>
+
+          <div className="transcript-scroll">
+            {transcriptEntries.length === 0 && !partialTranscript ? (
+              <div className="empty-state">
+                <p>No transcript yet.</p>
+                <span>Start a session, allow microphone access, and speak naturally.</span>
+              </div>
+            ) : null}
+
+            {transcriptEntries.map((entry, index) => (
+              <article className="transcript-entry" key={`${entry}-${index}`}>
+                <span className="entry-badge">Final</span>
+                <p>{entry}</p>
+              </article>
+            ))}
+
+            {partialTranscript ? (
+              <article className="transcript-entry partial-entry">
+                <span className="entry-badge">Live</span>
+                <p>{partialTranscript}</p>
+              </article>
+            ) : null}
           </div>
-          <div>
-            <label>Max Tokens:
-              <input
-                type="number"
-                value={maxTokens}
-                onChange={(e) => setMaxTokens(parseInt(e.target.value, 10))}
-              />
-            </label>
-          </div>
-          <div>
-            <button onClick={startTranslation} disabled={isStarted}>
-              Start Translation
-            </button>
-            <button onClick={stopTranslation} disabled={!isStarted}>
-              Stop Translation
-            </button>
-          </div>
-        </div>
-        <div className="status">
-          {status}
-        </div>
-        <div className="transcription" dangerouslySetInnerHTML={{ __html: transcription }} />
-        <audio
-          ref={outputAudioRef}
-          controls
-          autoPlay
-          style={{ display: outputMode === 'audio' ? 'block' : 'none' }}
-        />
-        {/* We can add video elements for local and remote video if needed */}
-        <video id="localVideo" muted playsInline style={{ display: 'none' }} />
-        <video id="remoteVideo" playsInline style={{ display: 'none' }} />
-      </header>
+        </section>
+      </main>
     </div>
   );
 }

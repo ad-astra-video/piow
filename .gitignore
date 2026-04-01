@@ -90,3 +90,5 @@ env/
 .npm
 .eslintcache
 .stylelintcache
+
+/models

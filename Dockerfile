@@ -1,4 +1,17 @@
-FROM python:3.11-slim
+# Build stage for frontend
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/frontend
+
+# Copy frontend package files
+COPY frontend/package*.json ./
+RUN npm ci
+
+# Copy frontend source and build
+COPY frontend/ ./
+RUN npm run build
+
+# Production stage
+FROM python:3.12-slim
 WORKDIR /app
 
 # Install Python dependencies
@@ -8,8 +21,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the backend source
 COPY backend/ ./backend/
 
-# Copy the pre-built frontend dist directory
-COPY frontend/dist/ ./frontend/dist/
+# Copy the built frontend dist directory from builder stage
+COPY --from=frontend-builder /app/frontend/dist/ ./frontend/dist/
 
 # Expose the port the backend runs on
 EXPOSE 8000
