@@ -15,6 +15,7 @@ from aiohttp import web, WSMsgType
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCConfiguration, RTCIceServer
 from aiortc.contrib.media import MediaRelay
 from vllm_client import VLLMRealtimeClient
+from supabase_client import supabase
 
 # Configuration
 VLLM_WS_URL = "ws://vllm:6000/v1/realtime"  # Adjust if VLLM runs on different port
@@ -591,9 +592,23 @@ async def init_app():
     app.router.add_get('/{path:.*}', static_file)
     app.router.add_post(WHIP_ENDPOINT, whip_handler.whip)
     app.router.add_get(WEBSOCKET_ENDPOINT, websocket_handler)
+    app.router.add_get("/health/supabase", supabase_health_check)
     return app
 
 whip_handler = WHIPHandler()
 
+
+async def supabase_health_check(request):
+    """Health check endpoint for Supabase connection."""
+    try:
+        # Check if we can get the supabase client
+        client = supabase
+        # We can do a simple query to check the connection, but let's just check if the client is initialized.
+        # To actually test the connection, we can try to fetch one row from a table (but we don't want to expose data).
+        # We'll try to select from the users table with limit 0.
+        result = client.table('users').select('id').limit(0).execute()
+        return web.json_response({'status': 'ok', 'message': 'Supabase connection successful'})
+    except Exception as e:
+        return web.json_response({'status': 'error', 'message': str(e)}, status=500)
 if __name__ == '__main__':
     web.run_app(init_app(), host='0.0.0.0', port=8000)
