@@ -14,6 +14,11 @@ import av
 from aiohttp import web, WSMsgType
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCConfiguration, RTCIceServer
 from aiortc.contrib.media import MediaRelay
+
+# Import transcription and translation endpoints
+from transcribe import setup_routes as setup_transcribe_routes
+from sessions import setup_routes as setup_sessions_routes
+
 from vllm_client import VLLMRealtimeClient
 from supabase_client import supabase
 
