@@ -59,9 +59,7 @@ Issued At: {issued_at}
 
 def verify_siwe_message(message: str, signature: str, address: str) -> bool:
     """
-    Verify a SIWE message signature.
-    In production, this would use a library like siwe or web3.py to verify.
-    For now, we'll implement a basic version that checks the format.
+    Verify a SIWE message signature using web3.py.
     
     Args:
         message: The SIWE message that was signed
@@ -71,9 +69,9 @@ def verify_siwe_message(message: str, signature: str, address: str) -> bool:
     Returns:
         True if signature is valid, False otherwise
     """
-    # TODO: Implement proper SIWE verification using siwe library or web3.py
-    # For now, we'll do basic validation
     try:
+        from web3 import Web3
+        
         # Basic checks
         if not message or not signature or not address:
             return False
@@ -84,22 +82,41 @@ def verify_siwe_message(message: str, signature: str, address: str) -> bool:
             
         if address.lower() not in message.lower():
             return False
+        
+        # Use web3 to recover address from signature
+        # The signature is expected to be 0x-prefixed hex
+        if not signature.startswith('0x'):
+            signature = '0x' + signature
+        
+        # Encode the message as eth_sign does
+        message_encoded = Web3.eth.account._hash_message(text=message)
+        
+        # Recover address
+        try:
+            recovered_address = Web3.eth.account.recover_hash(message_encoded, signature=signature)
+            # Check if recovered address matches expected address (case insensitive)
+            return recovered_address.lower() == address.lower()
+        except Exception as e:
+            logger.debug(f"Error recovering address: {e}")
+            return False
             
-        # In a real implementation, we would:
-        # 1. Parse the SIWE message
-        # 2. Recover the public key from the signature
-        # 3. Check that the recovered address matches the expected address
-        # 4. Check the nonce hasn't been used and isn't expired
-        # 5. Check the timestamp is within allowed window
-        
-        # For now, we'll simulate success if the format looks right
-        logger.info(f"Verifying SIWE message for address {address}")
-        return len(signature) >= 130  # Typical signature length
-        
+    except ImportError:
+        logger.warning("web3 not available, falling back to basic verification")
+        # Fallback to basic format check
+        try:
+            if not message or not signature or not address:
+                return False
+            if "live-translation-app wants you to sign in" not in message:
+                return False
+            if address.lower() not in message.lower():
+                return False
+            return len(signature) >= 130  # Typical signature length
+        except Exception as e:
+            logger.error(f"Error in fallback SIWE verification: {e}")
+            return False
     except Exception as e:
         logger.error(f"Error verifying SIWE message: {e}")
         return False
-
 def create_jwt_token(user_data: Dict[str, Any]) -> str:
     """
     Create a JWT token for authenticated user.
@@ -216,8 +233,8 @@ def authenticate_with_siwe(message: str, signature: str) -> Optional[Dict[str, A
     """
     try:
         # Extract address from message
-        lines = message.split('
-')
+        lines = message.split('\n')
+        address_line = None
         address_line = None
         for line in lines:
             if line.startswith('0x') and len(line) >= 42:

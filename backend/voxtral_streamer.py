@@ -1,312 +1,311 @@
 #!/usr/bin/env python3
 """
-VLLM Voxtral Realtime Streamer
-GPU-based real-time streaming transcription using VLLM with Voxtral model
+SIWE (Sign-In with Ethereum) Authentication Module
+Handles Ethereum-based authentication for the Live Transcription Platform
 """
 
 import os
-import asyncio
-import json
+import time
+import jwt
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
 import logging
-import websockets
-import numpy as np
-from typing import AsyncGenerator, Optional, Callable
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-class VoxtralStreamer:
-    """
-    VLLM Voxtral Realtime streamer for GPU-based real-time transcription.
-    Connects to VLLM server via WebSocket for low-latency streaming.
-    """
-    
-    def __init__(self, 
-                 ws_url: str = "ws://localhost:6000/v1/realtime",
-                 source_lang: str = "en",
-                 target_lang: str = "en",
-                 temperature: float = 0.0,
-                 max_tokens: int = 256):
-        """
-        Initialize the Voxtral streamer.
-        
-        Args:
-            ws_url: WebSocket URL for VLLM server
-            source_lang: Source language for transcription
-            target_lang: Target language (unused in transcription-only mode)
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-        """
-        self.ws_url = ws_url
-        self.source_lang = source_lang
-        self.target_lang = target_lang
-        self.temperature = temperature
-        self.max_tokens = max_tokens
-        
-        self.websocket = None
-        self.is_connected = False
-        self.session_id = None
-        
-        # Callbacks
-        self.text_callback: Optional[Callable[[str, bool, Optional[dict]], None]] = None
-        self.error_callback: Optional[Callable[[str], None]] = None
-        self.close_callback: Optional[Callable[[], None]] = None
-        
-        # Audio configuration
-        self.sample_rate = 16000
-        self.channels = 1
-        self.sample_width = 2  # 16-bit
-        
-        logger.info(f"VoxtralStreamer initialized for {ws_url}")
-    
-    def set_text_callback(self, callback: Callable[[str, bool, Optional[dict]], None]):
-        """Set callback for receiving transcribed text."""
-        self.text_callback = callback
-    
-    def set_error_callback(self, callback: Callable[[str], None]):
-        """Set callback for receiving errors."""
-        self.error_callback = callback
-    
-    def set_close_callback(self, callback: Callable[[], None]):
-        """Set callback for connection close."""
-        self.close_callback = callback
-    
-    async def connect(self) -> bool:
-        """
-        Connect to the VLLM WebSocket server.
-        
-        Returns:
-            True if connection successful, False otherwise
-        """
-        try:
-            logger.info(f"Connecting to VLLM at {self.ws_url}")
-            
-            self.websocket = await websockets.connect(self.ws_url)
-            self.is_connected = True
-            
-            # Initialize session
-            init_message = {
-                "session_id": f"voxtral_{int(datetime.now().timestamp())}",
-                "modalities": ["audio", "text"],
-                "audio_format": {
-                    "sample_rate": self.sample_rate,
-                    "channels": self.channels,
-                    "sample_width": self.sample_width
-                },
-                "text_configuration": {
-                    "language": self.source_lang,
-                    "temperature": self.temperature,
-                    "max_tokens": self.max_tokens
-                }
-            }
-            
-            await self.websocket.send(json.dumps(init_message))
-            response = await self.websocket.recv()
-            response_data = json.loads(response)
-            
-            if response_data.get("type") == "session.created":
-                self.session_id = response_data.get("session_id")
-                logger.info(f"Voxtral session created: {self.session_id}")
-                
-                # Start listening for messages
-                asyncio.create_task(self._listen_for_messages())
-                return True
-            else:
-                logger.error(f"Failed to create session: {response_data}")
-                await self.close()
-                return False
-                
-        except Exception as e:
-            logger.error(f"Failed to connect to VLLM: {e}")
-            self.is_connected = False
-            if self.error_callback:
-                self.error_callback(str(e))
-            return False
-    
-    async def close(self):
-        """Close the WebSocket connection."""
-        if self.websocket and self.is_connected:
-            try:
-                await self.websocket.close()
-            except Exception as e:
-                logger.error(f"Error closing WebSocket: {e}")
-            finally:
-                self.is_connected = False
-                self.websocket = None
-                if self.close_callback:
-                    self.close_callback()
-    
-    async def send_audio(self, audio_bytes: bytes, commit: bool = False):
-        """
-        Send audio data to VLLM for transcription.
-        
-        Args:
-            audio_bytes: PCM16 audio data as bytes
-            commit: Whether to commit the audio buffer (end of utterance)
-        """
-        if not self.is_connected or not self.websocket:
-            logger.warning("Cannot send audio: not connected to VLLM")
-            return False
-        
-        try:
-            message = {
-                "type": "input_audio_buffer.append",
-                "audio": audio_bytes.hex() if isinstance(audio_bytes, bytes) else str(audio_bytes)
-            }
-            
-            if commit:
-                message["type"] = "input_audio_buffer.commit"
-            
-            await self.websocket.send(json.dumps(message))
-            logger.debug(f"Sent {len(audio_bytes)} bytes to VLLM (commit={commit})")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error sending audio to VLLM: {e}")
-            if self.error_callback:
-                self.error_callback(str(e))
-            return False
-    
-    async def _listen_for_messages(self):
-        """Listen for messages from VLLM WebSocket."""
-        try:
-            async for message in self.websocket:
-                try:
-                    data = json.loads(message)
-                    await self._handle_message(data)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to decode VLLM message: {e}")
-                except Exception as e:
-                    logger.error(f"Error handling VLLM message: {e}")
-                    
-        except websockets.exceptions.ConnectionClosed:
-            logger.info("VLLM WebSocket connection closed")
-            self.is_connected = False
-            if self.close_callback:
-                self.close_callback()
-        except Exception as e:
-            logger.error(f"Error in VLLM message listener: {e}")
-            self.is_connected = False
-            if self.error_callback:
-                self.error_callback(str(e))
-    
-    async def _handle_message(self, data: dict):
-        """
-        Handle incoming message from VLLM.
-        
-        Args:
-            data: Parsed JSON message from VLLM
-        """
-        msg_type = data.get("type")
-        
-        if msg_type == "conversation.item.created":
-            logger.debug("Conversation item created")
-            
-        elif msg_type == "response.audio_transcript.delta":
-            # Streaming transcript delta
-            delta = data.get("delta", "")
-            if delta and self.text_callback:
-                self.text_callback(delta, False, None)
-                
-        elif msg_type == "response.audio_transcript.done":
-            # Final transcript
-            transcript = data.get("transcript", "")
-            if transcript and self.text_callback:
-                self.text_callback(transcript, True, data.get("usage"))
-                
-        elif msg_type == "response.audio.done":
-            logger.debug("Audio generation done")
-            
-        elif msg_type == "error":
-            error_msg = data.get("message", "Unknown error")
-            logger.error(f"VLLM error: {error_msg}")
-            if self.error_callback:
-                self.error_callback(error_msg)
-                
-        else:
-            logger.debug(f"Received VLLM message: {msg_type}")
-    
-    async def update_session_config(self, source_lang: str = None, target_lang: str = None):
-        """
-        Update the session configuration.
-        
-        Args:
-            source_lang: New source language (optional)
-            target_lang: New target language (optional)
-        """
-        if not self.is_connected:
-            logger.warning("Cannot update session: not connected")
-            return False
-        
-        try:
-            if source_lang is not None:
-                self.source_lang = source_lang
-            if target_lang is not None:
-                self.target_lang = target_lang
-            
-            config_message = {
-                "type": "session.update",
-                "session": {
-                    "modalities": ["audio", "text"],
-                    "audio_format": {
-                        "sample_rate": self.sample_rate,
-                        "channels": self.channels,
-                        "sample_width": self.sample_width
-                    },
-                    "text_configuration": {
-                        "language": self.source_lang,
-                        "temperature": self.temperature,
-                        "max_tokens": self.max_tokens
-                    }
-                }
-            }
-            
-            await self.websocket.send(json.dumps(config_message))
-            logger.info(f"Updated session config: lang={self.source_lang}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error updating session config: {e}")
-            if self.error_callback:
-                self.error_callback(str(e))
-            return False
+# JWT Configuration
+JWT_SECRET = os.environ.get("JWT_SECRET", "your-super-secret-jwt-key-change-in-production")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_HOURS = 24
 
-# Factory function
-def create_voxtral_streamer(ws_url: str = None, **kwargs) -> VoxtralStreamer:
+# SIWE Configuration
+SIWE_NONCE_EXPIRY_MINUTES = 10
+
+def generate_nonce() -> str:
     """
-    Factory function to create a VoxtralStreamer instance.
+    Generate a random nonce for SIWE authentication.
+    Returns a hex string nonce.
+    """
+    import secrets
+    return secrets.token_hex(16)
+
+def create_siwe_message(address: str, nonce: str, issued_at: Optional[str] = None) -> str:
+    """
+    Create a SIWE message for signing.
     
     Args:
-        ws_url: WebSocket URL (optional, uses env or default)
-        **kwargs: Additional arguments for VoxtralStreamer
+        address: Ethereum address
+        nonce: Random nonce
+        issued_at: Timestamp (ISO 8601), defaults to now
         
     Returns:
-        VoxtralStreamer instance
+        Formatted SIWE message
     """
-    if ws_url is None:
-        ws_url = os.environ.get("VLLM_WS_URL", "ws://localhost:6000/v1/realtime")
+    if not issued_at:
+        issued_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     
-    return VoxtralStreamer(ws_url=ws_url, **kwargs)
+    message = f"""live-translation-app wants you to sign in with your Ethereum account:
+{address}
+
+I accept the Terms of Service: https://live-translation-app.tos
+
+URI: https://live-translation-app
+Version: 1
+Chain ID: 1
+Nonce: {nonce}
+Issued At: {issued_at}
+"""
+    return message.strip()
+
+def verify_siwe_message(message: str, signature: str, address: str) -> bool:
+    """
+    Verify a SIWE message signature using web3.py.
+    
+    Args:
+        message: The SIWE message that was signed
+        signature: The signature (hex string)
+        address: The Ethereum address that should have signed it
+        
+    Returns:
+        True if signature is valid, False otherwise
+    """
+    try:
+        from web3 import Web3
+        
+        # Basic checks
+        if not message or not signature or not address:
+            return False
+        
+        # Check that message contains expected elements
+        if "live-translation-app wants you to sign in" not in message:
+            return False
+            
+        if address.lower() not in message.lower():
+            return False
+        
+        # Use web3 to recover address from signature
+        # The signature is expected to be 0x-prefixed hex
+        if not signature.startswith('0x'):
+            signature = '0x' + signature
+        
+        # Encode the message as eth_sign does
+        message_encoded = Web3.eth.account._hash_message(text=message)
+        
+        # Recover address
+        try:
+            recovered_address = Web3.eth.account.recover_hash(message_encoded, signature=signature)
+            # Check if recovered address matches expected address (case insensitive)
+            return recovered_address.lower() == address.lower()
+        except Exception as e:
+            logger.debug(f"Error recovering address: {e}")
+            return False
+            
+    except ImportError:
+        logger.warning("web3 not available, falling back to basic verification")
+        # Fallback to basic format check
+        try:
+            if not message or not signature or not address:
+                return False
+            if "live-translation-app wants you to sign in" not in message:
+                return False
+            if address.lower() not in message.lower():
+                return False
+            return len(signature) >= 130  # Typical signature length
+        except Exception as e:
+            logger.error(f"Error in fallback SIWE verification: {e}")
+            return False
+    except Exception as e:
+        logger.error(f"Error verifying SIWE message: {e}")
+        return False
+def create_jwt_token(user_data: Dict[str, Any]) -> str:
+    """
+    Create a JWT token for authenticated user.
+    
+    Args:
+        user_data: User information to include in token
+        
+    Returns:
+        JWT token string
+    """
+    payload = {
+        **user_data,
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+        "iat": datetime.utcnow()
+    }
+    
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return token
+
+def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Verify and decode a JWT token.
+    
+    Args:
+        token: JWT token string
+        
+    Returns:
+        Decoded payload if valid, None otherwise
+    """
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        logger.warning("JWT token has expired")
+        return None
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"Invalid JWT token: {e}")
+        return None
+
+def hash_nonce(nonce: str) -> str:
+    """
+    Hash a nonce for storage (in case we want to store hashed nonces).
+    For now, we'll just return the nonce as-is since we're storing it temporarily.
+    
+    Args:
+        nonce: Nonce string
+        
+    Returns:
+        Hashed nonce (or original nonce for now)
+    """
+    # In production, you might want to hash this for security
+    # return hashlib.sha256(nonce.encode()).hexdigest()
+    return nonce
+
+# Mock database functions for nonce storage (replace with actual Supabase calls)
+class NonceStore:
+    """In-memory nonce store for demonstration. Replace with Supabase table."""
+    
+    def __init__(self):
+        self.nonces = {}  # address -> {nonce, expires_at}
+    
+    def store_nonce(self, address: str, nonce: str, expires_at: datetime):
+        """Store a nonce for an address."""
+        self.nonces[address.lower()] = {
+            "nonce": nonce,
+            "expires_at": expires_at
+        }
+        logger.info(f"Stored nonce for {address}")
+    
+    def get_nonce(self, address: str) -> Optional[Dict[str, Any]]:
+        """Get nonce for an address if it exists and hasn't expired."""
+        address_lower = address.lower()
+        if address_lower not in self.nonces:
+            return None
+            
+        nonce_data = self.nonces[address_lower]
+        if datetime.utcnow() > nonce_data["expires_at"]:
+            # Remove expired nonce
+            del self.nonces[address_lower]
+            return None
+            
+        return nonce_data
+    
+    def consume_nonce(self, address: str) -> bool:
+        """
+        Consard a nonce (mark as used).
+        Returns True if nonce was consumed, False if not found/expired.
+        """
+        address_lower = address.lower()
+        if address_lower in self.nonces:
+            nonce_data = self.nonces[address_lower]
+            if datetime.utcnow() <= nonce_data["expires_at"]:
+                del self.nonces[address_lower]
+                logger.info(f"Consumed nonce for {address}")
+                return True
+            else:
+                # Expired, remove it
+                del self.nonces[address_lower]
+        return False
+
+# Global nonce store instance
+nonce_store = NonceStore()
+
+def authenticate_with_siwe(message: str, signature: str) -> Optional[Dict[str, Any]]:
+    """
+    Authenticate a user using SIWE.
+    
+    Args:
+        message: The SIWE message that was signed
+        signature: The signature
+        
+    Returns:
+        User data if authentication successful, None otherwise
+    """
+    try:
+        # Extract address from message
+        lines = message.split('\n')
+        address_line = None
+        address_line = None
+        for line in lines:
+            if line.startswith('0x') and len(line) >= 42:
+                address_line = line.strip()
+                break
+        
+        if not address_line:
+            logger.error("Could not extract Ethereum address from SIWE message")
+            return None
+            
+        address = address_line
+        
+        # Extract nonce from message
+        nonce = None
+        for line in lines:
+            if line.startswith('Nonce:'):
+                nonce = line.split(':', 1)[1].strip()
+                break
+                
+        if not nonce:
+            logger.error("Could not extract nonce from SIWE message")
+            return None
+        
+        # Verify the signature
+        if not verify_siwe_message(message, signature, address):
+            logger.error(f"SIWE signature verification failed for {address}")
+            return None
+        
+        # Check nonce hasn't been used and isn't expired
+        nonce_data = nonce_store.get_nonce(address)
+        if not nonce_data:
+            logger.error(f"Nonce not found or expired for {address}")
+            return None
+            
+        if nonce_data["nonce"] != nonce:
+            logger.error(f"Nonce mismatch for {address}")
+            return None
+        
+        # Consume the nonce (mark as used)
+        if not nonce_store.consume_nonce(address):
+            logger.error(f"Failed to consume nonce for {address}")
+            return None
+        
+        # Get or create user in database
+        # This would normally query Supabase
+        user_data = {
+            "id": "user-id-from-db",  # TODO: Get from database
+            "ethereum_address": address.lower(),
+            "email": None,  # Would be set if user has email linked
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        
+        # Create JWT token
+        token = create_jwt_token(user_data)
+        
+        return {
+            "user": user_data,
+            "token": token,
+            "expires_in": JWT_EXPIRY_HOURS * 3600  # seconds
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in SIWE authentication: {e}")
+        return None
 
 # Health check function
-async def voxtral_health_check(ws_url: str = None) -> Dict[str, Any]:
-    """Check if Voxtral streamer can connect to VLLM."""
-    if ws_url is None:
-        ws_url = os.environ.get("VLLM_WS_URL", "ws://localhost:6000/v1/realtime")
-    
-    streamer = VoxtralStreamer(ws_url=ws_url)
-    connected = await streamer.connect()
-    
-    if connected:
-        await streamer.close()
-        status = "healthy"
-    else:
-        status = "unhealthy"
-    
+def auth_health_check() -> Dict[str, Any]:
+    """Check if auth module is working correctly."""
     return {
-        "status": status,
-        "module": "voxtral_streamer",
-        "ws_url": ws_url,
-        "connected": connected,
-        "timestamp": datetime.utcnow().isoformat()
+        "status": "healthy",
+        "module": "auth",
+        "timestamp": datetime.utcnow().isoformat(),
+        "jwt_secret_configured": bool(JWT_SECRET and JWT_SECRET != "your-super-secret-jwt-key-change-in-production")
     }

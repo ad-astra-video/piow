@@ -7,7 +7,7 @@ supabase>=2.0.0
 
 # Added for SIWE and model support
 siwe
-ethers
+web3
 transformers
 torch
 onnxruntime
