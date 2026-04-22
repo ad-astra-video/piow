@@ -142,11 +142,12 @@ live-translation-app/
 
 ### Subscription Plans
 
-| Plan | Monthly | Yearly | Features |
-|------|---------|--------|----------|
-| Free | $0 | $0 | 100 translations/month |
-| Pro | $9.99 | $99.99 | Unlimited + Audio output |
-| Enterprise | $49.99 | $499.99 | API access + SLA |
+| Plan | Monthly | Transcription | Translation | Notes |
+|------|---------|---------------|-------------|-------|
+| Free | $0 | 1 hr/day (30 hr/mo) | 5,000 chars/mo | Queue delays, lower priority, watermark |
+| Starter | $15 | 3 hr/day (90 hr/mo) | 100K chars/mo | Normal priority |
+| Pro | $39 | 8 hr/day (240 hr/mo) | Unlimited | High priority, no watermark |
+| Enterprise | $99 | Unlimited (24 hr/day) | Unlimited | Highest priority, dedicated support, custom SLA |
 
 ## Chrome Extension
 

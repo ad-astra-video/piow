@@ -703,10 +703,10 @@ paths:
 
 | Tier | Monthly | Transcription | Translation | API Rate Limit |
 |------|---------|---------------|-------------|----------------|
-| Free | $0 | 60 min/month | 1,000 chars/month | 10/min |
-| Starter | $29 | 10 hours/month | 50,000 chars/month | 60/min |
-| Pro | $99 | 50 hours/month | Unlimited | 300/min |
-| Enterprise | $499 | Unlimited | Unlimited | 1,000/min |
+| Free | $0 | 1 hr/day (30 hr/mo) | 5,000 chars/mo | 10/min |
+| Starter | $15 | 3 hr/day (90 hr/mo) | 100K chars/mo | 60/min |
+| Pro | $39 | 8 hr/day (240 hr/mo) | Unlimited | 300/min |
+| Enterprise | $99 | Unlimited (24 hr/day) | Unlimited | 1,000/min |
 
 ---
 

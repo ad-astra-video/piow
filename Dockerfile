@@ -14,9 +14,12 @@ RUN npm run build
 FROM python:3.12-slim
 WORKDIR /app
 
-# Install Python dependencies
+# Install UV package manager
+RUN pip install --no-cache-dir uv
+
+# Install Python dependencies using UV
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --no-cache-dir -r requirements.txt --system
 
 # Copy the backend source
 COPY backend/ ./backend/

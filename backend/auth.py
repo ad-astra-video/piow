@@ -1,311 +1,480 @@
 #!/usr/bin/env python3
 """
-SIWE (Sign-In with Ethereum) Authentication Module
-Handles Ethereum-based authentication for the Live Transcription Platform
+Authentication Module
+Handles both agent authentication (HMAC-SHA256) and Supabase user authentication.
+Supports SIWE (Sign-In with Ethereum) via Supabase Web3 auth — the frontend
+authenticates directly with Supabase, and the backend validates the resulting JWT.
+
+Architecture:
+  - Authentication is enforced by DEFAULT via `auth_middleware` (aiohttp middleware).
+  - All endpoints require authentication unless explicitly opted out with `@no_auth`.
+  - `@require_user_auth` and `@require_agent_auth` are MARKER decorators that tell
+    the middleware which auth type to enforce (they do NOT wrap the handler).
+  - `@no_auth` is a MARKER decorator that opts out of auth, rate limiting,
+    usage tracking, and payment validation entirely.
+  - Rate limiting and usage tracking are handled by the middleware for authenticated routes.
+  - Payment decorators (`@x402_or_subscription`, etc.) check `_no_auth` and skip if set.
 """
 
-import os
 import time
-import jwt
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+import hmac
+import hashlib
+import json
 import logging
+from typing import Optional, Dict, Any, Tuple
+from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
-# JWT Configuration
-JWT_SECRET = os.environ.get("JWT_SECRET", "your-super-secret-jwt-key-change-in-production")
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 24
+# ---------------------------------------------------------------------------
+# Rate limit configuration
+# ---------------------------------------------------------------------------
+RATE_LIMIT_PER_MINUTE = 60
 
-# SIWE Configuration
-SIWE_NONCE_EXPIRY_MINUTES = 10
 
-def generate_nonce() -> str:
-    """
-    Generate a random nonce for SIWE authentication.
-    Returns a hex string nonce.
-    """
-    import secrets
-    return secrets.token_hex(16)
+# ---------------------------------------------------------------------------
+# Marker decorators
+# ---------------------------------------------------------------------------
 
-def create_siwe_message(address: str, nonce: str, issued_at: Optional[str] = None) -> str:
+def no_auth(handler):
+    """Marker decorator: opts a route out of authentication, rate limiting,
+    usage tracking, and payment validation.
+
+    Must be the innermost decorator (closest to the function definition) so
+    that outer decorators (e.g. @x402_or_subscription) can see the _no_auth
+    attribute via functools.wraps propagation.
+
+    Usage::
+
+        @no_auth
+        async def health_check(request):
+            ...
     """
-    Create a SIWE message for signing.
+    handler._no_auth = True
+    return handler
+
+
+def require_user_auth(handler):
+    """Marker decorator: require Supabase user (JWT) authentication for this endpoint.
+
+    The middleware reads ``handler._auth_type = 'user'`` and only accepts
+    Supabase JWT tokens — agent HMAC auth will be rejected.
+
+    Usage::
+
+        @require_user_auth
+        async def get_subscription(request):
+            ...
+    """
+    handler._auth_type = 'user'
+    return handler
+
+
+def require_agent_auth(handler):
+    """Marker decorator: require agent HMAC-SHA256 authentication for this endpoint.
+
+    The middleware reads ``handler._auth_type = 'agent'`` and only accepts
+    agent API-key + signature auth — Supabase JWT tokens will be rejected.
+
+    Usage::
+
+        @require_agent_auth
+        async def agent_get_usage(request):
+            ...
+    """
+    handler._auth_type = 'agent'
+    return handler
+
+
+# ---------------------------------------------------------------------------
+# Verification functions (used by middleware and directly where needed)
+# ---------------------------------------------------------------------------
+
+def verify_agent_request(request) -> Tuple[bool, Any]:
+    """
+    Verify agent request using HMAC-SHA256 signature.
     
-    Args:
-        address: Ethereum address
-        nonce: Random nonce
-        issued_at: Timestamp (ISO 8601), defaults to now
-        
+    Expected headers:
+    - X-API-Key: The agent's API key
+    - X-Timestamp: Current timestamp in seconds
+    - X-Nonce: Random nonce to prevent replay attacks
+    - X-Signature: HMAC-SHA256 signature of (method + path + timestamp + nonce + body)
+    
     Returns:
-        Formatted SIWE message
-    """
-    if not issued_at:
-        issued_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-    
-    message = f"""live-translation-app wants you to sign in with your Ethereum account:
-{address}
-
-I accept the Terms of Service: https://live-translation-app.tos
-
-URI: https://live-translation-app
-Version: 1
-Chain ID: 1
-Nonce: {nonce}
-Issued At: {issued_at}
-"""
-    return message.strip()
-
-def verify_siwe_message(message: str, signature: str, address: str) -> bool:
-    """
-    Verify a SIWE message signature using web3.py.
-    
-    Args:
-        message: The SIWE message that was signed
-        signature: The signature (hex string)
-        address: The Ethereum address that should have signed it
-        
-    Returns:
-        True if signature is valid, False otherwise
+    - (True, agent_data) if verification successful
+    - (False, error_response) if verification failed
     """
     try:
-        from web3 import Web3
+        api_key = request.headers.get('X-API-Key')
+        timestamp = request.headers.get('X-Timestamp')
+        nonce = request.headers.get('X-Nonce')
+        signature = request.headers.get('X-Signature')
         
-        # Basic checks
-        if not message or not signature or not address:
-            return False
+        if not all([api_key, timestamp, nonce, signature]):
+            return False, web.json_response({
+                "error": "Missing required headers for agent authentication",
+                "missing": [
+                    h for h, v in [('X-API-Key', api_key), ('X-Timestamp', timestamp), 
+                                 ('X-Nonce', nonce), ('X-Signature', signature)] if not v
+                ]
+            }, status=401)
         
-        # Check that message contains expected elements
-        if "live-translation-app wants you to sign in" not in message:
-            return False
-            
-        if address.lower() not in message.lower():
-            return False
-        
-        # Use web3 to recover address from signature
-        # The signature is expected to be 0x-prefixed hex
-        if not signature.startswith('0x'):
-            signature = '0x' + signature
-        
-        # Encode the message as eth_sign does
-        message_encoded = Web3.eth.account._hash_message(text=message)
-        
-        # Recover address
+        # Check timestamp to prevent replay attacks (allow 5 minutes clock skew)
         try:
-            recovered_address = Web3.eth.account.recover_hash(message_encoded, signature=signature)
-            # Check if recovered address matches expected address (case insensitive)
-            return recovered_address.lower() == address.lower()
-        except Exception as e:
-            logger.debug(f"Error recovering address: {e}")
-            return False
-            
-    except ImportError:
-        logger.warning("web3 not available, falling back to basic verification")
-        # Fallback to basic format check
-        try:
-            if not message or not signature or not address:
-                return False
-            if "live-translation-app wants you to sign in" not in message:
-                return False
-            if address.lower() not in message.lower():
-                return False
-            return len(signature) >= 130  # Typical signature length
-        except Exception as e:
-            logger.error(f"Error in fallback SIWE verification: {e}")
-            return False
+            ts = int(timestamp)
+            now = int(time.time())
+            if abs(now - ts) > 300:  # 5 minutes
+                return False, web.json_response({
+                    "error": "Request timestamp expired or invalid",
+                }, status=401)
+        except ValueError:
+            return False, web.json_response({
+                "error": "Invalid timestamp format",
+            }, status=401)
+        
+        # Look up agent by API key
+        from supabase_client import supabase
+        result = supabase.table('agents').select('*').eq('api_key', api_key).execute()
+        
+        if not result.data:
+            return False, web.json_response({
+                "error": "Invalid API key",
+            }, status=401)
+        
+        agent = result.data[0]
+        if not agent.get('is_active', False):
+            return False, web.json_response({
+                "error": "Agent account is deactivated",
+            }, status=401)
+        
+        # Verify signature
+        # Get request body
+        body = ""
+        if hasattr(request, '_body'):
+            body = request._body.decode('utf-8') if request._body else ""
+        elif hasattr(request, 'text'):
+            # For aiohttp, we might need to read the body differently
+            # This is a simplified approach - in practice, we'd need to read and then reset the body
+            pass
+        
+        # Create the signature string: method + path + timestamp + nonce + body
+        method = request.method
+        path = request.path
+        sig_string = f"{method}{path}{timestamp}{nonce}{body}"
+        
+        # Calculate expected signature
+        expected_signature = hmac.new(
+            api_key.encode('utf-8'),
+            sig_string.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        
+        # Compare signatures (constant-time comparison)
+        if not hmac.compare_digest(expected_signature, signature):
+            return False, web.json_response({
+                "error": "Invalid signature",
+            }, status=401)
+        
+        # Store agent in request for later use
+        request['agent'] = agent
+        return True, agent
+        
     except Exception as e:
-        logger.error(f"Error verifying SIWE message: {e}")
-        return False
-def create_jwt_token(user_data: Dict[str, Any]) -> str:
-    """
-    Create a JWT token for authenticated user.
-    
-    Args:
-        user_data: User information to include in token
-        
-    Returns:
-        JWT token string
-    """
-    payload = {
-        **user_data,
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
-        "iat": datetime.utcnow()
-    }
-    
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    return token
+        logger.error(f"Error in agent request verification: {e}")
+        return False, web.json_response({
+            "error": "Internal server error",
+        }, status=500)
 
-def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
+
+def verify_supabase_user(request) -> Tuple[bool, Any]:
     """
-    Verify and decode a JWT token.
+    Verify user request using Supabase JWT token.
     
-    Args:
-        token: JWT token string
-        
+    Expected headers:
+    - Authorization: Bearer <jwt_token>
+    - OR via Supabase session cookie
+    
     Returns:
-        Decoded payload if valid, None otherwise
+    - (True, user_data) if verification successful
+    - (False, error_response) if verification failed
     """
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        logger.warning("JWT token has expired")
-        return None
-    except jwt.InvalidTokenError as e:
-        logger.warning(f"Invalid JWT token: {e}")
-        return None
-
-def hash_nonce(nonce: str) -> str:
-    """
-    Hash a nonce for storage (in case we want to store hashed nonces).
-    For now, we'll just return the nonce as-is since we're storing it temporarily.
-    
-    Args:
-        nonce: Nonce string
+        # Try to get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        token = None
         
-    Returns:
-        Hashed nonce (or original nonce for now)
-    """
-    # In production, you might want to hash this for security
-    # return hashlib.sha256(nonce.encode()).hexdigest()
-    return nonce
-
-# Mock database functions for nonce storage (replace with actual Supabase calls)
-class NonceStore:
-    """In-memory nonce store for demonstration. Replace with Supabase table."""
-    
-    def __init__(self):
-        self.nonces = {}  # address -> {nonce, expires_at}
-    
-    def store_nonce(self, address: str, nonce: str, expires_at: datetime):
-        """Store a nonce for an address."""
-        self.nonces[address.lower()] = {
-            "nonce": nonce,
-            "expires_at": expires_at
-        }
-        logger.info(f"Stored nonce for {address}")
-    
-    def get_nonce(self, address: str) -> Optional[Dict[str, Any]]:
-        """Get nonce for an address if it exists and hasn't expired."""
-        address_lower = address.lower()
-        if address_lower not in self.nonces:
-            return None
-            
-        nonce_data = self.nonces[address_lower]
-        if datetime.utcnow() > nonce_data["expires_at"]:
-            # Remove expired nonce
-            del self.nonces[address_lower]
-            return None
-            
-        return nonce_data
-    
-    def consume_nonce(self, address: str) -> bool:
-        """
-        Consard a nonce (mark as used).
-        Returns True if nonce was consumed, False if not found/expired.
-        """
-        address_lower = address.lower()
-        if address_lower in self.nonces:
-            nonce_data = self.nonces[address_lower]
-            if datetime.utcnow() <= nonce_data["expires_at"]:
-                del self.nonces[address_lower]
-                logger.info(f"Consumed nonce for {address}")
-                return True
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header[7:]  # Remove 'Bearer ' prefix
+        
+        # If no token in header, try to get from cookies (Supabase session)
+        if not token:
+            cookies = request.cookies
+            # Supabase stores session in 'sb:token' or similar
+            # This is simplified - actual implementation would depend on Supabase SDK
+            token = cookies.get('sb:token') or cookies.get('supabase-auth-token')
+        
+        if not token:
+            return False, web.json_response({
+                "error": "Missing authorization token",
+            }, status=401)
+        
+        # Verify the token with Supabase
+        from supabase_client import supabase
+        try:
+            user_response = supabase.auth.get_user(token)
+            if user_response.user:
+                # Store user in request for later use
+                request['user'] = user_response.user
+                return True, user_response.user
             else:
-                # Expired, remove it
-                del self.nonces[address_lower]
-        return False
+                return False, web.json_response({
+                    "error": "Invalid or expired token",
+                }, status=401)
+        except Exception as e:
+            logger.error(f"Supabase auth verification failed: {e}")
+            return False, web.json_response({
+                "error": "Invalid or expired token",
+            }, status=401)
+            
+    except Exception as e:
+        logger.error(f"Error in Supabase user verification: {e}")
+        return False, web.json_response({
+            "error": "Internal server error",
+        }, status=500)
 
-# Global nonce store instance
-nonce_store = NonceStore()
 
-def authenticate_with_siwe(message: str, signature: str) -> Optional[Dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Helper functions (extracted from old decorators, used by middleware)
+# ---------------------------------------------------------------------------
+
+def _check_rate_limit(request) -> bool:
+    """Check rate limit for the authenticated entity.
+
+    Returns True if the request is allowed, False if rate-limited.
+    Must be called AFTER authentication (so request['user'] or request['agent'] is set).
     """
-    Authenticate a user using SIWE.
-    
-    Args:
-        message: The SIWE message that was signed
-        signature: The signature
-        
-    Returns:
-        User data if authentication successful, None otherwise
+    agent = request.get('agent')
+    user = request.get('user')
+
+    if agent:
+        identifier = agent['id']
+        auth_type = "agent"
+    elif user:
+        identifier = str(user.id) if hasattr(user, 'id') else None
+        auth_type = "user"
+    else:
+        # No authenticated entity — should not happen when called from middleware,
+        # but if it does, allow the request (middleware already enforced auth).
+        return True
+
+    if not identifier:
+        return True
+
+    try:
+        one_minute_ago = time.time() - 60
+        from supabase_client import supabase
+        result = supabase.table('agent_usage').select('id', count='exact').eq('agent_id', identifier).gte('timestamp', one_minute_ago).execute()
+        if result.count >= RATE_LIMIT_PER_MINUTE:
+            return False
+    except Exception as e:
+        logger.error(f"Rate limit check failed (allowing request): {e}")
+        # Fail open — if the DB is down, don't block requests
+
+    return True
+
+
+def _record_usage(request, response, start_time: float) -> None:
+    """Record usage after request completion.
+
+    Must be called AFTER authentication (so request['user'] or request['agent'] is set).
+    Errors are logged but never raise — usage tracking must not break the request.
     """
     try:
-        # Extract address from message
-        lines = message.split('\n')
-        address_line = None
-        address_line = None
-        for line in lines:
-            if line.startswith('0x') and len(line) >= 42:
-                address_line = line.strip()
-                break
-        
-        if not address_line:
-            logger.error("Could not extract Ethereum address from SIWE message")
-            return None
-            
-        address = address_line
-        
-        # Extract nonce from message
-        nonce = None
-        for line in lines:
-            if line.startswith('Nonce:'):
-                nonce = line.split(':', 1)[1].strip()
-                break
-                
-        if not nonce:
-            logger.error("Could not extract nonce from SIWE message")
-            return None
-        
-        # Verify the signature
-        if not verify_siwe_message(message, signature, address):
-            logger.error(f"SIWE signature verification failed for {address}")
-            return None
-        
-        # Check nonce hasn't been used and isn't expired
-        nonce_data = nonce_store.get_nonce(address)
-        if not nonce_data:
-            logger.error(f"Nonce not found or expired for {address}")
-            return None
-            
-        if nonce_data["nonce"] != nonce:
-            logger.error(f"Nonce mismatch for {address}")
-            return None
-        
-        # Consume the nonce (mark as used)
-        if not nonce_store.consume_nonce(address):
-            logger.error(f"Failed to consume nonce for {address}")
-            return None
-        
-        # Get or create user in database
-        # This would normally query Supabase
-        user_data = {
-            "id": "user-id-from-db",  # TODO: Get from database
-            "ethereum_address": address.lower(),
-            "email": None,  # Would be set if user has email linked
-            "created_at": datetime.utcnow().isoformat(),
-        }
-        
-        # Create JWT token
-        token = create_jwt_token(user_data)
-        
-        return {
-            "user": user_data,
-            "token": token,
-            "expires_in": JWT_EXPIRY_HOURS * 3600  # seconds
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in SIWE authentication: {e}")
-        return None
+        status_code = response.status
+        success = 200 <= status_code < 300
 
-# Health check function
-def auth_health_check() -> Dict[str, Any]:
-    """Check if auth module is working correctly."""
-    return {
-        "status": "healthy",
-        "module": "auth",
-        "timestamp": datetime.utcnow().isoformat(),
-        "jwt_secret_configured": bool(JWT_SECRET and JWT_SECRET != "your-super-secret-jwt-key-change-in-production")
-    }
+        # Calculate processing time
+        processing_time_ms = int((time.time() - start_time) * 1000)
+
+        # Determine who made the request (agent or user)
+        agent = request.get('agent')
+        user = request.get('user')
+
+        if agent:
+            entity_id = agent['id']
+            entity_type = "agent"
+            entity_name = agent.get('agent_name', 'unknown')
+        elif user:
+            entity_id = str(user.id) if hasattr(user, 'id') else 'unknown'
+            entity_type = "user"
+            entity_name = getattr(user, 'email', 'unknown') or 'unknown'
+        else:
+            # Should not happen when called from middleware, but handle gracefully
+            entity_id = "unknown"
+            entity_type = "unknown"
+            entity_name = "unknown"
+
+        # Determine endpoint and method
+        endpoint = request.path
+        method = request.method
+
+        # Determine cost (simplified - in reality, this would come from the service used)
+        cost_usdc_cents = 0  # Placeholder
+
+        # Prepare metadata
+        metadata = {
+            "processing_time_ms": processing_time_ms,
+            "user_agent": request.headers.get('User-Agent', ''),
+            "referer": request.headers.get('Referer', ''),
+            "auth_type": entity_type
+        }
+
+        # Insert usage record
+        from supabase_client import supabase
+        supabase.table('agent_usage').insert({
+            "agent_id": entity_id,  # Reusing this column for both agents and users
+            "endpoint": endpoint,
+            "method": method,
+            "success": success,
+            "cost_usdc_cents": cost_usdc_cents,
+            "metadata": metadata
+        }).execute()
+    except Exception as e:
+        logger.error(f"Failed to log usage: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Auth middleware (enforces auth by default on ALL routes)
+# ---------------------------------------------------------------------------
+
+@web.middleware
+async def auth_middleware(request, handler):
+    """aiohttp middleware that enforces authentication by default.
+
+    Flow:
+      1. If handler has ``_no_auth = True``, skip all auth/rate-limit/usage logic.
+      2. Determine auth type from ``handler._auth_type`` ('user', 'agent', or 'any').
+      3. Perform authentication (verify JWT or HMAC).
+      4. Check rate limit.
+      5. Execute handler (payment decorators run here if present).
+      6. Record usage in ``finally`` block.
+    """
+    # Step 1: @no_auth — skip everything
+    if getattr(handler, '_no_auth', False):
+        return await handler(request)
+
+    # Step 2: Determine auth type from marker decorator
+    auth_type = getattr(handler, '_auth_type', 'any')
+
+    # Step 3: Perform authentication
+    if auth_type == 'user':
+        verified, result = verify_supabase_user(request)
+    elif auth_type == 'agent':
+        verified, result = verify_agent_request(request)
+    else:
+        # Default 'any' — try agent auth first, then user auth
+        verified, result = verify_agent_request(request)
+        if not verified:
+            verified, result = verify_supabase_user(request)
+
+    if not verified:
+        return result  # 401 error response
+
+    # Step 4: Rate limiting
+    if not _check_rate_limit(request):
+        return web.json_response({
+            "error": f"Rate limit exceeded: {RATE_LIMIT_PER_MINUTE} requests per minute",
+        }, status=429)
+
+    # Step 5: Execute handler (payment decorators run inside if present)
+    start_time = time.time()
+    try:
+        response = await handler(request)
+    except Exception:
+        raise
+
+    # Step 6: Usage tracking
+    _record_usage(request, response, start_time)
+
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Route setup
+# ---------------------------------------------------------------------------
+
+def setup_routes(app):
+    """Register auth-related API routes."""
+    app.router.add_get('/api/v1/auth/me', auth_me_handler)
+    logger.info("Auth routes registered")
+
+
+@require_user_auth
+async def auth_me_handler(request):
+    """
+    GET /api/v1/auth/me
+
+    Returns the current authenticated user's info.
+    Requires a valid Supabase JWT in the Authorization header.
+
+    This endpoint works with any Supabase auth method including
+    SIWE (Sign-In with Ethereum), email/password, Google, and Twitter —
+    the JWT is validated the same way regardless of how the user authenticated.
+
+    Authentication is enforced by auth_middleware based on the @require_user_auth
+    marker. The middleware sets request['user'] before this handler runs.
+    """
+    user = request.get('user')
+    if not user:
+        # Safety net — should never happen if middleware is correctly configured
+        return web.json_response({"error": "Authentication required"}, status=401)
+
+    identities = getattr(user, 'identities', []) or []
+    user_metadata = getattr(user, 'user_metadata', {}) or {}
+
+    # Extract identity data from all linked providers
+    wallet_address = None
+    avatar_url = None
+    full_name = None
+    providers = []
+
+    for identity in identities:
+        provider = identity.get('provider', '')
+        identity_data = identity.get('identity_data', {}) or {}
+        providers.append(provider)
+
+        # Wallet address (web3/SIWE users)
+        if provider == 'web3' and wallet_address is None:
+            wallet_address = identity_data.get('wallet_address')
+
+        # Avatar URL (social providers)
+        if avatar_url is None:
+            avatar_url = (
+                identity_data.get('avatar_url')
+                or identity_data.get('picture')
+            )
+
+        # Full name (social providers)
+        if full_name is None:
+            full_name = (
+                identity_data.get('full_name')
+                or identity_data.get('name')
+            )
+
+    # Fall back to user_metadata if identities didn't provide the data
+    if avatar_url is None:
+        avatar_url = user_metadata.get('avatar_url') or user_metadata.get('picture')
+    if full_name is None:
+        full_name = user_metadata.get('full_name') or user_metadata.get('name')
+
+    return web.json_response({
+        "id": str(user.id) if hasattr(user, 'id') else None,
+        "email": getattr(user, 'email', None),
+        "full_name": full_name,
+        "avatar_url": avatar_url,
+        "wallet_address": wallet_address,
+        "providers": providers,
+        "app_metadata": getattr(user, 'app_metadata', {}),
+        "user_metadata": user_metadata,
+        "created_at": str(getattr(user, 'created_at', '')),
+    })

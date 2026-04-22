@@ -5,11 +5,10 @@ numpy>=1.24.0
 
 supabase>=2.0.0
 
+# Stripe payment processing
+stripe>=11.0.0
+
 # Added for SIWE and model support
 siwe
 web3
-transformers
-torch
-onnxruntime
-librosa
-soundfile
+

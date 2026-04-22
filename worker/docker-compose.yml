@@ -1,0 +1,75 @@
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: worker/Dockerfile
+    ports:
+      - "8001:8001"
+      - "40000-40100:40000-40100/udp"
+    sysctls:
+      - net.ipv4.ip_local_port_range=40000 40100
+    cap_add:
+      - SYS_ADMIN
+    volumes:
+      - ./worker:/app/worker
+      - ./models:/models
+    environment:
+      - DEBUG_AUDIO_WAV=1
+      - PYTHONUNBUFFERED=1
+      - HOST_IP=${HOST_IP:-127.0.0.1}
+      - ICE_SERVERS=${ICE_SERVERS:-stun:stun.l.google.com:19302}
+      - TURN_SERVER=${TURN_SERVER:-}
+      - TURN_USERNAME=${TURN_USERNAME:-}
+      - TURN_PASSWORD=${TURN_PASSWORD:-}
+      - VLLM_WS_URL=ws://vllm:6000/v1/realtime
+    depends_on:
+      vllm:
+        condition: service_healthy
+    restart: unless-stopped
+  vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+    ports:
+      - "6000:6000"
+    ipc: "host"
+    command:
+      - "--model"
+      - "mistralai/Voxtral-Mini-4B-Realtime-2602"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "6000"
+      - "--gpu-memory-utilization"
+      - "0.90"
+      - "--max-model-len"
+      - "45500"
+      - "--kv-cache-dtype"
+      - "fp8"
+      - "--attention-backend"
+      - "TRITON_ATTN"
+      - "--compilation_config"
+      - '{"cudagraph_mode": "PIECEWISE"}'
+      - "--trust-remote-code"
+    volumes:
+      - vllm_models:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          cpus: "4.0"
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+
+volumes:
+  vllm_models:

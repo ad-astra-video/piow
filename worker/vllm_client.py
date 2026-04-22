@@ -3,6 +3,7 @@
 VLLM WebSocket client for real-time translation.
 Connects to VLLM's OpenAI-compatible realtime API.
 """
+import os
 import asyncio
 import inspect
 import json
@@ -26,12 +27,25 @@ class VLLMRealtimeClient:
     
     def __init__(
         self,
-        ws_url: str = "ws://localhost:6000/v1/realtime",
+        ws_url: Optional[str] = None,
         source_lang: str = "en",
         target_lang: str = "es",
         temperature: float = 0.0,
         max_tokens: int = 256,
     ):
+        """
+        Initialize VLLM realtime client.
+        
+        Args:
+            ws_url: WebSocket URL for VLLM realtime API (default: from VLLM_WS_URL env var or ws://localhost:6000/v1/realtime)
+            source_lang: Source language code (e.g., 'en')
+            target_lang: Target language code (e.g., 'es')
+            temperature: Sampling temperature (0.0-2.0)
+            max_tokens: Maximum tokens in response
+        """
+        # Get ws_url from environment variable if not provided
+        if ws_url is None:
+            ws_url = os.environ.get("VLLM_WS_URL", "ws://localhost:6000/v1/realtime")
         """
         Initialize VLLM realtime client.
         

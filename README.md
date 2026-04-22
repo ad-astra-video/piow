@@ -206,12 +206,12 @@ X-Timestamp: 1234567890
 
 ### Subscription Plans
 
-| Plan | Monthly | Yearly | Transcription | Translation |
-|------|---------|--------|---------------|-------------|
-| Free | $0 | $0 | 60 min/month | 1,000 chars/month |
-| Starter | $19 | $190 | 10 hours/month | 50,000 chars/month |
-| Pro | $49 | $490 | 50 hours/month | Unlimited |
-| Enterprise | $199 | $1,990 | Unlimited | Unlimited |
+| Plan | Monthly | Transcription | Translation | Notes |
+|------|---------|---------------|-------------|-------|
+| Free | $0 | 1 hr/day (30 hr/mo) | 5,000 chars/mo | Queue delays, lower priority, watermark |
+| Starter | $15 | 3 hr/day (90 hr/mo) | 100K chars/mo | Normal priority |
+| Pro | $39 | 8 hr/day (240 hr/mo) | Unlimited | High priority, no watermark |
+| Enterprise | $99 | Unlimited (24 hr/day) | Unlimited | Highest priority, dedicated support, custom SLA |
 
 ## Chrome Extension
 

@@ -1,0 +1,47 @@
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Ignore virtual environments
+.env/
+.venv/
+venv/
+env/
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore test files
+*.test
+test_*.py
+*_test.py
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Ignore local environment files
+.env
+.env.local
+.env.development
+.env.production
+
+# Ignore models folder (mounted as volume)
+models/
+
+# Ignore git
+.git/
+.gitignore
+
+# Ignore Docker files (not needed inside container)
+Dockerfile
+.dockerignore
+
+# Ignore documentation
+*.md
+docs/
+models/

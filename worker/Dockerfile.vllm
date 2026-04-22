@@ -13,5 +13,5 @@ RUN uv pip install --system soxr librosa soundfile
 RUN uv pip install --system --upgrade transformers
 
 # Copy and run the vLLM WebSocket patch script
-COPY backend/patch_vllm.py /patch_vllm.py
+COPY patch_vllm.py /patch_vllm.py
 RUN python3 /patch_vllm.py && rm /patch_vllm.py
