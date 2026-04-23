@@ -406,4 +406,5 @@ async def shutdown_app(app):
     logger.info("Application shutdown finished")
 
 if __name__ == '__main__':
-    web.run_app(init_app(), host='0.0.0.0', port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    web.run_app(init_app(), host='0.0.0.0', port=port)

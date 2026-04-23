@@ -26,6 +26,16 @@ RUN npm run build
 FROM python:3.12-slim
 WORKDIR /app
 
+# Install system dependencies required for aiortc and other packages with native extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libopus-dev \
+    libvpx-dev \
+    libffi-dev \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install UV package manager
 RUN pip install --no-cache-dir uv
 
