@@ -54,12 +54,19 @@ class StripePaymentService:
     idempotency keys, and structured logging.
     """
 
-    # Subscription tier price IDs (configure in Stripe dashboard)
+    # Subscription tier price IDs (auto-discovered from Stripe or set via environment)
     PRICE_IDS: Dict[str, Optional[str]] = {
         'free': None,  # Free tier
-        'starter': None,  # Set via environment
-        'pro': None,  # Set via environment
-        'enterprise': None,  # Set via environment
+        'starter': None,  # Auto-discovered or set via environment
+        'pro': None,  # Auto-discovered or set via environment
+        'enterprise': None,  # Auto-discovered or set via environment
+    }
+
+    # Default product names in Stripe to look up price IDs
+    DEFAULT_PRODUCT_NAMES: Dict[str, str] = {
+        'starter': 'starter-plan',
+        'pro': 'pro-plan',
+        'enterprise': 'enterprise-plan',
     }
 
     # Tier hierarchy for access control
@@ -88,12 +95,153 @@ class StripePaymentService:
             max_network_retries=config.max_network_retries,
         )
 
-        # Load price IDs from environment
-        self.PRICE_IDS['starter'] = os.environ.get("STRIPE_PRICE_STARTER")
-        self.PRICE_IDS['pro'] = os.environ.get("STRIPE_PRICE_PRO")
-        self.PRICE_IDS['enterprise'] = os.environ.get("STRIPE_PRICE_ENTERPRISE")
+        # Load price IDs: prefer auto-discovery from Stripe by product name,
+        # fall back to explicit environment variables
+        self._load_price_ids()
 
         logger.info("Stripe payment service initialized")
+
+    def _load_price_ids(self) -> None:
+        """
+        Load price IDs for subscription tiers.
+
+        First tries to auto-discover from Stripe by product name.
+        Falls back to STRIPE_PRICE_* environment variables if auto-discovery fails.
+        Logs warnings for any tiers that cannot be resolved.
+        """
+        for tier in ['starter', 'pro', 'enterprise']:
+            price_id: Optional[str] = None
+
+            # Step 1: Try auto-discovery from Stripe by product name
+            try:
+                price_id = self._discover_price_id_for_tier(tier)
+                if price_id:
+                    logger.info("Auto-discovered price ID for %s tier: %s", tier, price_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to auto-discover price ID for %s tier: %s",
+                    tier, e,
+                )
+
+            # Step 2: Fall back to explicit environment variable
+            if not price_id:
+                env_var = f"STRIPE_PRICE_{tier.upper()}"
+                price_id = os.environ.get(env_var)
+                if price_id:
+                    logger.info("Using explicit price ID for %s tier from %s", tier, env_var)
+
+            self.PRICE_IDS[tier] = price_id
+
+            if not price_id:
+                logger.warning(
+                    "No price ID configured for %s tier. "
+                    "Create a product named '%s' in Stripe, or set %s.",
+                    tier,
+                    self.DEFAULT_PRODUCT_NAMES.get(tier, f'{tier}-plan'),
+                    f"STRIPE_PRICE_{tier.upper()}",
+                )
+
+    def _discover_price_id_for_tier(self, tier: str) -> Optional[str]:
+        """
+        Discover a price ID from Stripe by looking up the product by name.
+
+        Args:
+            tier: Subscription tier name ('starter', 'pro', 'enterprise')
+
+        Returns:
+            Stripe price ID, or None if not found
+
+        Raises:
+            StripeError: If Stripe API request fails
+        """
+        # Get product name from environment or use default
+        env_var = f"STRIPE_PRODUCT_{tier.upper()}_NAME"
+        product_name = os.environ.get(env_var, self.DEFAULT_PRODUCT_NAMES.get(tier, f'{tier}-plan'))
+
+        # Find the product by name
+        product = self._find_product_by_name(product_name)
+        if not product:
+            logger.warning("Product '%s' not found in Stripe", product_name)
+            return None
+
+        logger.debug("Found product '%s' (id=%s) for %s tier", product_name, product.id, tier)
+
+        # Find an active recurring price for this product
+        price = self._find_recurring_price_for_product(product.id)
+        if not price:
+            logger.warning(
+                "No active recurring price found for product '%s' (id=%s)",
+                product_name, product.id,
+            )
+            return None
+
+        logger.debug(
+            "Found price %s for product '%s' (amount=%s %s, interval=%s)",
+            price.id, product_name, price.unit_amount, price.currency,
+            price.recurring.interval if price.recurring else 'N/A',
+        )
+        return price.id
+
+    def _find_product_by_name(self, name: str) -> Any:
+        """
+        Find a Stripe product by its name.
+
+        Tries search API first (requires Stripe API version 2022-11-15+),
+        falls back to listing all products and filtering.
+
+        Args:
+            name: Product name to search for
+
+        Returns:
+            stripe.Product object, or None if not found
+
+        Raises:
+            StripeError: If Stripe API request fails
+        """
+        try:
+            # Try search API first (more efficient, requires newer API version)
+            search_result = self._client.v1.products.search(  # type: ignore
+                query=f"name:'{name}'",
+                limit=1,
+            )
+            if search_result.data:
+                return search_result.data[0]
+        except Exception as e:
+            # Search may not be available or may fail; fall back to list
+            logger.debug("Product search failed, falling back to list: %s", e)
+
+        # Fallback: list products and filter by name
+        products = self._client.v1.products.list(  # type: ignore
+            limit=100,
+        )
+        for product in products.auto_paging_iter():
+            if product.name == name:
+                return product
+
+        return None
+
+    def _find_recurring_price_for_product(self, product_id: str) -> Any:
+        """
+        Find the first active recurring price for a given product.
+
+        Args:
+            product_id: Stripe product ID
+
+        Returns:
+            stripe.Price object, or None if not found
+
+        Raises:
+            StripeError: If Stripe API request fails
+        """
+        prices = self._client.v1.prices.list(  # type: ignore
+            product=product_id,
+            active=True,
+            limit=10,
+        )
+        for price in prices.auto_paging_iter():
+            if price.recurring:
+                return price
+        return None
 
     def _load_config_from_env(self) -> StripeConfig:
         """
