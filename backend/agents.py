@@ -17,6 +17,17 @@ logger = logging.getLogger(__name__)
 
 from auth import no_auth, require_agent_auth
 
+
+def _get_base_url():
+    """Build the public base URL from DOMAIN or HOST_IP env vars."""
+    domain = os.environ.get("DOMAIN", "").strip()
+    if domain:
+        return f"https://{domain}"
+    host_ip = os.environ.get("HOST_IP", "").strip()
+    if host_ip:
+        return f"https://{host_ip}"
+    return ""
+
 # These will be imported when needed to avoid circular imports
 # from supabase_client import supabase
 
@@ -463,9 +474,11 @@ async def agent_create_subscription(request):
                 )
 
                 # Create Checkout Session
-                import os
-                success_url = os.environ.get("STRIPE_SUCCESS_URL", "http://localhost:5173/billing/success")
-                cancel_url = os.environ.get("STRIPE_CANCEL_URL", "http://localhost:5173/billing/cancel")
+                _base = _get_base_url()
+                default_success = f"{_base}/api/v1/billing/success" if _base else "http://localhost:5173/api/v1/billing/success"
+                default_cancel = f"{_base}/api/v1/billing/cancel" if _base else "http://localhost:5173/api/v1/billing/cancel"
+                success_url = os.environ.get("STRIPE_SUCCESS_URL", default_success)
+                cancel_url = os.environ.get("STRIPE_CANCEL_URL", default_cancel)
 
                 checkout_session = await stripe_service._client.v1.checkout.sessions.create_async(  # type: ignore
                     params={

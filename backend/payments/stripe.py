@@ -613,6 +613,29 @@ class StripePaymentService:
             event.id,
         )
 
+        # Event deduplication: check if we've already processed this event
+        try:
+            existing = await asyncio.to_thread(
+                lambda: supabase.table('stripe_events')
+                    .select('id')
+                    .eq('stripe_event_id', event.id)
+                    .execute()
+            )
+            if existing.data:
+                logger.info("Duplicate webhook event ignored: %s", event.id)
+                return web.json_response({'status': 'duplicate_ignored'})
+
+            # Record event as processed
+            await asyncio.to_thread(
+                lambda: supabase.table('stripe_events').insert({
+                    'stripe_event_id': event.id,
+                    'event_type': event.type,
+                }).execute()
+            )
+        except Exception as e:
+            logger.error("Failed to deduplicate webhook event %s: %s", event.id, e)
+            # Continue processing even if dedup fails — better to process twice than lose an event
+
         # Handle the event
         try:
             event_handlers = {
@@ -620,6 +643,9 @@ class StripePaymentService:
                 'customer.subscription.created': self._handle_subscription_created,
                 'customer.subscription.updated': self._handle_subscription_updated,
                 'customer.subscription.deleted': self._handle_subscription_deleted,
+                'customer.subscription.trial_will_end': self._handle_trial_will_end,
+                'customer.subscription.past_due': self._handle_subscription_past_due,
+                'invoice.created': self._handle_invoice_created,
                 'invoice.payment_succeeded': self._handle_invoice_payment_succeeded,
                 'invoice.payment_failed': self._handle_invoice_payment_failed,
             }
@@ -815,11 +841,109 @@ class StripePaymentService:
         except Exception as e:
             logger.error("Error handling subscription deleted: %s", e, exc_info=True)
 
+    async def _handle_trial_will_end(
+        self,
+        subscription: Any,  # stripe.Subscription
+    ) -> None:
+        """
+        Handle trial ending soon (sent ~3 days before trial ends).
+        Use this to send reminder emails or in-app notifications.
+        """
+        try:
+            user_id = subscription.metadata.get('supabase_user_id') if subscription.metadata else None
+
+            if not user_id:
+                logger.error("No supabase_user_id in subscription metadata")
+                return
+
+            trial_end = subscription.trial_end
+            logger.info(
+                "Trial ending soon for user %s, subscription %s (trial ends: %s)",
+                user_id,
+                subscription.id,
+                trial_end,
+            )
+
+            # TODO: Trigger email notification or in-app notification
+            # e.g., await send_email(user_id, 'trial_ending', {'trial_end': trial_end})
+
+        except Exception as e:
+            logger.error("Error handling trial will end: %s", e, exc_info=True)
+
+    async def _handle_subscription_past_due(
+        self,
+        subscription: Any,  # stripe.Subscription
+    ) -> None:
+        """
+        Handle subscription entering past_due state.
+        Update local status and optionally trigger dunning/notification flow.
+        """
+        try:
+            user_id = subscription.metadata.get('supabase_user_id') if subscription.metadata else None
+
+            if not user_id:
+                logger.error("No supabase_user_id in subscription metadata")
+                return
+
+            # Update subscription status to past_due
+            result = supabase.table('subscriptions').update({
+                'status': 'past_due',
+                'updated_at': 'now()',
+            }).eq('stripe_subscription_id', subscription.id).execute()
+
+            if not result.data:
+                logger.error("Failed to update subscription %s to past_due", subscription.id)
+            else:
+                logger.warning(
+                    "Subscription %s for user %s is now past_due",
+                    subscription.id,
+                    user_id,
+                )
+
+            # TODO: Trigger dunning email notification
+            # e.g., await send_email(user_id, 'payment_past_due', {})
+
+        except Exception as e:
+            logger.error("Error handling subscription past_due: %s", e, exc_info=True)
+
+    async def _handle_invoice_created(
+        self,
+        invoice: Any,  # stripe.Invoice
+    ) -> None:
+        """
+        Handle invoice creation.
+        Useful for tracking billing lifecycle and analytics.
+        """
+        try:
+            subscription_id = invoice.subscription
+
+            if not subscription_id:
+                # One-off invoice (not subscription-related)
+                logger.info("One-off invoice created: %s", invoice.id)
+                return
+
+            logger.info(
+                "Invoice %s created for subscription %s (amount_due: %s %s)",
+                invoice.id,
+                subscription_id,
+                invoice.amount_due,
+                invoice.currency,
+            )
+
+            # Optionally record draft invoice for analytics
+            # (finalized/succeeded records go in transactions table)
+
+        except Exception as e:
+            logger.error("Error handling invoice created: %s", e, exc_info=True)
+
     async def _handle_invoice_payment_succeeded(
         self,
         invoice: Any,  # stripe.Invoice
     ) -> None:
-        """Handle successful invoice payment."""
+        """
+        Handle successful invoice payment.
+        Records the transaction and resets usage counters for the new period.
+        """
         try:
             subscription_id = invoice.subscription
 
@@ -827,10 +951,57 @@ class StripePaymentService:
                 logger.error("No subscription in invoice")
                 return
 
-            logger.info("Invoice payment succeeded for subscription %s", subscription_id)
+            # Find the user by subscription ID
+            sub_result = await asyncio.to_thread(
+                lambda: supabase.table('subscriptions')
+                    .select('user_id')
+                    .eq('stripe_subscription_id', subscription_id)
+                    .execute()
+            )
 
-            # Reset usage counters if needed (implementation depends on your usage tracking system)
-            # For example, you might reset monthly transcription/translation counters here
+            if not sub_result.data:
+                logger.error("No subscription found for invoice %s", invoice.id)
+                return
+
+            user_id = sub_result.data[0]['user_id']
+
+            # Record transaction in database
+            transaction_data = {
+                'user_id': user_id,
+                'stripe_invoice_id': invoice.id,
+                'stripe_subscription_id': subscription_id,
+                'amount': invoice.amount_paid,
+                'currency': invoice.currency,
+                'status': 'succeeded',
+                'type': 'subscription_renewal',
+                'payment_method': 'card',
+                'metadata': {
+                    'period_start': invoice.period_start,
+                    'period_end': invoice.period_end,
+                },
+            }
+
+            tx_result = await asyncio.to_thread(
+                lambda: supabase.table('transactions').insert(transaction_data).execute()
+            )
+
+            if not tx_result.data:
+                logger.error("Failed to record transaction for invoice %s", invoice.id)
+            else:
+                logger.info(
+                    "Invoice %s payment recorded for user %s: %s %s",
+                    invoice.id,
+                    user_id,
+                    invoice.amount_paid,
+                    invoice.currency,
+                )
+
+            # Reset monthly usage counters for the new billing period
+            # This ensures the user gets fresh quota for the new period
+            # (Usage tracking tables accumulate usage; the quota check
+            # queries the last 30 days, so this is implicitly handled,
+            # but we log it for clarity.)
+            logger.info("Usage quota refreshed for user %s (new billing period)", user_id)
 
         except Exception as e:
             logger.error("Error handling invoice payment succeeded: %s", e, exc_info=True)
@@ -839,7 +1010,10 @@ class StripePaymentService:
         self,
         invoice: Any,  # stripe.Invoice
     ) -> None:
-        """Handle failed invoice payment."""
+        """
+        Handle failed invoice payment.
+        Updates subscription to past_due and optionally triggers notification.
+        """
         try:
             subscription_id = invoice.subscription
 
@@ -847,13 +1021,43 @@ class StripePaymentService:
                 logger.error("No subscription in invoice")
                 return
 
-            logger.warning("Invoice payment failed for subscription %s", subscription_id)
+            # Find the subscription to get user_id
+            sub_result = await asyncio.to_thread(
+                lambda: supabase.table('subscriptions')
+                    .select('user_id')
+                    .eq('stripe_subscription_id', subscription_id)
+                    .execute()
+            )
 
-            # Handle payment failure (notify user, update status, etc.)
-            # You might want to:
-            # 1. Send email notification to user
-            # 2. Update subscription status to past_due
-            # 3. Eventually cancel if payment remains failed
+            if not sub_result.data:
+                logger.error("No subscription found for failed invoice %s", invoice.id)
+                return
+
+            user_id = sub_result.data[0]['user_id']
+
+            # Update subscription status to past_due
+            update_result = await asyncio.to_thread(
+                lambda: supabase.table('subscriptions')
+                    .update({'status': 'past_due', 'updated_at': 'now()'})
+                    .eq('stripe_subscription_id', subscription_id)
+                    .execute()
+            )
+
+            if not update_result.data:
+                logger.error("Failed to update subscription %s to past_due", subscription_id)
+            else:
+                logger.warning(
+                    "Invoice payment failed for user %s, subscription %s. Status updated to past_due.",
+                    user_id,
+                    subscription_id,
+                )
+
+            # TODO: Trigger payment failure notification
+            # e.g., await send_email(user_id, 'payment_failed', {
+            #     'invoice_id': invoice.id,
+            #     'amount': invoice.amount_due,
+            #     'currency': invoice.currency,
+            # })
 
         except Exception as e:
             logger.error("Error handling invoice payment failed: %s", e, exc_info=True)

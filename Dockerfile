@@ -6,6 +6,18 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 
+# Build-time environment variables for Vite
+# These must be passed as --build-arg when building the image
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_PUBLISHABLE_KEY
+ARG VITE_STRIPE_PUBLIC_KEY
+ARG VITE_FACILITATOR_URL
+
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
+ENV VITE_STRIPE_PUBLIC_KEY=${VITE_STRIPE_PUBLIC_KEY}
+ENV VITE_FACILITATOR_URL=${VITE_FACILITATOR_URL}
+
 # Copy frontend source and build
 COPY frontend/ ./
 RUN npm run build

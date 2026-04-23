@@ -16,9 +16,22 @@ from payments.stripe import get_stripe_service
 
 logger = logging.getLogger(__name__)
 
+
+def _get_base_url():
+    """Build the public base URL from DOMAIN or HOST_IP env vars."""
+    domain = os.environ.get("DOMAIN", "").strip()
+    if domain:
+        return f"https://{domain}"
+    host_ip = os.environ.get("HOST_IP", "").strip()
+    if host_ip:
+        return f"https://{host_ip}"
+    return ""
+
+
 # Stripe Checkout URLs (configurable via environment)
-STRIPE_SUCCESS_URL = os.environ.get("STRIPE_SUCCESS_URL", "http://localhost:5173/billing/success")
-STRIPE_CANCEL_URL = os.environ.get("STRIPE_CANCEL_URL", "http://localhost:5173/billing/cancel")
+_base = _get_base_url()
+STRIPE_SUCCESS_URL = os.environ.get("STRIPE_SUCCESS_URL", f"{_base}/api/v1/billing/success" if _base else "/api/v1/billing/success")
+STRIPE_CANCEL_URL = os.environ.get("STRIPE_CANCEL_URL", f"{_base}/api/v1/billing/cancel" if _base else "/api/v1/billing/cancel")
 
 
 def setup_routes(app):
@@ -65,7 +78,7 @@ async def create_checkout_session(request):
                 'error': f'Price not configured for tier: {tier}',
             }, status=400)
 
-        user_id = str(user.id) if hasattr(user, 'id') else None
+        user_id = str(user.id) if hasattr(user, 'id') else ""
         email = getattr(user, 'email', '') or ''
         name = getattr(user, 'user_metadata', {}).get('full_name', '') if hasattr(user, 'user_metadata') else ''
 

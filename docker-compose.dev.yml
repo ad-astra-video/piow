@@ -18,7 +18,15 @@ services:
     depends_on:
       - vllm
   backend:
-    build: .
+    build:
+      context: .
+      args:
+        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+        - VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
+        - VITE_STRIPE_PUBLIC_KEY=${VITE_STRIPE_PUBLIC_KEY:-}
+        - VITE_FACILITATOR_URL=${VITE_FACILITATOR_URL:-https://x402.org/facilitator}
+    env_file:
+      - ./backend/.env
     ports:
       - "8000:8000"
       - "40000-40100:40000-40100/udp"
@@ -36,6 +44,8 @@ services:
       # Host IP for SDP munging - CRITICAL for WebRTC in Docker
       # Replaces container's internal IP with host IP in SDP responses
       - HOST_IP=${HOST_IP:-127.0.0.1}
+      # Public domain for Stripe and other public-facing URLs
+      - DOMAIN=${DOMAIN:-}
       # ICE servers for WebRTC NAT traversal
       # Default: Google STUN server
       # For production, add TURN servers
@@ -104,8 +114,8 @@ services:
       - "40000-40100:40000-40100/tcp"
     environment:
       - TURN_SERVER_REALM=live-translation-app
-      - TURN_SERVER_USERNAME=turn_user
-      - TURN_SERVER_PASSWORD=turn_password_123
+      - TURN_SERVER_USERNAME=${TURN_USERNAME}
+      - TURN_SERVER_PASSWORD=${TURN_PASSWORD}
       - EXTERNAL_IP=${HOST_IP:-127.0.0.1}
     command:
       - "-n"
