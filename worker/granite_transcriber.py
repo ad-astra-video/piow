@@ -5,6 +5,7 @@ CPU-based batch transcription and translation using Granite 4.0 model
 """
 
 import os
+import subprocess
 import numpy as np
 import librosa
 import logging
@@ -20,7 +21,7 @@ class Granite4Transcriber:
     Handles both transcription and translation tasks.
     """
     
-    def __init__(self, model_path: str = "models/granite-4.0-1b-speech-onnx"):
+    def __init__(self, model_path: str = "/models/granite-4.0-1b-speech-onnx"):
         """
         Initialize the Granite 4.0 transcriber.
         
@@ -36,6 +37,44 @@ class Granite4Transcriber:
         # Try to load the model
         self._load_model()
     
+    def _download_model(self):
+        """Download the Granite 4.0 1B Speech ONNX model from Hugging Face."""
+        try:
+            logger.info("Downloading Granite 4.0 1B Speech ONNX model from Hugging Face...")
+            
+            # Ensure the model directory exists
+            self.model_path.mkdir(parents=True, exist_ok=True)
+            
+            # Download using hf CLI
+            result = subprocess.run(
+                [
+                    "hf", "download",
+                    "onnx-community/granite-4.0-1b-speech-ONNX",
+                    "--local-dir", str(self.model_path)
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3600  # 1 hour timeout for large downloads
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"Failed to download model. stderr: {result.stderr}")
+                return False
+            
+            logger.info("Model downloaded successfully")
+            logger.info(f"Download output: {result.stdout}")
+            return True
+            
+        except subprocess.TimeoutExpired:
+            logger.error("Model download timed out after 1 hour")
+            return False
+        except FileNotFoundError:
+            logger.error("hf CLI not found. Install with: pip install hf")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to download model: {e}")
+            return False
+    
     def _load_model(self):
         """Load the ONNX model and tokenizer."""
         try:
@@ -48,9 +87,20 @@ class Granite4Transcriber:
             model_onnx_path = self.model_path / "model.onnx"
             if not model_onnx_path.exists():
                 logger.warning(f"Model file not found at {model_onnx_path}")
-                logger.warning("Granite 4.0 transcriber will operate in mock mode")
-                self.is_loaded = False
-                return
+                logger.info("Attempting to download model from Hugging Face...")
+                
+                # Try to download the model
+                if not self._download_model():
+                    logger.warning("Failed to download model. Granite 4.0 transcriber will operate in mock mode")
+                    self.is_loaded = False
+                    return
+                
+                # Check again after download
+                if not model_onnx_path.exists():
+                    logger.warning("Model file still not found after download attempt")
+                    logger.warning("Granite 4.0 transcriber will operate in mock mode")
+                    self.is_loaded = False
+                    return
             
             # Initialize ONNX runtime session
             session_options = rt.SessionOptions()
@@ -319,7 +369,7 @@ def create_granite_transcriber(model_path: str = None) -> Granite4Transcriber:
     """
     if model_path is None:
         # Use default path from environment or relative path
-        model_path = os.environ.get("GRANITE_MODEL_PATH", "models/granite-4.0-1b-speech-onnx")
+        model_path = os.environ.get("GRANITE_MODEL_PATH", "/models/granite-4.0-1b-speech-onnx")
     
     return Granite4Transcriber(model_path)
 

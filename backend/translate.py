@@ -8,6 +8,7 @@ import aiohttp.web as web
 import logging
 import json
 
+from auth import no_auth, require_user_auth
 from payments.payment_strategy import x402_or_subscription
 from supabase_client import supabase
 from compute_providers.provider_manager import ComputeProviderManager
@@ -28,6 +29,26 @@ def setup_routes(app):
     """Setup translation-related routes."""
     app.router.add_post('/api/v1/translate/text', translate_text)
     app.router.add_post('/api/v1/translate/transcription', translate_transcription)
+    
+    # Translation CRUD
+    app.router.add_get('/api/v1/translations', list_translations)
+    app.router.add_get('/api/v1/translations/{id}', get_translation)
+    app.router.add_delete('/api/v1/translations/{id}', delete_translation)
+
+
+# ============================================================================
+# HELPER: Get current user_id from request
+# ============================================================================
+
+def _get_user_id(request):
+    """Extract user_id from authenticated request."""
+    user = request.get('user')
+    if user:
+        return str(user.id) if hasattr(user, 'id') else str(user.get('id', ''))
+    agent = request.get('agent')
+    if agent:
+        return str(agent.get('id', ''))
+    return None
 
 
 # ============================================================================
@@ -37,22 +58,13 @@ def setup_routes(app):
 async def _store_translation_result(request, job_result, original_text, source_language, target_language):
     """
     Store translation result in the database and record usage.
-    
-    Args:
-        request: aiohttp request (for extracting user/agent info)
-        job_result: Result dict from compute provider
-        original_text: Original text that was translated
-        source_language: Source language code
-        target_language: Target language code
-    
-    Returns:
-        translation_id or None if storage failed
     """
-    user = request.get('user') or request.get('agent')
-    user_id = str(user.id) if hasattr(user, 'id') else str(user.get('id', 'unknown'))
+    user_id = _get_user_id(request)
+    if not user_id:
+        logger.warning("Cannot store translation: no authenticated user")
+        return None
     translation_id = None
 
-    # Store translation in database
     try:
         translation_record = supabase.table('translations').insert({
             'user_id': user_id,
@@ -68,7 +80,6 @@ async def _store_translation_result(request, job_result, original_text, source_l
     except Exception as db_error:
         logger.warning(f"Failed to store translation in database: {db_error}")
 
-    # Record usage
     try:
         supabase.table('translation_usage').insert({
             'user_id': user_id,
@@ -84,49 +95,34 @@ async def _store_translation_result(request, job_result, original_text, source_l
     return translation_id
 
 
+# ============================================================================
+# TRANSLATION ENDPOINTS
+# ============================================================================
+
 @x402_or_subscription(service_type='translate')
 async def translate_text(request):
-    """
-    Handle text translation.
-
-    Accepts JSON body with:
-    - text: Text to translate (required)
-    - source_language: Source language code (default: en)
-    - target_language: Target language code (default: es)
-    """
+    """Handle text translation."""
     logger.info("Received translate text request")
 
     try:
         data = await request.json()
-
         text = data.get('text')
         source_lang = data.get('source_language', 'en')
         target_lang = data.get('target_language', 'es')
 
         if not text:
-            return web.json_response({
-                "error": "Missing text parameter"
-            }, status=400)
+            return web.json_response({"error": "Missing text parameter"}, status=400)
 
-        # Use compute provider to process the translation
         provider = compute_provider_manager.select_provider(
             job_type="translate",
-            requirements={
-                "source_language": source_lang,
-                "target_language": target_lang
-            }
+            requirements={"source_language": source_lang, "target_language": target_lang}
         )
         if not provider:
-            return web.json_response({
-                "error": "No compute provider available"
-            }, status=503)
+            return web.json_response({"error": "No compute provider available"}, status=503)
 
-        # Create translation job using the compute provider
         try:
             job_result = await provider.create_translation_job(
-                text=text,
-                source_language=source_lang,
-                target_language=target_lang
+                text=text, source_language=source_lang, target_language=target_lang
             )
         except Exception as provider_error:
             logger.error(f"Compute provider error in translate_text: {provider_error}")
@@ -135,12 +131,10 @@ async def translate_text(request):
                 "status": "error"
             }, status=502)
 
-        # Store translation result and record usage
         translation_id = await _store_translation_result(
             request, job_result, text, source_lang, target_lang
         )
 
-        # Return the real result from the compute provider
         return web.json_response({
             'id': translation_id,
             'job_id': job_result.get('job_id'),
@@ -157,65 +151,41 @@ async def translate_text(request):
 
     except Exception as e:
         logger.error(f"Error in translate_text: {e}")
-        return web.json_response({
-            "error": str(e),
-            "status": "error"
-        }, status=500)
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
 @x402_or_subscription(service_type='translate')
 async def translate_transcription(request):
-    """
-    Translate an existing transcription by ID.
-
-    Accepts JSON body with:
-    - transcription_id: UUID of the transcription to translate (required)
-    - target_language: Target language code (default: es)
-    """
+    """Translate an existing transcription by ID."""
     logger.info("Received translate transcription request")
 
     try:
         data = await request.json()
-
         transcription_id = data.get('transcription_id')
         target_language = data.get('target_language', 'es')
 
         if not transcription_id:
-            return web.json_response({
-                "error": "Missing transcription_id parameter"
-            }, status=400)
+            return web.json_response({"error": "Missing transcription_id parameter"}, status=400)
 
-        # Get the original transcription
         trans_result = supabase.table('transcriptions').select('*').eq('id', transcription_id).execute()
 
         if not trans_result.data:
-            return web.json_response({
-                "error": "Transcription not found"
-            }, status=404)
+            return web.json_response({"error": "Transcription not found"}, status=404)
 
         transcription = trans_result.data[0]
         original_text = transcription.get('text', '')
         source_language = transcription.get('language', 'en')
 
         if not original_text:
-            return web.json_response({
-                "error": "Transcription has no text to translate"
-            }, status=400)
+            return web.json_response({"error": "Transcription has no text to translate"}, status=400)
 
-        # Use compute provider to process the translation
         provider = compute_provider_manager.select_provider(
             job_type="translate",
-            requirements={
-                "source_language": source_language,
-                "target_language": target_language
-            }
+            requirements={"source_language": source_language, "target_language": target_language}
         )
         if not provider:
-            return web.json_response({
-                "error": "No compute provider available"
-            }, status=503)
+            return web.json_response({"error": "No compute provider available"}, status=503)
 
-        # Create translation job using the compute provider
         try:
             job_result = await provider.create_translation_job(
                 text=original_text,
@@ -229,20 +199,15 @@ async def translate_transcription(request):
                 "status": "error"
             }, status=502)
 
-        # Store translation result and record usage
         translation_id = await _store_translation_result(
             request, job_result, original_text, source_language, target_language
         )
 
-        # Link translation to the original transcription
         try:
-            supabase.table('translations').update({
-                'transcription_id': transcription_id,
-            }).eq('id', translation_id).execute()
+            supabase.table('translations').update({'transcription_id': transcription_id}).eq('id', translation_id).execute()
         except Exception as link_error:
             logger.warning(f"Failed to link translation to transcription: {link_error}")
 
-        # Return the real result from the compute provider
         return web.json_response({
             'id': translation_id,
             'job_id': job_result.get('job_id'),
@@ -260,7 +225,90 @@ async def translate_transcription(request):
 
     except Exception as e:
         logger.error(f"Error in translate_transcription: {e}")
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
+
+
+# ============================================================================
+# LIST / GET / DELETE TRANSLATIONS (user-scoped)
+# ============================================================================
+
+@require_user_auth
+async def list_translations(request):
+    """List translations for the authenticated user."""
+    logger.info("Received list translations request")
+
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "Authentication required"}, status=401)
+
+    try:
+        limit = int(request.query.get('limit', '100'))
+        offset = int(request.query.get('offset', '0'))
+
+        result = supabase.table('translations').select('*').eq('user_id', user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+
         return web.json_response({
-            "error": str(e),
-            "status": "error"
-        }, status=500)
+            "translations": result.data if hasattr(result, 'data') else result,
+            "count": len(result.data) if hasattr(result, 'data') else 0,
+            "limit": limit,
+            "offset": offset
+        })
+
+    except Exception as e:
+        logger.error(f"Error listing translations: {e}")
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
+
+
+@require_user_auth
+async def get_translation(request):
+    """Get a specific translation by ID (user must own it)."""
+    logger.info("Received get translation request")
+
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "Authentication required"}, status=401)
+
+    try:
+        translation_id = request.match_info.get('id')
+        if not translation_id:
+            return web.json_response({"error": "Missing translation ID"}, status=400)
+
+        result = supabase.table('translations').select('*').eq('id', translation_id).eq('user_id', user_id).execute()
+
+        if not result.data:
+            return web.json_response({"error": "Translation not found"}, status=404)
+
+        return web.json_response(result.data[0])
+
+    except Exception as e:
+        logger.error(f"Error getting translation: {e}")
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
+
+
+@require_user_auth
+async def delete_translation(request):
+    """Delete a translation by ID (user must own it)."""
+    logger.info("Received delete translation request")
+
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "Authentication required"}, status=401)
+
+    try:
+        translation_id = request.match_info.get('id')
+        if not translation_id:
+            return web.json_response({"error": "Missing translation ID"}, status=400)
+
+        result = supabase.table('translations').delete().eq('id', translation_id).eq('user_id', user_id).execute()
+
+        if not result.data:
+            return web.json_response({"error": "Translation not found"}, status=404)
+
+        return web.json_response({
+            "message": "Translation deleted successfully",
+            "translation_id": translation_id
+        })
+
+    except Exception as e:
+        logger.error(f"Error deleting translation: {e}")
+        return web.json_response({"error": str(e), "status": "error"}, status=500)

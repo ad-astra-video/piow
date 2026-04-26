@@ -1,673 +1,655 @@
 #!/usr/bin/env python3
 """
-FastAPI application for the Live Transcription & Translation Platform Worker
-Handles API requests for transcription and translation services
-Matches backend implementation from backend/transcribe.py and backend/translate.py
+PyTrickle-based Worker for Live Translation Platform.
+
+Uses StreamProcessor as the main entrypoint with decorator-based handlers.
+Provides:
+  - Batch endpoints: /transcribe, /translate, /process/request/transcribe, /process/request/translate
+  - Streaming via pytrickle: /stream/start, /stream/stop, /health, /version, etc.
+  - Audio frames forwarded to VLLM realtime websocket.
 """
 
 import os
-import logging
-import time
+import sys
+import ssl
+import socket
+import ipaddress
 import uuid
 import json
+import secrets
+import time
+import datetime
 import asyncio
 import tempfile
-import re
-from typing import Optional, Dict, Any
+import logging
+import requests
 from pathlib import Path
+from typing import Dict, Any, Optional, List
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, WebSocket, WebSocketDisconnect, Query
-from fastapi.responses import JSONResponse
-import uvicorn
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
-# Import worker components
-import sys
-sys.path.append(str(Path(__file__).parent))
+import aiohttp
+import numpy as np
+import urllib3
+
+from pytrickle import StreamProcessor, VideoFrame, AudioFrame
+from pytrickle.decorators import (
+    audio_handler,
+    video_handler,
+    on_stream_start,
+    on_stream_stop,
+    model_loader,
+)
+
+# ---------------------------------------------------------------------------
+# Ensure worker package is importable
+# ---------------------------------------------------------------------------
+WORKER_DIR = Path(__file__).parent.resolve()
+if str(WORKER_DIR) not in sys.path:
+    sys.path.insert(0, str(WORKER_DIR))
 
 from granite_transcriber import Granite4Transcriber
 from vllm_client import VLLMRealtimeClient
 
-# Configure logging
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(title="Live Translation Worker API", version="1.0.0")
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+HOST = "0.0.0.0"
+PORT = int(os.environ.get("WORKER_PORT", "9935"))
+WS_URL = os.environ.get("VLLM_WS_URL", "ws://localhost:8080/v1/realtime")
+VLLM_SOURCE_LANG = os.environ.get("VLLM_SOURCE_LANG", "en")
+VLLM_TARGET_LANG = os.environ.get("VLLM_TARGET_LANG", "es")
 
-# Initialize components
-granite_transcriber = Granite4Transcriber()
-vllm_client = VLLMRealtimeClient()
+# ---------------------------------------------------------------------------
+# Orchestrator Registration Configuration
+# ---------------------------------------------------------------------------
+ORCH_SERVICE_ADDR = os.environ.get("ORCH_SERVICE_ADDR", "")
+ORCH_SECRET = os.environ.get("ORCH_SECRET", "")
+CAPABILITY_NAME = os.environ.get("CAPABILITY_NAME", "")
+CAPABILITY_URL = os.environ.get("CAPABILITY_URL", f"https://localhost:{PORT}")
+CAPABILITY_DESCRIPTION = os.environ.get("CAPABILITY_DESCRIPTION", "Live translation worker")
+CAPABILITY_CAPACITY = int(os.environ.get("CAPABILITY_CAPACITY", "1"))
+CAPABILITY_PRICE_PER_UNIT = int(os.environ.get("CAPABILITY_PRICE_PER_UNIT", "0"))
+CAPABILITY_PRICE_SCALING = int(os.environ.get("CAPABILITY_PRICE_SCALING", "1"))
+REGISTRATION_ENABLED = os.environ.get("REGISTRATION_ENABLED", "true").lower() in ("true", "1", "yes")
+REGISTRATION_INTERVAL = int(os.environ.get("REGISTRATION_INTERVAL", "60"))  # seconds
 
-# In-memory storage for active sessions (in production, use Redis or database)
-active_sessions: Dict[str, Dict[str, Any]] = {}
-transcriptions_db: Dict[str, Dict[str, Any]] = {}  # Simple in-memory storage for transcriptions
+# Randomly generated 16-character token for this worker instance
+WORKER_TOKEN = secrets.token_hex(8)
+logger.info("Generated worker token: %s", WORKER_TOKEN)
+
+# Suppress urllib3 InsecureRequestWarning (we use verify=False for orchestrator)
+urllib3.disable_warnings()
+
+# ---------------------------------------------------------------------------
+# Auto-generated self-signed SSL certificate
+# ---------------------------------------------------------------------------
+def _generate_self_signed_cert() -> tuple:
+    """Generate a self-signed certificate and return (cert_pem, key_pem) as bytes."""
+    key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    # Get hostname and IP for SAN
+    hostname = socket.gethostname()
+    ip_addr = socket.gethostbyname(hostname)
+
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "State"),
+        x509.NameAttribute(NameOID.LOCALITY_NAME, "City"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Live Translation Worker"),
+        x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+    ])
+
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName([
+                x509.DNSName(hostname),
+                x509.DNSName("localhost"),
+                x509.IPAddress(ipaddress.IPv4Address(ip_addr)),
+                x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+            ]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM)
+    key_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    return cert_pem, key_pem
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize components on startup"""
-    logger.info("Starting Live Translation Worker API")
-    # Initialize VLLM client connection
+def _create_ssl_context() -> ssl.SSLContext:
+    """Create an SSL context with the self-signed certificate."""
+    import tempfile
+    import os
+
+    cert_pem, key_pem = _generate_self_signed_cert()
+
+    # Write to temp files (required for ssl.SSLContext.load_cert_chain)
+    cert_fd, cert_path = tempfile.mkstemp(suffix=".pem", prefix="worker_cert_")
+    key_fd, key_path = tempfile.mkstemp(suffix=".pem", prefix="worker_key_")
+
     try:
-        await vllm_client.connect()
-        logger.info("VLLM client connected successfully")
-    except Exception as e:
-        logger.warning(f"Could not connect to VLLM on startup: {e}")
+        os.write(cert_fd, cert_pem)
+        os.close(cert_fd)
+        os.write(key_fd, key_pem)
+        os.close(key_fd)
 
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    logger.info("Shutting down Live Translation Worker API")
-    await vllm_client.close()
-
-
-@app.get("/")
-async def root():
-    """Health check endpoint"""
-    return {"message": "Live Translation Worker API is running", "status": "healthy"}
-
-
-# ============================================================================
-# TRANSCRIBE ENDPOINTS - /api/v1/transcribe/*
-# ============================================================================
-
-@app.post("/api/v1/transcribe/file")
-async def transcribe_file(
-    file: UploadFile = File(...),
-    language: str = Form("en"),
-    streaming: bool = Form(False)
-):
-    """
-    Handle file upload for transcription.
-    Matches backend/transcribe.py transcribe_file endpoint.
-    
-    Args:
-        file: Audio file to transcribe
-        language: Language code (default: en)
-        streaming: Whether to use streaming mode (default: false)
-    """
-    logger.info("Received transcription file upload request")
-    
-    try:
-        # Save uploaded file temporarily
-        filename = file.filename or "uploaded_audio"
-        safe_filename = re.sub(r'[^\w\-_]', '_', filename)
-        if not safe_filename.endswith(('.wav', '.mp3', '.m4a', '.flac', '.ogg')):
-            safe_filename += '.wav'
-        
-        temp_path = f"/tmp/{safe_filename}"
-        content = await file.read()
-        with open(temp_path, "wb") as buffer:
-            buffer.write(content)
-        
-        # Determine if we should use streaming or batch
-        if streaming:
-            # For streaming, redirect to streaming endpoint
-            logger.info("Streaming mode requested - processing as batch with streaming flag")
-        
-        # Process with Granite transcriber
-        result = granite_transcriber.transcribe(temp_path, language)
-        
-        # Clean up temp file
-        try:
-            os.remove(temp_path)
-        except:
-            pass
-        
-        # Store transcription in memory
-        transcription_id = str(uuid.uuid4())
-        transcription_record = {
-            "id": transcription_id,
-            "text": result.get("text", ""),
-            "segments": result.get("segments", []),
-            "language": language,
-            "duration": result.get("duration", 0),
-            "processing_time": result.get("processing_time", 0),
-            "model": result.get("model", "granite-4.0-1b"),
-            "hardware": result.get("hardware", "cpu"),
-            "created_at": time.time(),
-            "status": "completed"
-        }
-        transcriptions_db[transcription_id] = transcription_record
-        
-        return JSONResponse(content={
-            "job_id": transcription_id,
-            "status": "completed",
-            "message": "Transcription completed successfully",
-            **transcription_record
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in transcribe_file: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/v1/transcribe/url")
-async def transcribe_url(request_data: dict):
-    """
-    Handle transcription from URL.
-    Matches backend/transcribe.py transcribe_url endpoint.
-    
-    Args:
-        audio_url: URL of the audio file
-        language: Language code (default: en)
-        format: Output format (default: json)
-    """
-    logger.info("Received transcription URL request")
-    
-    try:
-        audio_url = request_data.get('audio_url')
-        language = request_data.get('language', 'en')
-        format = request_data.get('format', 'json')
-        
-        if not audio_url:
-            raise HTTPException(status_code=400, detail="Missing audio_url parameter")
-        
-        # For URL-based transcription, we would download the file first
-        # In this worker implementation, we'll process it directly if accessible
-        import urllib.request
-        
-        temp_path = f"/tmp/url_audio_{uuid.uuid4()}.wav"
-        try:
-            urllib.request.urlretrieve(audio_url, temp_path)
-            result = granite_transcriber.transcribe(temp_path, language)
-            os.remove(temp_path)
-        except Exception as download_error:
-            logger.error(f"Failed to download audio from URL: {download_error}")
-            # Return mock result for testing
-            result = {
-                "text": f"[Mock] Transcription from URL: {audio_url}",
-                "segments": [],
-                "language": language,
-                "duration": 0,
-                "model": "granite-4.0-1b",
-                "hardware": "cpu"
-            }
-        
-        # Store transcription
-        transcription_id = str(uuid.uuid4())
-        transcription_record = {
-            "id": transcription_id,
-            "text": result.get("text", ""),
-            "segments": result.get("segments", []),
-            "language": language,
-            "duration": result.get("duration", 0),
-            "created_at": time.time(),
-            "status": "completed",
-            "source_url": audio_url
-        }
-        transcriptions_db[transcription_id] = transcription_record
-        
-        return JSONResponse(content={
-            "job_id": transcription_id,
-            "status": "completed",
-            "message": "Transcription job completed successfully",
-            **transcription_record
-        })
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in transcribe_url: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/v1/transcribe/stream")
-async def transcribe_stream(request_data: dict):
-    """
-    Handle real-time transcription streaming.
-    Matches backend/transcribe.py transcribe_stream endpoint.
-    
-    Args:
-        session_id: Optional session ID (will be generated if not provided)
-        language: Language code (default: en)
-    """
-    logger.info("Received transcription stream request")
-    
-    try:
-        session_id = request_data.get('session_id')
-        language = request_data.get('language', 'en')
-        
-        if not session_id:
-            session_id = str(uuid.uuid4())
-        
-        # Create streaming session
-        session_data = {
-            "session_id": session_id,
-            "language": language,
-            "status": "active",
-            "created_at": time.time(),
-            "chunks_received": 0,
-            "transcription_buffer": []
-        }
-        active_sessions[session_id] = session_data
-        
-        return JSONResponse(content={
-            "session_id": session_id,
-            "status": "created",
-            "message": "Streaming session created successfully",
-            "language": language
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in transcribe_stream: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/transcriptions")
-async def list_transcriptions(
-    limit: int = Query(100),
-    offset: int = Query(0)
-):
-    """
-    List transcriptions.
-    Matches backend/transcribe.py list_transcriptions endpoint.
-    
-    Args:
-        limit: Maximum number of results (default: 100)
-        offset: Offset for pagination (default: 0)
-    """
-    logger.info("Received list transcriptions request")
-    
-    try:
-        # Get all transcriptions and apply pagination
-        all_transcriptions = list(transcriptions_db.values())
-        paginated = all_transcriptions[offset:offset + limit]
-        
-        return JSONResponse(content={
-            "transcriptions": paginated,
-            "count": len(paginated),
-            "limit": limit,
-            "offset": offset,
-            "total": len(all_transcriptions)
-        })
-        
-    except Exception as e:
-        logger.error(f"Error listing transcriptions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/transcriptions/{transcription_id}")
-async def get_transcription(transcription_id: str):
-    """
-    Get a specific transcription by ID.
-    Matches backend/transcribe.py get_transcription endpoint.
-    
-    Args:
-        transcription_id: The transcription ID
-    """
-    logger.info(f"Received get transcription request for ID: {transcription_id}")
-    
-    try:
-        if transcription_id not in transcriptions_db:
-            raise HTTPException(status_code=404, detail="Transcription not found")
-        
-        return JSONResponse(content=transcriptions_db[transcription_id])
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting transcription: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/api/v1/transcriptions/{transcription_id}")
-async def delete_transcription(transcription_id: str):
-    """
-    Delete a transcription by ID.
-    Matches backend/transcribe.py delete_transcription endpoint.
-    
-    Args:
-        transcription_id: The transcription ID
-    """
-    logger.info(f"Received delete transcription request for ID: {transcription_id}")
-    
-    try:
-        if transcription_id not in transcriptions_db:
-            raise HTTPException(status_code=404, detail="Transcription not found")
-        
-        del transcriptions_db[transcription_id]
-        
-        return JSONResponse(content={
-            "message": "Transcription deleted successfully",
-            "transcription_id": transcription_id
-        })
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting transcription: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/transcribe/health")
-async def transcribe_health_check():
-    """
-    Health check for transcription service.
-    Matches backend/transcribe.py transcribe_health_check endpoint.
-    """
-    logger.info("Received transcription health check request")
-    
-    try:
-        return JSONResponse(content={
-            "status": "ok",
-            "service": "transcription",
-            "granite_transcriber": {
-                "status": "healthy" if granite_transcriber.is_available() else "mock_mode",
-                "is_loaded": granite_transcriber.is_loaded
-            },
-            "vllm_client": {
-                "status": "connected" if vllm_client.is_connected else "disconnected"
-            },
-            "active_sessions": len(active_sessions),
-            "stored_transcriptions": len(transcriptions_db),
-            "timestamp": int(time.time())
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in transcription health check: {e}")
-        return JSONResponse(content={
-            "status": "error",
-            "error": str(e)
-        }, status_code=500)
-
-
-# ============================================================================
-# TRANSLATE ENDPOINTS - /api/v1/translate/*
-# ============================================================================
-
-@app.post("/api/v1/translate/text")
-async def translate_text_endpoint(request_data: dict):
-    """
-    Handle text translation.
-    Matches backend/translate.py translate_text endpoint.
-    
-    Args:
-        text: Text to translate
-        source_language: Source language code (default: en)
-        target_language: Target language code (default: es)
-    """
-    logger.info("Received translate text request")
-    
-    try:
-        text = request_data.get('text')
-        source_lang = request_data.get('source_language', 'en')
-        target_lang = request_data.get('target_language', 'es')
-        
-        if not text:
-            raise HTTPException(status_code=400, detail="Missing text parameter")
-        
-        result = granite_transcriber.translate(text, source_lang, target_lang)
-        
-        return JSONResponse(content={
-            "job_id": str(uuid.uuid4()),
-            "status": "completed",
-            "message": "Translation completed successfully",
-            "translated_text": result.get("translated_text", ""),
-            "source_language": source_lang,
-            "target_language": target_lang,
-            "processing_time": result.get("processing_time", 0)
-        })
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in translate_text: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/v1/translate/transcription")
-async def translate_transcription(request_data: dict):
-    """
-    Translate an existing transcription.
-    Matches backend/translate.py translate_transcription endpoint.
-    
-    Args:
-        transcription_id: ID of the transcription to translate
-        target_language: Target language code (default: es)
-    """
-    logger.info("Received translate transcription request")
-    
-    try:
-        transcription_id = request_data.get('transcription_id')
-        target_language = request_data.get('target_language', 'es')
-        
-        if not transcription_id:
-            raise HTTPException(status_code=400, detail="Missing transcription_id parameter")
-        
-        # Get the original transcription
-        if transcription_id not in transcriptions_db:
-            raise HTTPException(status_code=404, detail="Transcription not found")
-        
-        transcription = transcriptions_db[transcription_id]
-        original_text = transcription.get('text', '')
-        source_language = transcription.get('language', 'en')
-        
-        if not original_text:
-            raise HTTPException(status_code=400, detail="Transcription has no text to translate")
-        
-        # Translate the text
-        result = granite_transcriber.translate(original_text, source_language, target_language)
-        
-        # Store the translated transcription
-        translated_id = str(uuid.uuid4())
-        translated_record = {
-            "id": translated_id,
-            "original_transcription_id": transcription_id,
-            "text": result.get("translated_text", ""),
-            "source_language": source_language,
-            "target_language": target_language,
-            "created_at": time.time(),
-            "status": "completed"
-        }
-        transcriptions_db[translated_id] = translated_record
-        
-        return JSONResponse(content={
-            "job_id": translated_id,
-            "status": "completed",
-            "message": "Translation completed successfully",
-            **translated_record
-        })
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in translate_transcription: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# LEGACY ENDPOINTS (for backward compatibility)
-# ============================================================================
-
-@app.post("/transcribe")
-async def transcribe_audio_legacy(
-    file: UploadFile = File(...),
-    language: str = Form("en"),
-    task: str = Form("transcribe")
-):
-    """
-    Legacy transcribe endpoint (backward compatibility).
-    Use /api/v1/transcribe/file instead.
-    """
-    logger.warning("Legacy /transcribe endpoint used - consider using /api/v1/transcribe/file")
-    
-    try:
-        # Save uploaded file temporarily
-        temp_path = f"/tmp/{file.filename}"
-        with open(temp_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Process with Granite transcriber
-        if task == "transcribe":
-            result = granite_transcriber.transcribe(temp_path, language)
-        elif task == "translate":
-            # For translation, transcribe first then translate
-            transcription_result = granite_transcriber.transcribe(temp_path, language)
-            result = granite_transcriber.translate(
-                transcription_result.get("text", ""), 
-                language, 
-                "en"
-            )
-        else:
-            raise HTTPException(status_code=400, detail="Invalid task. Use 'transcribe' or 'translate'")
-        
-        # Clean up temp file
-        os.remove(temp_path)
-        
-        return JSONResponse(content=result)
-        
-    except Exception as e:
-        logger.error(f"Error in legacy transcribe endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/translate")
-async def translate_text_legacy(
-    text: str = Form(...),
-    source_language: str = Form("en"),
-    target_language: str = Form("es")
-):
-    """
-    Legacy translate endpoint (backward compatibility).
-    Use /api/v1/translate/text instead.
-    """
-    logger.warning("Legacy /translate endpoint used - consider using /api/v1/translate/text")
-    
-    try:
-        result = granite_transcriber.translate(text, source_language, target_language)
-        return JSONResponse(content=result)
-    except Exception as e:
-        logger.error(f"Error in legacy translate endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# WEBSOCKET ENDPOINTS
-# ============================================================================
-
-@app.websocket("/translate/stream")
-async def translate_stream_websocket(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time translation streaming.
-    Handles WebRTC/WHIP input and sends processed audio over WebSocket.
-    """
-    await websocket.accept()
-    logger.info("WebSocket connection established for translation stream")
-    
-    try:
-        while True:
-            # Receive data from client
-            data = await websocket.receive_text()
-            logger.info(f"Received data: {data}")
-            
-            # Process the data (simplified)
-            response = {
-                "type": "translation_result",
-                "text": f"Processed: {data}",
-                "timestamp": asyncio.get_event_loop().time()
-            }
-            
-            # Send response back
-            await websocket.send_text(json.dumps(response))
-            
-    except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected")
-    except Exception as e:
-        logger.error(f"Error in WebSocket translate/stream: {e}")
-        try:
-            await websocket.close()
-        except:
-            pass
-
-
-@app.websocket("/ws/transcribe")
-async def transcribe_stream_websocket(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time transcription streaming.
-    Receives audio chunks and returns transcription results.
-    """
-    await websocket.accept()
-    logger.info("WebSocket connection established for transcription stream")
-    
-    session_id = str(uuid.uuid4())
-    active_sessions[session_id] = {
-        "session_id": session_id,
-        "language": "en",
-        "status": "active",
-        "created_at": time.time(),
-        "chunks_received": 0,
-        "websocket": websocket
-    }
-    
-    try:
-        # Send session info
-        await websocket.send_text(json.dumps({
-            "type": "session_created",
-            "session_id": session_id,
-            "status": "active"
-        }))
-        
-        while True:
-            # Receive audio data or control messages
-            data = await websocket.receive()
-            
-            if data.type == WebSocketDisconnect:
-                break
-            
-            if data.type == 1:  # Text
-                msg = json.loads(data.data)
-                msg_type = msg.get("type")
-                
-                if msg_type == "config":
-                    # Handle configuration
-                    language = msg.get("language", "en")
-                    active_sessions[session_id]["language"] = language
-                    await websocket.send_text(json.dumps({
-                        "type": "config_ack",
-                        "session_id": session_id,
-                        "language": language
-                    }))
-                elif msg_type == "audio_chunk":
-                    # Process audio chunk (simplified)
-                    active_sessions[session_id]["chunks_received"] += 1
-                    await websocket.send_text(json.dumps({
-                        "type": "transcription_partial",
-                        "session_id": session_id,
-                        "text": f"[Partial] Chunk {active_sessions[session_id]['chunks_received']}",
-                        "is_final": False
-                    }))
-                elif msg_type == "end_of_stream":
-                    # Finalize transcription
-                    await websocket.send_text(json.dumps({
-                        "type": "transcription_final",
-                        "session_id": session_id,
-                        "text": "[Final] Transcription complete",
-                        "is_final": True
-                    }))
-                    break
-                    
-            elif data.type == 2:  # Binary (audio data)
-                active_sessions[session_id]["chunks_received"] += 1
-                # In real implementation, process audio bytes
-                await websocket.send_text(json.dumps({
-                    "type": "transcription_partial",
-                    "session_id": session_id,
-                    "chunk_index": active_sessions[session_id]["chunks_received"],
-                    "is_final": False
-                }))
-                
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket client disconnected for session {session_id}")
-    except Exception as e:
-        logger.error(f"Error in WebSocket transcribe stream: {e}")
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert_path, key_path)
+        return ctx
     finally:
-        # Cleanup
-        if session_id in active_sessions:
-            del active_sessions[session_id]
+        # Clean up temp files after loading into context
+        try:
+            os.unlink(cert_path)
+            os.unlink(key_path)
+        except OSError:
+            pass
+
+
+_ssl_ctx = _create_ssl_context()
+logger.info("Auto-generated self-signed SSL certificate")
+
+# Runtime mutable state for capacity/price
+_current_capacity = CAPABILITY_CAPACITY
+_current_price_per_unit = CAPABILITY_PRICE_PER_UNIT
+
+# ---------------------------------------------------------------------------
+# Component singletons
+# ---------------------------------------------------------------------------
+granite_transcriber = Granite4Transcriber()
+vllm_client: Optional[VLLMRealtimeClient] = None
+
+# In-memory DB for batch jobs
+transcriptions_db: Dict[str, Dict[str, Any]] = {}
+
+
+# =============================================================================
+# Orchestrator Registration
+# =============================================================================
+def _build_registration_payload() -> Dict[str, Any]:
+    """Build the registration request payload with current capacity/price."""
+    return {
+        "url": CAPABILITY_URL,
+        "name": CAPABILITY_NAME,
+        "description": CAPABILITY_DESCRIPTION,
+        "capacity": _current_capacity,
+        "price_per_unit": _current_price_per_unit,
+        "price_scaling": CAPABILITY_PRICE_SCALING,
+        "token": WORKER_TOKEN,
+    }
+
+
+def _register_to_orchestrator() -> bool:
+    """Perform a single registration attempt with retries."""
+    register_req = _build_registration_payload()
+    headers = {
+        "Authorization": ORCH_SECRET,
+        "Content-Type": "application/json",
+    }
+    max_retries = 10
+    delay = 2  # seconds
+    logger.info("Registering capability: %s", json.dumps(register_req))
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.post(
+                "https://" + ORCH_SERVICE_ADDR + "/capability/register",
+                json=register_req,
+                headers=headers,
+                timeout=5,
+                verify=False,
+            )
+            if response.status_code == 200:
+                logger.info("Capability registered successfully")
+                return True
+            elif response.status_code == 400:
+                logger.error("Orchestrator secret incorrect (HTTP 400)")
+                return False
+            else:
+                logger.info("Attempt %d failed: HTTP %d - %s", attempt, response.status_code, response.text)
+        except requests.RequestException as e:
+            if attempt == max_retries:
+                logger.error("All retries failed: %s", e)
+            else:
+                logger.info("Attempt %d failed: %s", attempt, e)
+                time.sleep(delay)
+    return False
+
+
+async def registration_background_task():
+    """Background task that periodically re-registers the worker with the orchestrator."""
+    if not REGISTRATION_ENABLED:
+        logger.info("Orchestrator registration disabled (REGISTRATION_ENABLED=false)")
+        return
+
+    # Initial registration
+    _register_to_orchestrator()
+
+    # Periodic re-registration
+    while True:
+        await asyncio.sleep(REGISTRATION_INTERVAL)
+        logger.info("Re-registering with orchestrator (interval: %ds)", REGISTRATION_INTERVAL)
+        _register_to_orchestrator()
+
+
+# =============================================================================
+# Registration management routes
+# =============================================================================
+async def update_capacity_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """
+    POST /capability/capacity
+
+    Update the worker's capacity and re-register with the orchestrator.
+
+    Body:
+      { "capacity": 5 }
+    """
+    global _current_capacity
+    try:
+        body = await request.json()
+        new_capacity = body.get("capacity")
+        if new_capacity is None:
+            return aiohttp.web.json_response(
+                {"error": "Missing 'capacity' field"}, status=400
+            )
+        new_capacity = int(new_capacity)
+        if new_capacity < 0:
+            return aiohttp.web.json_response(
+                {"error": "Capacity must be >= 0"}, status=400
+            )
+        _current_capacity = new_capacity
+        logger.info("Capacity updated to %d", new_capacity)
+
+        # Re-register immediately if registration is enabled
+        if REGISTRATION_ENABLED and ORCH_SERVICE_ADDR:
+            _register_to_orchestrator()
+
+        return aiohttp.web.json_response({
+            "capacity": _current_capacity,
+            "message": "Capacity updated successfully",
+        })
+    except Exception as exc:
+        logger.exception("Error updating capacity")
+        return aiohttp.web.json_response({"error": str(exc)}, status=500)
+
+
+async def update_price_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """
+    POST /capability/price
+
+    Update the worker's price per unit and re-register with the orchestrator.
+
+    Body:
+      { "price_per_unit": 1.5 }
+    """
+    global _current_price_per_unit
+    try:
+        body = await request.json()
+        new_price = body.get("price_per_unit")
+        if new_price is None:
+            return aiohttp.web.json_response(
+                {"error": "Missing 'price_per_unit' field"}, status=400
+            )
+        new_price = int(new_price)
+        if new_price < 0:
+            return aiohttp.web.json_response(
+                {"error": "price_per_unit must be >= 0"}, status=400
+            )
+        _current_price_per_unit = new_price
+        logger.info("Price per unit updated to %d", new_price)
+
+        # Re-register immediately if registration is enabled
+        if REGISTRATION_ENABLED and ORCH_SERVICE_ADDR:
+            _register_to_orchestrator()
+
+        return aiohttp.web.json_response({
+            "price_per_unit": _current_price_per_unit,
+            "message": "Price updated successfully",
+        })
+    except Exception as exc:
+        logger.exception("Error updating price")
+        return aiohttp.web.json_response({"error": str(exc)}, status=500)
+
+
+async def capability_status_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """
+    GET /capability/status
+
+    Return the current registration state.
+    """
+    return aiohttp.web.json_response({
+        "capability_name": CAPABILITY_NAME,
+        "capability_url": CAPABILITY_URL,
+        "description": CAPABILITY_DESCRIPTION,
+        "capacity": _current_capacity,
+        "price_per_unit": _current_price_per_unit,
+        "price_scaling": CAPABILITY_PRICE_SCALING,
+        "registration_enabled": REGISTRATION_ENABLED,
+        "registration_interval_seconds": REGISTRATION_INTERVAL,
+        "orchestrator_service_address": ORCH_SERVICE_ADDR,
+    })
+
+
+# =============================================================================
+# Batch job helpers
+# =============================================================================
+def _normalize_transcription_result(result: Dict[str, Any], job_id: str, language: str) -> Dict[str, Any]:
+    """Ensure a consistent response shape for transcription jobs."""
+    return {
+        "job_id": job_id,
+        "status": "completed",
+        "text": result.get("text", ""),
+        "language": result.get("language", language),
+        "duration": result.get("duration"),
+        "segments": result.get("segments"),
+        "word_count": result.get("word_count"),
+        "model": result.get("model", "granite-4.0-1b"),
+        "hardware": result.get("hardware", "cpu"),
+        "provider": "worker",
+        "raw_response": result,
+    }
+
+
+def _normalize_translation_result(
+    result: Dict[str, Any], job_id: str, text: str, source_lang: str, target_lang: str
+) -> Dict[str, Any]:
+    """Ensure a consistent response shape for translation jobs."""
+    return {
+        "job_id": job_id,
+        "status": "completed",
+        "original_text": result.get("original_text", text),
+        "translated_text": result.get("translated_text", ""),
+        "source_language": result.get("source_language", source_lang),
+        "target_language": result.get("target_language", target_lang),
+        "token_count": result.get("token_count"),
+        "model": result.get("model", "granite-4.0-1b"),
+        "hardware": result.get("hardware", "cpu"),
+        "provider": "worker",
+        "raw_response": result,
+    }
+
+
+# =============================================================================
+# aiohttp route handlers (batch endpoints)
+# =============================================================================
+async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """
+    POST /transcribe  (and alias /process/request/transcribe)
+
+    Supports:
+      - multipart/form-data with file + optional language/format
+      - JSON with audio_url + optional language/format
+    """
+    logger.info("Received transcription request")
+    job_id = str(uuid.uuid4())
+
+    try:
+        content_type = request.headers.get("Content-Type", "")
+
+        if content_type.startswith("multipart/form-data"):
+            reader = await request.multipart()
+            field = await reader.next()
+
+            file_data = None
+            language = "en"
+            fmt = "json"
+
+            while field is not None:
+                if field.filename and not file_data:
+                    file_data = await field.read()
+                elif field.name == "language":
+                    language = (await field.read()).decode("utf-8", "replace").strip() or "en"
+                elif field.name == "format":
+                    fmt = (await field.read()).decode("utf-8", "replace").strip() or "json"
+                field = await reader.next()
+
+            if not file_data:
+                return aiohttp.web.json_response(
+                    {"error": "Missing file in multipart upload"}, status=400
+                )
+
+            suffix = ".wav"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(file_data)
+                tmp_path = tmp.name
+
+            try:
+                result = granite_transcriber.transcribe(tmp_path, language)
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+        else:
+            body = await request.json()
+            audio_url = body.get("audio_url")
+            language = body.get("language", "en")
+
+            if not audio_url:
+                return aiohttp.web.json_response(
+                    {"error": "Missing audio_url"}, status=400
+                )
+
+            tmp_path = tempfile.mktemp(suffix=".wav")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(audio_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                        if resp.status != 200:
+                            return aiohttp.web.json_response(
+                                {"error": f"Failed to download audio: HTTP {resp.status}"},
+                                status=502,
+                            )
+                        with open(tmp_path, "wb") as f:
+                            f.write(await resp.read())
+
+                result = granite_transcriber.transcribe(tmp_path, language)
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+        normalized = _normalize_transcription_result(result, job_id, language)
+        transcriptions_db[job_id] = normalized
+        return aiohttp.web.json_response(normalized)
+
+    except Exception as exc:
+        logger.exception("Transcription error")
+        return aiohttp.web.json_response({"error": str(exc)}, status=500)
+
+
+async def translate_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """
+    POST /translate  (and alias /process/request/translate)
+
+    Expects JSON body:
+      {
+        "text": "...",
+        "source_language": "en",
+        "target_language": "es"
+      }
+    """
+    logger.info("Received translation request")
+    job_id = str(uuid.uuid4())
+
+    try:
+        body = await request.json()
+        text = body.get("text")
+        source_lang = body.get("source_language", "en")
+        target_lang = body.get("target_language", "es")
+
+        if not text:
+            return aiohttp.web.json_response(
+                {"error": "Missing text parameter"}, status=400
+            )
+
+        result = granite_transcriber.translate(text, source_lang, target_lang)
+        normalized = _normalize_translation_result(result, job_id, text, source_lang, target_lang)
+        return aiohttp.web.json_response(normalized)
+
+    except Exception as exc:
+        logger.exception("Translation error")
+        return aiohttp.web.json_response({"error": str(exc)}, status=500)
+
+
+async def health_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """Extended health check with worker-specific info."""
+    return aiohttp.web.json_response({
+        "status": "healthy",
+        "service": "live-translation-worker",
+        "version": "2.0.0",
+        "granite_transcriber": {
+            "available": granite_transcriber.is_available(),
+            "loaded": granite_transcriber.is_loaded,
+        },
+        "vllm_client": {
+            "connected": vllm_client.is_connected if vllm_client else False,
+        },
+        "stored_transcriptions": len(transcriptions_db),
+        "timestamp": int(time.time()),
+    })
+
+
+async def root_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """Root endpoint."""
+    return aiohttp.web.json_response({
+        "message": "Live Translation Worker (PyTrickle) is running",
+        "status": "healthy",
+    })
+
+
+CUSTOM_ROUTES = [
+    ("GET", "/", root_handler),
+    ("GET", "/health", health_handler),
+    ("POST", "/transcribe", transcribe_handler),
+    ("POST", "/process/request/transcribe", transcribe_handler),
+    ("POST", "/translate", translate_handler),
+    ("POST", "/process/request/translate", translate_handler),
+    # Capability / registration management routes
+    ("GET", "/capability/status", capability_status_handler),
+    ("POST", "/capability/capacity", update_capacity_handler),
+    ("POST", "/capability/price", update_price_handler),
+]
+
+
+# =============================================================================
+# StreamProcessor handlers (decorator-based)
+# =============================================================================
+class LiveTranslationHandlers:
+    """Decorator-based handlers for pytrickle StreamProcessor."""
+
+    @model_loader
+    async def load(self, **kwargs: dict) -> None:
+        """Called once at startup to initialize the VLLM websocket connection."""
+        global vllm_client
+        logger.info("Initializing Live Translation handlers")
+        vllm_client = VLLMRealtimeClient(
+            ws_url=WS_URL,
+            source_lang=VLLM_SOURCE_LANG,
+            target_lang=VLLM_TARGET_LANG,
+        )
+        try:
+            await vllm_client.connect()
+            logger.info("VLLM client connected successfully")
+        except Exception as exc:
+            logger.warning(f"Could not connect to VLLM on startup: {exc}")
+
+    @on_stream_start
+    async def on_start(self, params: Dict[str, Any]) -> None:
+        """Called when a trickle stream starts."""
+        logger.info(f"Stream started with params: {params}")
+
+    @video_handler
+    async def handle_video(self, frame: VideoFrame) -> VideoFrame:
+        """Pass video frames through unchanged."""
+        return frame
+
+    @audio_handler
+    async def handle_audio(self, frame: AudioFrame) -> List[AudioFrame]:
+        """Forward audio frames to the VLLM realtime websocket."""
+        if vllm_client and vllm_client.is_connected:
+            try:
+                samples = frame.samples.flatten()
+                if samples.dtype == np.float32:
+                    samples = np.clip(samples * 32767, -32768, 32767).astype(np.int16)
+                audio_bytes = samples.tobytes()
+                await vllm_client.send_audio(audio_bytes)
+            except Exception as exc:
+                logger.warning(f"VLLM send_audio error: {exc}")
+        return [frame]
+
+    @on_stream_stop
+    async def on_stop(self) -> None:
+        """Called when a trickle stream stops."""
+        logger.info("Stream stopped")
+
+
+# =============================================================================
+# Startup / shutdown
+# =============================================================================
+async def on_shutdown(app: aiohttp.web.Application):
+    """Cleanup VLLM connection on server shutdown."""
+    global vllm_client
+    logger.info("Worker shutting down")
+    if vllm_client:
+        await vllm_client.close()
+        vllm_client = None
+
+
+# =============================================================================
+# Main entry point
+# =============================================================================
+async def main() -> None:
+    """Create and run the StreamProcessor with custom batch routes."""
+    handlers = LiveTranslationHandlers()
+    processor = StreamProcessor.from_handlers(
+        handlers,
+        name="live-translation-worker",
+        port=PORT,
+        host=HOST,
+        enable_default_routes=True,
+    )
+    # Register custom batch routes directly on the aiohttp app router
+    # (avoids pytrickle custom_routes API incompatibility with tuples)
+    for method, path, handler in CUSTOM_ROUTES:
+        processor.server.app.router.add_route(method, path, handler)
+
+    processor.server.app.on_shutdown.append(on_shutdown)
+
+    # Start the periodic orchestrator registration background task
+    if REGISTRATION_ENABLED and ORCH_SERVICE_ADDR:
+        logger.info("Starting orchestrator registration background task (interval: %ds)", REGISTRATION_INTERVAL)
+        asyncio.create_task(registration_background_task())
+    elif REGISTRATION_ENABLED and not ORCH_SERVICE_ADDR:
+        logger.warning("REGISTRATION_ENABLED is true but ORCH_SERVICE_ADDR is not set. Skipping registration.")
+
+    logger.info("Starting PyTrickle worker on %s:%s with SSL", HOST, PORT)
+    await processor.run_forever(ssl=_ssl_ctx)
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    asyncio.run(main())

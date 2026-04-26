@@ -1,22 +1,18 @@
 services:
   worker:
     build:
-      context: ..
-      dockerfile: worker/Dockerfile
+      context: .
     ports:
-      - "8001:8001"
-      - "40000-40100:40000-40100/udp"
-    sysctls:
-      - net.ipv4.ip_local_port_range=40000 40100
-    cap_add:
-      - SYS_ADMIN
+      - "9935:9935"
     volumes:
-      - ./worker:/app/worker
       - ./models:/models
+    env_file:
+      - .env
     environment:
       - DEBUG_AUDIO_WAV=1
       - PYTHONUNBUFFERED=1
       - HOST_IP=${HOST_IP:-127.0.0.1}
+      - WORKER_PORT=9935
       - ICE_SERVERS=${ICE_SERVERS:-stun:stun.l.google.com:19302}
       - TURN_SERVER=${TURN_SERVER:-}
       - TURN_USERNAME=${TURN_USERNAME:-}

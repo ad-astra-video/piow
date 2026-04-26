@@ -50,7 +50,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
         # In a real implementation, this would call the Livepeer orchestrator
         # to get a WHIP URL for the session
         # For now, we'll return a placeholder that indicates the worker should handle this
-        return f"{self.GPU_RUNNER_URL}/process/stream/stream/start"
+        return f"{self.GPU_RUNNER_URL}/process/stream/start"
 
     async def get_websocket_url(self, session_id: str, **kwargs) -> str:
         """

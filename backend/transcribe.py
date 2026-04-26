@@ -15,7 +15,7 @@ import time
 import uuid
 import json
 
-from auth import no_auth
+from auth import no_auth, require_user_auth
 from payments.payment_strategy import x402_or_subscription
 from supabase_client import supabase
 from compute_providers.provider_manager import ComputeProviderManager
@@ -50,6 +50,20 @@ def setup_routes(app):
     app.router.add_get('/api/v1/transcribe/health', transcribe_health_check)
 
 # ============================================================================
+# HELPER: Get current user_id from request
+# ============================================================================
+
+def _get_user_id(request):
+    """Extract user_id from authenticated request."""
+    user = request.get('user')
+    if user:
+        return str(user.id) if hasattr(user, 'id') else str(user.get('id', ''))
+    agent = request.get('agent')
+    if agent:
+        return str(agent.get('id', ''))
+    return None
+
+# ============================================================================
 # HELPER: Store transcription result and record usage
 # ============================================================================
 
@@ -67,8 +81,10 @@ async def _store_transcription_result(request, job_result, audio_url, language, 
     Returns:
         transcription_id or None if storage failed
     """
-    user = request.get('user') or request.get('agent')
-    user_id = str(user.id) if hasattr(user, 'id') else str(user.get('id', 'unknown'))
+    user_id = _get_user_id(request)
+    if not user_id:
+        logger.warning("Cannot store transcription: no authenticated user")
+        return None
     transcription_id = None
 
     # Store transcription in database
@@ -120,17 +136,11 @@ async def transcribe_file(request):
     Accepts multipart form data with:
     - file: Audio file (wav, mp3, m4a, flac, ogg)
     - language: Language code (default: en)
-
-    The file is saved temporarily and its local path is passed to the
-    compute provider. For remote providers, the file should first be
-    uploaded to accessible storage (e.g., Supabase Storage) and the
-    URL passed via the /transcribe/url endpoint instead.
     """
     logger.info("Received transcription file upload request")
 
     temp_path = None
     try:
-        # Parse multipart data
         reader = await request.multipart()
 
         file_part = None
@@ -147,18 +157,13 @@ async def transcribe_file(request):
                 "error": "No file provided"
             }, status=400)
 
-        # Save uploaded file temporarily
         filename = file_part.filename or "uploaded_audio"
-        # Create a safe filename
         safe_filename = re.sub(r'[^\w\-_]', '_', filename)
         if not safe_filename.endswith(('.wav', '.mp3', '.m4a', '.flac', '.ogg')):
-            safe_filename += '.wav'  # Default extension
+            safe_filename += '.wav'
 
-        # Create temp file
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(safe_filename)[1]) as tmp_file:
             temp_path = tmp_file.name
-
-            # Write file content
             chunk_size = 8192
             while True:
                 chunk = await file_part.read_chunk(chunk_size)
@@ -166,38 +171,25 @@ async def transcribe_file(request):
                     break
                 tmp_file.write(chunk)
 
-        # Use compute provider to process the transcription
         provider = compute_provider_manager.select_provider(
             job_type="transcribe_batch",
-            requirements={
-                "streaming": False,
-                "language": language
-            }
+            requirements={"streaming": False, "language": language}
         )
         if not provider:
-            # Clean up temp file
             try:
                 os.unlink(temp_path)
             except:
                 pass
-            return web.json_response({
-                "error": "No compute provider available"
-            }, status=503)
+            return web.json_response({"error": "No compute provider available"}, status=503)
 
-        # Create transcription job using the compute provider
-        # Note: For remote providers, the file should be uploaded to accessible storage first.
-        # The file:// URL scheme works only for providers running on the same host.
         audio_url = f"file://{temp_path}"
 
         try:
             job_result = await provider.create_transcription_job(
-                audio_url=audio_url,
-                language=language,
-                format="json"
+                audio_url=audio_url, language=language, format="json"
             )
         except Exception as provider_error:
             logger.error(f"Compute provider error in transcribe_file: {provider_error}")
-            # Clean up temp file
             try:
                 os.unlink(temp_path)
             except:
@@ -207,19 +199,16 @@ async def transcribe_file(request):
                 "status": "error"
             }, status=502)
 
-        # Clean up temp file
         try:
             os.unlink(temp_path)
             temp_path = None
         except:
             pass
 
-        # Store transcription result and record usage
         transcription_id = await _store_transcription_result(
             request, job_result, audio_url, language, source_type='upload'
         )
 
-        # Return the real result from the compute provider
         return web.json_response({
             'id': transcription_id,
             'job_id': job_result.get('job_id'),
@@ -236,16 +225,12 @@ async def transcribe_file(request):
 
     except Exception as e:
         logger.error(f"Error in transcribe_file: {e}")
-        # Clean up temp file if it exists
         if temp_path:
             try:
                 os.unlink(temp_path)
             except:
                 pass
-        return web.json_response({
-            "error": str(e),
-            "status": "error"
-        }, status=500)
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
 @x402_or_subscription(service_type='transcribe_cpu')
@@ -262,34 +247,22 @@ async def transcribe_url(request):
 
     try:
         data = await request.json()
-
         audio_url = data.get('audio_url')
         language = data.get('language', 'en')
         format = data.get('format', 'json')
 
         if not audio_url:
-            return web.json_response({
-                "error": "Missing audio_url parameter"
-            }, status=400)
+            return web.json_response({"error": "Missing audio_url parameter"}, status=400)
 
-        # Use compute provider to process the transcription
         provider = compute_provider_manager.select_provider(
-            job_type="transcribe_batch",
-            requirements={
-                "language": language
-            }
+            job_type="transcribe_batch", requirements={"language": language}
         )
         if not provider:
-            return web.json_response({
-                "error": "No compute provider available"
-            }, status=503)
+            return web.json_response({"error": "No compute provider available"}, status=503)
 
-        # Create transcription job using the compute provider
         try:
             job_result = await provider.create_transcription_job(
-                audio_url=audio_url,
-                language=language,
-                format=format
+                audio_url=audio_url, language=language, format=format
             )
         except Exception as provider_error:
             logger.error(f"Compute provider error in transcribe_url: {provider_error}")
@@ -298,12 +271,10 @@ async def transcribe_url(request):
                 "status": "error"
             }, status=502)
 
-        # Store transcription result and record usage
         transcription_id = await _store_transcription_result(
             request, job_result, audio_url, language, source_type='url'
         )
 
-        # Return the real result from the compute provider
         return web.json_response({
             'id': transcription_id,
             'job_id': job_result.get('job_id'),
@@ -320,61 +291,35 @@ async def transcribe_url(request):
 
     except Exception as e:
         logger.error(f"Error in transcribe_url: {e}")
-        return web.json_response({
-            "error": str(e),
-            "status": "error"
-        }, status=500)
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
 @x402_or_subscription(service_type='transcribe_gpu')
 async def transcribe_stream(request):
-    """
-    Handle real-time transcription streaming.
-    
-    This endpoint:
-    1. Selects an appropriate compute provider
-    2. Negotiates a stream session with the provider (POST to provider's start endpoint)
-    3. Stores the provider's response (URLs) for later use
-    4. Returns the stream URLs to the client
-    """
+    """Handle real-time transcription streaming."""
     logger.info("Received transcription stream request")
 
     try:
         data = await request.json()
-
         session_id = data.get('session_id')
         language = data.get('language', 'en')
 
         if not session_id:
-            import uuid
             session_id = str(uuid.uuid4())
 
-        # Select compute provider based on job requirements
         provider = compute_provider_manager.select_provider(
-            job_type="transcribe_stream",
-            requirements={"language": language}
+            job_type="transcribe_stream", requirements={"language": language}
         )
-        
         if not provider:
-            return web.json_response({
-                "error": "No compute provider available"
-            }, status=503)
+            return web.json_response({"error": "No compute provider available"}, status=503)
 
-        # Create streaming session by negotiating with the provider
-        # This makes an HTTP POST to the provider's session start endpoint
         session_result = await provider.create_streaming_session(
-            session_id=session_id,
-            language=language
+            session_id=session_id, language=language
         )
 
-        # Import session store to save provider session data
         from sessions import session_store
-        
-        # Store session in session store with provider data
         stream_id = await session_store.create_stream_session(
-            session_id=session_id,
-            language=language,
-            provider_session_data=session_result
+            session_id=session_id, language=language, provider_session_data=session_result
         )
 
         return web.json_response({
@@ -382,9 +327,6 @@ async def transcribe_stream(request):
             "stream_id": stream_id,
             "status": "active",
             "message": "Streaming session created successfully",
-            # WHIP is now proxied through the backend — clients POST SDP offers
-            # to /api/v1/transcribe/stream/{stream_id}/whip instead of connecting
-            # directly to the provider. The provider's whip_url is stored server-side.
             "data_url": session_result.get("data_url"),
             "update_url": session_result.get("update_url"),
             "stop_url": session_result.get("stop_url"),
@@ -394,129 +336,80 @@ async def transcribe_stream(request):
 
     except Exception as e:
         logger.error(f"Error in transcribe_stream: {e}")
-        return web.json_response({
-            "error": str(e),
-            "status": "error"
-        }, status=500)
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
 @x402_or_subscription(service_type='transcribe_gpu')
 async def whip_proxy(request):
-    """
-    Proxy WHIP SDP offer/answer through the backend.
-
-    The frontend POSTs an SDP offer to this endpoint. The backend looks up
-    the provider's whip_url from the session store, forwards the SDP offer
-    to the provider, and returns the SDP answer to the frontend.
-
-    This ensures the provider's internal URL is never exposed to the client,
-    and the backend can enforce auth and rate-limiting on WHIP connections.
-
-    Request:
-        POST /api/v1/transcribe/stream/{stream_id}/whip
-        Content-Type: application/sdp
-        Body: SDP offer (text/plain)
-
-    Response:
-        200 OK
-        Content-Type: application/sdp
-        Body: SDP answer (text/plain)
-    """
+    """Proxy WHIP SDP offer/answer through the backend."""
     stream_id = request.match_info.get('stream_id')
     if not stream_id:
-        return web.json_response(
-            {"error": "Missing stream_id in URL path"},
-            status=400
-        )
+        return web.json_response({"error": "Missing stream_id in URL path"}, status=400)
 
-    # Look up the stream session to find the provider's whip_url
     from sessions import session_store
-
     stream_session = await session_store.get_stream_session(stream_id)
     if not stream_session:
-        return web.json_response(
-            {"error": f"Stream session '{stream_id}' not found. Create one via POST /api/v1/transcribe/stream first."},
-            status=404
-        )
+        return web.json_response({
+            "error": f"Stream session '{stream_id}' not found. Create one via POST /api/v1/transcribe/stream first."
+        }, status=404)
 
     provider_session = stream_session.get("provider_session", {})
     provider_whip_url = provider_session.get("whip_url")
     if not provider_whip_url:
-        return web.json_response(
-            {"error": f"No WHIP URL available for stream session '{stream_id}'. The compute provider did not return a WHIP endpoint."},
-            status=503
-        )
+        return web.json_response({
+            "error": f"No WHIP URL available for stream session '{stream_id}'."
+        }, status=503)
 
-    # Read the SDP offer from the request body
     sdp_offer = await request.text()
-    if not sdp_offer or not sdp_offer.strip().startswith("v=0"):
-        logger.warning(f"WHIP proxy: received invalid SDP offer for stream {stream_id} (length={len(sdp_offer)})")
+    logger.info(f"WHIP proxy: forwarding SDP offer for stream {stream_id}")
 
-    logger.info(f"WHIP proxy: forwarding SDP offer for stream {stream_id} to provider (offer length={len(sdp_offer)})")
-
-    # Forward the SDP offer to the provider's WHIP endpoint
     try:
         async with aiohttp.ClientSession() as http_session:
             async with http_session.post(
-                provider_whip_url,
-                data=sdp_offer,
+                provider_whip_url, data=sdp_offer,
                 headers={"Content-Type": "application/sdp"},
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as provider_response:
-                if provider_response.status != 200 and provider_response.status != 201:
+                if provider_response.status not in (200, 201):
                     error_text = await provider_response.text()
-                    logger.error(
-                        f"WHIP proxy: provider returned {provider_response.status} for stream {stream_id}: {error_text[:500]}"
-                    )
-                    return web.json_response(
-                        {"error": f"Provider WHIP endpoint returned {provider_response.status}", "details": error_text[:500]},
-                        status=provider_response.status
-                    )
+                    return web.json_response({
+                        "error": f"Provider WHIP endpoint returned {provider_response.status}",
+                        "details": error_text[:500]
+                    }, status=provider_response.status)
 
-                # Get the SDP answer from the provider
                 sdp_answer = await provider_response.text()
-                logger.info(
-                    f"WHIP proxy: received SDP answer for stream {stream_id} (answer length={len(sdp_answer)})"
-                )
-
-                # Return the SDP answer to the frontend
-                return web.Response(
-                    text=sdp_answer,
-                    content_type="application/sdp",
-                    status=provider_response.status
-                )
+                return web.Response(text=sdp_answer, content_type="application/sdp", status=provider_response.status)
 
     except aiohttp.ClientError as e:
-        logger.error(f"WHIP proxy: connection error for stream {stream_id}: {e}")
-        return web.json_response(
-            {"error": f"Failed to connect to provider WHIP endpoint: {str(e)}"},
-            status=502
-        )
+        return web.json_response({"error": f"Failed to connect to provider WHIP endpoint: {str(e)}"}, status=502)
     except asyncio.TimeoutError:
-        logger.error(f"WHIP proxy: timeout for stream {stream_id}")
-        return web.json_response(
-            {"error": "Provider WHIP endpoint timed out"},
-            status=504
-        )
+        return web.json_response({"error": "Provider WHIP endpoint timed out"}, status=504)
     except Exception as e:
-        logger.error(f"WHIP proxy: unexpected error for stream {stream_id}: {e}")
-        return web.json_response(
-            {"error": f"WHIP proxy error: {str(e)}"},
-            status=500
-        )
+        return web.json_response({"error": f"WHIP proxy error: {str(e)}"}, status=500)
 
 
+# ============================================================================
+# LIST / GET / DELETE TRANSCRIPTIONS (user-scoped)
+# ============================================================================
+
+@require_user_auth
 async def list_transcriptions(request):
-    """List transcriptions."""
+    """List transcriptions for the authenticated user."""
     logger.info("Received list transcriptions request")
 
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "Authentication required"}, status=401)
+
     try:
-        # Get query parameters
         limit = int(request.query.get('limit', '100'))
         offset = int(request.query.get('offset', '0'))
+        source_type = request.query.get('source_type')
 
-        # Query transcriptions from database
-        result = supabase.table('transcriptions').select('*').range(offset, offset + limit - 1).execute()
+        query = supabase.table('transcriptions').select('*').eq('user_id', user_id)
+        if source_type:
+            query = query.eq('source_type', source_type)
+        result = query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
 
         return web.json_response({
             "transcriptions": result.data if hasattr(result, 'data') else result,
@@ -527,59 +420,53 @@ async def list_transcriptions(request):
 
     except Exception as e:
         logger.error(f"Error listing transcriptions: {e}")
-        return web.json_response({
-            "error": str(e),
-            "status": "error"
-        }, status=500)
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
+@require_user_auth
 async def get_transcription(request):
-    """Get a specific transcription by ID."""
+    """Get a specific transcription by ID (user must own it)."""
     logger.info("Received get transcription request")
+
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "Authentication required"}, status=401)
 
     try:
         transcription_id = request.match_info.get('id')
         if not transcription_id:
-            return web.json_response({
-                "error": "Missing transcription ID"
-            }, status=400)
+            return web.json_response({"error": "Missing transcription ID"}, status=400)
 
-        # Query transcription from database
-        result = supabase.table('transcriptions').select('*').eq('id', transcription_id).execute()
+        result = supabase.table('transcriptions').select('*').eq('id', transcription_id).eq('user_id', user_id).execute()
 
         if not result.data:
-            return web.json_response({
-                "error": "Transcription not found"
-            }, status=404)
+            return web.json_response({"error": "Transcription not found"}, status=404)
 
         return web.json_response(result.data[0])
 
     except Exception as e:
         logger.error(f"Error getting transcription: {e}")
-        return web.json_response({
-            "error": str(e),
-            "status": "error"
-        }, status=500)
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
+@require_user_auth
 async def delete_transcription(request):
-    """Delete a transcription by ID."""
+    """Delete a transcription by ID (user must own it)."""
     logger.info("Received delete transcription request")
+
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "Authentication required"}, status=401)
 
     try:
         transcription_id = request.match_info.get('id')
         if not transcription_id:
-            return web.json_response({
-                "error": "Missing transcription ID"
-            }, status=400)
+            return web.json_response({"error": "Missing transcription ID"}, status=400)
 
-        # Delete transcription from database
-        result = supabase.table('transcriptions').delete().eq('id', transcription_id).execute()
+        result = supabase.table('transcriptions').delete().eq('id', transcription_id).eq('user_id', user_id).execute()
 
         if not result.data:
-            return web.json_response({
-                "error": "Transcription not found"
-            }, status=404)
+            return web.json_response({"error": "Transcription not found"}, status=404)
 
         return web.json_response({
             "message": "Transcription deleted successfully",
@@ -588,10 +475,7 @@ async def delete_transcription(request):
 
     except Exception as e:
         logger.error(f"Error deleting transcription: {e}")
-        return web.json_response({
-            "error": str(e),
-            "status": "error"
-        }, status=500)
+        return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
 @no_auth
@@ -600,13 +484,10 @@ async def transcribe_health_check(request):
     logger.info("Received transcription health check request")
 
     try:
-        # Check compute provider health
         provider_health = {}
         for name in compute_provider_manager.list_providers():
             provider = compute_provider_manager.get_provider(name)
             if provider:
-                # In a real implementation, this would be async
-                # For now, we'll check if it's enabled
                 provider_health[name] = {
                     "status": "healthy" if provider.enabled else "disabled",
                     "provider": name
@@ -614,11 +495,9 @@ async def transcribe_health_check(request):
             else:
                 provider_health[name] = {"status": "unknown", "provider": name}
 
-        # Check Supabase connection
         supabase_status = "unknown"
         try:
             if supabase:
-                # Simple query to check connection
                 supabase.table('agents').select('id').limit(1).execute()
                 supabase_status = "ok"
             else:
@@ -636,7 +515,4 @@ async def transcribe_health_check(request):
 
     except Exception as e:
         logger.error(f"Error in transcription health check: {e}")
-        return web.json_response({
-            "error": str(e),
-            "status": "error"
-        }, status=500)
+        return web.json_response({"error": str(e), "status": "error"}, status=500)

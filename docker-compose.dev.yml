@@ -142,13 +142,9 @@ services:
     build:
       context: .
       dockerfile: worker/Dockerfile
+    runtime: nvidia
     ports:
-      - "8001:8001"
-      - "40000-40100:40000-40100/udp"
-    sysctls:
-      - net.ipv4.ip_local_port_range=40000 40100
-    cap_add:
-      - SYS_ADMIN
+      - "9935:9935"
     volumes:
       - ./worker:/app/worker
       - ./models:/models

@@ -45,3 +45,5 @@ Dockerfile
 *.md
 docs/
 models/
+.venv/
+tests/
