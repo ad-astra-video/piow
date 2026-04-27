@@ -100,7 +100,9 @@ export default function TranscribeStream({ accessToken }) {
 
   useEffect(() => {
     return () => {
-      if (isStartedRef.current) stopTranscription({ preserveStatus: false });
+      if (isStartedRef.current) {
+        void stopTranscription({ preserveStatus: false });
+      }
     };
   }, []);
 
@@ -113,14 +115,40 @@ export default function TranscribeStream({ accessToken }) {
     return canvas.captureStream().getVideoTracks()[0];
   };
 
-  const stopTranscription = ({ preserveStatus = false } = {}) => {
+  const requestStreamStop = async (streamId) => {
+    if (!streamId) return;
+    const headers = {};
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+    const response = await fetch(`${API_BASE}/stream/${streamId}/stop`, {
+      method: 'POST',
+      headers,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      throw new Error(`Stop request failed (${response.status}): ${errorBody}`);
+    }
+  };
+
+  const stopTranscription = async ({ preserveStatus = false } = {}) => {
     const wasStarted = isStartedRef.current;
+    const activeStreamId = streamIdRef.current;
+
+    if (activeStreamId) {
+      try {
+        await requestStreamStop(activeStreamId);
+      } catch (stopErr) {
+        setErrorMessage((prev) => prev || `Failed to stop stream cleanly: ${stopErr.message}`);
+      }
+    }
+
     isStartedRef.current = false;
     setIsStarted(false);
 
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && streamIdRef.current) {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && activeStreamId) {
       try {
-        wsRef.current.send(JSON.stringify({ type: 'stop_stream', stream_id: streamIdRef.current }));
+        wsRef.current.send(JSON.stringify({ type: 'stop_stream', stream_id: activeStreamId }));
       } catch (e) {}
     }
     streamIdRef.current = null;
@@ -225,7 +253,7 @@ export default function TranscribeStream({ accessToken }) {
 
         ws.onclose = () => {
           if (isStartedRef.current) {
-            stopTranscription({ preserveStatus: true });
+            void stopTranscription({ preserveStatus: true });
             setStatus('WebSocket disconnected.');
           }
         };
@@ -244,7 +272,7 @@ export default function TranscribeStream({ accessToken }) {
     } catch (err) {
       setStatus(`Error: ${err.message}`);
       setErrorMessage(err.message);
-      stopTranscription({ preserveStatus: true });
+      void stopTranscription({ preserveStatus: true });
     }
   };
 
@@ -273,7 +301,7 @@ export default function TranscribeStream({ accessToken }) {
             <button className="primary-button" onClick={startTranscription} disabled={isStarted}>
               {isStarted ? <><Radio size={16} /> Listening…</> : <><Mic size={16} /> Start Session</>}
             </button>
-            <button className="secondary-button" onClick={() => stopTranscription()} disabled={!isStarted}>
+            <button className="secondary-button" onClick={() => { void stopTranscription(); }} disabled={!isStarted}>
               <MicOff size={16} /> Stop Session
             </button>
           </div>

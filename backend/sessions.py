@@ -984,6 +984,7 @@ async def stop_stream_session(request):
     try:
         # Get stream_id from path parameter
         stream_id = request.match_info.get('stream_id')
+        logger.info("Stop stream request received: stream_id=%s", stream_id)
         if not stream_id:
             return web.json_response({"error": "Stream ID required"}, status=400)
 
@@ -1009,6 +1010,12 @@ async def stop_stream_session(request):
                 provider_urls["stop_url"],
                 json={"provider_stream_id": provider_urls.get("provider_stream_id")}
             ) as response:
+                logger.info(
+                    "Stop stream provider response: stream_id=%s provider_stream_id=%s http_status=%s",
+                    stream_id,
+                    provider_urls.get("provider_stream_id"),
+                    response.status,
+                )
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error(f"Provider stop failed: {response.status} - {error_text}")
@@ -1022,6 +1029,8 @@ async def stop_stream_session(request):
         # Update local session
         await session_store.close_stream_session(stream_id)
 
+        logger.info("Stop stream request completed: stream_id=%s", stream_id)
+
         return web.json_response({
             "stream_id": stream_id,
             "status": "stopped",
@@ -1029,7 +1038,7 @@ async def stop_stream_session(request):
             "message": "Stream session stopped via provider"
         })
     except Exception as e:
-        logger.error(f"Error stopping stream session: {e}")
+        logger.exception(f"Error stopping stream session: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 
