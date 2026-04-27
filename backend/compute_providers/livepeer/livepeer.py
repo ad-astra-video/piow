@@ -270,7 +270,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
         model = kwargs.get("model", "voxtral-realtime")
         capability = kwargs.get("capability", "live-transcription")
         timeout_seconds = kwargs.get("timeout_seconds", 120)
-        stream_name = kwargs.get("stream_name", f"translation-{session_id}")
+        stream_name = "live-transcribe"
         stream_request_id = kwargs.get("stream_request_id")
         rtmp_output = kwargs.get("rtmp_output")
         
