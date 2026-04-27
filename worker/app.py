@@ -66,8 +66,12 @@ VLLM_TARGET_LANG = os.environ.get("VLLM_TARGET_LANG", "es")
 ORCH_SERVICE_ADDR = os.environ.get("ORCH_SERVICE_ADDR", "")
 ORCH_SECRET = os.environ.get("ORCH_SECRET", "")
 CAPABILITY_NAME = os.environ.get("CAPABILITY_NAME", "")
+if not CAPABILITY_NAME:
+    raise RuntimeError("CAPABILITY_NAME environment variable is required")
 CAPABILITY_URL = os.environ.get("CAPABILITY_URL", f"https://localhost:{PORT}")
-CAPABILITY_DESCRIPTION = os.environ.get("CAPABILITY_DESCRIPTION", "Live translation worker")
+CAPABILITY_DESCRIPTION = os.environ.get("CAPABILITY_DESCRIPTION", "")
+if not CAPABILITY_DESCRIPTION:
+    raise RuntimeError("CAPABILITY_DESCRIPTION environment variable is required")
 CAPABILITY_CAPACITY = int(os.environ.get("CAPABILITY_CAPACITY", "1"))
 CAPABILITY_PRICE_PER_UNIT = int(os.environ.get("CAPABILITY_PRICE_PER_UNIT", "0"))
 CAPABILITY_PRICE_SCALING = int(os.environ.get("CAPABILITY_PRICE_SCALING", "1"))
@@ -428,7 +432,7 @@ async def health_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     """Extended health check with worker-specific info."""
     return aiohttp.web.json_response({
         "status": "healthy",
-        "service": "live-translation-worker",
+        "service": CAPABILITY_NAME,
         "version": "2.0.0",
         "granite_transcriber": {
             "available": granite_transcriber.is_available(),
@@ -536,7 +540,7 @@ async def main() -> None:
     handlers = LiveTranslationHandlers()
     processor = StreamProcessor.from_handlers(
         handlers,
-        name="live-translation-worker",
+        name=CAPABILITY_NAME,
         port=PORT,
         host=HOST,
         enable_default_routes=True,
