@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
 const API_BASE = `${window.location.origin}/api/v1`;
@@ -110,6 +111,9 @@ export default function BillingPage() {
           {status === 'active' && <span className="active-badge">Active</span>}
           {status === 'canceled' && <span className="canceled-badge">Canceled</span>}
         </div>
+        <Link to="/billing/plans" className="secondary-button">
+          {tier === 'free' || status === 'none' ? 'Choose a Plan' : 'Change Plan'}
+        </Link>
         {tier !== 'free' && status !== 'canceled' && (
           <button
             className="cancel-button"
