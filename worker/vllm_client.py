@@ -226,8 +226,7 @@ class VLLMRealtimeClient:
             async for message in self.websocket:
                 try:
                     data = json.loads(message)
-                    # Only log at DEBUG level — result logs are emitted in _handle_vllm_message
-                    logger.debug(f"VLLM raw message: {json.dumps(data, indent=2)[:500]}")
+                    logger.info(f"VLLM <<< {data.get('type', 'unknown')}: {json.dumps(data)[:300]}")
                     await self._handle_vllm_message(data)
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse VLLM message: {e}, raw: {message[:200]}")
@@ -249,7 +248,7 @@ class VLLMRealtimeClient:
         # Handle transcription events - log ALL delta events even if empty
         if msg_type == "transcription.delta":
             delta = data.get("delta", "")
-            logger.debug(f"VLLM transcription.delta: delta='{delta}' (len={len(delta)})")
+            logger.info(f"VLLM transcription.delta: '{delta}' (len={len(delta)})")
             if delta and self.text_callback:
                 result = self.text_callback(delta)
                 if inspect.isawaitable(result):
@@ -267,6 +266,7 @@ class VLLMRealtimeClient:
         
         elif msg_type == "response.audio_transcript.delta":
             delta = data.get("delta", "")
+            logger.info(f"VLLM response.audio_transcript.delta: '{delta}'")
             if delta and self.text_callback:
                 result = self.text_callback(delta)
                 if inspect.isawaitable(result):
@@ -283,6 +283,7 @@ class VLLMRealtimeClient:
 
         elif msg_type == "response.text.delta":
             delta = data.get("delta", "")
+            logger.info(f"VLLM response.text.delta: '{delta}'")
             if delta and self.text_callback:
                 result = self.text_callback(delta)
                 if inspect.isawaitable(result):
@@ -323,10 +324,10 @@ class VLLMRealtimeClient:
                     await result
                 
         elif msg_type in ["session.created", "session.updated", "input_audio_buffer.committed"]:
-            logger.debug(f"VLLM {msg_type}")
+            logger.info(f"VLLM {msg_type}: {json.dumps(data)[:200]}")
 
         else:
-            logger.debug(f"VLLM unhandled message type: {msg_type}")
+            logger.info(f"VLLM unhandled message type: {msg_type} — {json.dumps(data)[:200]}")
 
     async def update_session_config(
         self,
