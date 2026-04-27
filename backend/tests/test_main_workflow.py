@@ -321,5 +321,44 @@ class TestHealthCheck(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(body["services"]["sse_relays"], int)
 
 
+class TestComputeProviderStartupSync(unittest.IsolatedAsyncioTestCase):
+    """Test startup synchronization of compute provider definitions to DB."""
+
+    @patch('main.supabase')
+    async def test_sync_compute_providers_to_db_upserts_by_name(self, mock_supabase):
+        import main
+
+        mock_table = MagicMock()
+        mock_upsert = MagicMock()
+        mock_table.upsert.return_value = mock_upsert
+        mock_supabase.table.return_value = mock_table
+
+        await main.sync_compute_providers_to_db(AsyncMock())
+
+        mock_supabase.table.assert_called_once_with("compute_providers")
+        self.assertTrue(mock_table.upsert.called)
+        args, kwargs = mock_table.upsert.call_args
+        self.assertEqual(kwargs.get("on_conflict"), "name")
+        self.assertGreaterEqual(len(args[0]), 1)
+        self.assertIn("name", args[0][0])
+        self.assertIn("type", args[0][0])
+        self.assertIn("enabled", args[0][0])
+        self.assertIn("config", args[0][0])
+        mock_upsert.execute.assert_called_once()
+
+    @patch('main.logger')
+    @patch('main.supabase')
+    async def test_sync_compute_providers_to_db_logs_warning_on_failure(self, mock_supabase, mock_logger):
+        import main
+
+        mock_supabase.table.side_effect = Exception("db down")
+
+        await main.sync_compute_providers_to_db(AsyncMock())
+
+        mock_logger.warning.assert_called_once()
+        warning_message = mock_logger.warning.call_args[0][0]
+        self.assertIn("Failed to sync compute providers", warning_message)
+
+
 if __name__ == '__main__':
     unittest.main()

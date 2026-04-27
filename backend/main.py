@@ -57,6 +57,56 @@ compute_provider_manager = ComputeProviderManager()
 # Register providers from definitions
 compute_provider_manager.register_providers_from_definitions(PROVIDER_DEFINITIONS)
 
+
+def _substitute_provider_env_vars(config):
+    """Resolve ${ENV_VAR} placeholders in provider configs."""
+    resolved = {}
+    for key, value in config.items():
+        if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+            env_var = value[2:-1]
+            resolved[key] = os.environ.get(env_var, value)
+        else:
+            resolved[key] = value
+    return resolved
+
+
+def _provider_type_from_definition(definition):
+    """Infer provider type for database storage from definition metadata."""
+    tags = definition.get("tags") or []
+    if tags:
+        return tags[0]
+
+    name = definition.get("name", "")
+    if "-" in name:
+        return name.split("-", 1)[0]
+    return name or "custom"
+
+
+async def sync_compute_providers_to_db(_app):
+    """Sync in-code provider definitions into the compute_providers table on startup."""
+    try:
+        provider_rows = []
+        for definition in compute_provider_manager.get_provider_definitions():
+            provider_rows.append({
+                "name": definition["name"],
+                "type": _provider_type_from_definition(definition),
+                "enabled": bool(definition.get("config", {}).get("enabled", True)),
+                "config": _substitute_provider_env_vars(definition.get("config", {})),
+            })
+
+        if not provider_rows:
+            logger.info("No compute provider definitions found to sync")
+            return
+
+        supabase.table("compute_providers").upsert(
+            provider_rows,
+            on_conflict="name",
+        ).execute()
+        logger.info(f"Synced {len(provider_rows)} compute providers to database")
+    except Exception as e:
+        # Do not block app startup if DB sync fails.
+        logger.warning(f"Failed to sync compute providers to database at startup: {e}")
+
 # Host IP for SDP munging (Docker container IP replacement)
 HOST_IP = os.environ.get("HOST_IP", "127.0.0.1")
 
@@ -303,6 +353,7 @@ async def health_check(request):
 async def init_app():
     """Initialize the aiohttp web application."""
     app = web.Application(middlewares=[auth_middleware])
+    app.on_startup.append(sync_compute_providers_to_db)
     app.on_shutdown.append(shutdown_app)
 
     # Add routes
