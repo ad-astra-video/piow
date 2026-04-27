@@ -11,6 +11,7 @@ import time
 import json
 import secrets
 import string
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -121,17 +122,18 @@ async def agent_get_usage(request):
     try:
         # Get usage statistics from the database
         # We'll get today's usage and total usage
-        today_start = int(time.time()) - (int(time.time()) % 86400)  # Start of today in UTC
+        now = datetime.now(timezone.utc)
+        today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).isoformat()
 
         # Today's usage
-        today_result = supabase.table('agent_usage').select(
+        today_result = supabase.table('api_usage').select(
             'endpoint', 'method', 'success', 'cost_usdc_cents'
-        ).eq('agent_id', agent_id).gte('timestamp', today_start).execute()
+        ).eq('actor_type', 'agent').eq('agent_id', agent_id).gte('timestamp', today_start).execute()
 
         # Total usage
-        total_result = supabase.table('agent_usage').select(
+        total_result = supabase.table('api_usage').select(
             'endpoint', 'method', 'success', 'cost_usdc_cents'
-        ).eq('agent_id', agent_id).execute()
+        ).eq('actor_type', 'agent').eq('agent_id', agent_id).execute()
 
         # Calculate statistics
         today_data = today_result.data if hasattr(today_result, 'data') else today_result

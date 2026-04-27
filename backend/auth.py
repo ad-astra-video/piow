@@ -21,6 +21,7 @@ import hmac
 import hashlib
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
 from aiohttp import web
 
@@ -271,9 +272,15 @@ def _check_rate_limit(request) -> bool:
         return True
 
     try:
-        one_minute_ago = time.time() - 60
+        one_minute_ago = datetime.fromtimestamp(time.time() - 60, tz=timezone.utc).isoformat()
         from supabase_client import supabase
-        result = supabase.table('agent_usage').select('id', count='exact').eq('agent_id', identifier).gte('timestamp', one_minute_ago).execute()
+        rate_query = supabase.table('api_usage').select('id', count='exact').eq('actor_type', auth_type).gte('timestamp', one_minute_ago)
+        if auth_type == "agent":
+            rate_query = rate_query.eq('agent_id', identifier)
+        else:
+            rate_query = rate_query.eq('user_id', identifier)
+
+        result = rate_query.execute()
         if result.count >= RATE_LIMIT_PER_MINUTE:
             return False
     except Exception as e:
@@ -300,19 +307,27 @@ def _record_usage(request, response, start_time: float) -> None:
         agent = request.get('agent')
         user = request.get('user')
 
+        agent_id = None
+        user_id = None
         if agent:
-            entity_id = agent['id']
+            agent_id = agent['id']
             entity_type = "agent"
-            entity_name = agent.get('agent_name', 'unknown')
         elif user:
-            entity_id = str(user.id) if hasattr(user, 'id') else 'unknown'
+            user_id = str(user.id) if hasattr(user, 'id') else None
             entity_type = "user"
-            entity_name = getattr(user, 'email', 'unknown') or 'unknown'
         else:
             # Should not happen when called from middleware, but handle gracefully
-            entity_id = "unknown"
             entity_type = "unknown"
-            entity_name = "unknown"
+            logger.warning("Skipping usage log: no authenticated entity on request")
+            return
+
+        if entity_type == "user" and not user_id:
+            logger.warning("Skipping usage log: authenticated user missing id")
+            return
+
+        if entity_type == "agent" and not agent_id:
+            logger.warning("Skipping usage log: authenticated agent missing id")
+            return
 
         # Determine endpoint and method
         endpoint = request.path
@@ -331,14 +346,17 @@ def _record_usage(request, response, start_time: float) -> None:
 
         # Insert usage record
         from supabase_client import supabase
-        supabase.table('agent_usage').insert({
-            "agent_id": entity_id,  # Reusing this column for both agents and users
+        usage_payload = {
+            "actor_type": entity_type,
+            "agent_id": agent_id,
+            "user_id": user_id,
             "endpoint": endpoint,
             "method": method,
             "success": success,
             "cost_usdc_cents": cost_usdc_cents,
             "metadata": metadata
-        }).execute()
+        }
+        supabase.table('api_usage').insert(usage_payload).execute()
     except Exception as e:
         logger.error(f"Failed to log usage: {e}")
 
