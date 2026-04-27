@@ -95,6 +95,7 @@ _current_price_per_unit = CAPABILITY_PRICE_PER_UNIT
 # ---------------------------------------------------------------------------
 granite_transcriber = Granite4Transcriber()
 vllm_client: Optional[VLLMRealtimeClient] = None
+processor: Optional[StreamProcessor] = None
 
 # In-memory DB for batch jobs
 transcriptions_db: Dict[str, Dict[str, Any]] = {}
@@ -488,6 +489,16 @@ class LiveTranscriptionWorker:
             source_lang=VLLM_SOURCE_LANG,
             target_lang=VLLM_TARGET_LANG,
         )
+
+        async def _on_transcription(text: str, is_final: bool = False, **kw) -> None:
+            """Forward vLLM transcription results back through the pytrickle data channel."""
+            if processor is None:
+                return
+            payload = json.dumps({"type": "transcription", "text": text, "is_final": is_final})
+            await processor.send_data(payload)
+
+        vllm_client.set_text_callback(_on_transcription)
+
         try:
             await vllm_client.connect()
             logger.info("VLLM client connected successfully")
@@ -558,6 +569,7 @@ async def on_shutdown(app: aiohttp.web.Application):
 # =============================================================================
 async def main() -> None:
     """Create and run the StreamProcessor with custom batch routes."""
+    global processor
     handlers = LiveTranscriptionWorker()
     processor = StreamProcessor.from_handlers(
         handlers,
