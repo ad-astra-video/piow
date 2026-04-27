@@ -39,6 +39,14 @@ from stripe import (
 logger = logging.getLogger(__name__)
 
 
+# Stripe API versions now require a codename suffix (e.g. 2026-03-25.dahlia).
+# Normalize common date-only inputs to known valid codename variants.
+STRIPE_API_VERSION_ALIASES: Dict[str, str] = {
+    "2024-12-18": "2024-12-18.acacia",
+    "2026-03-25": "2026-03-25.dahlia",
+}
+
+
 @dataclass
 class StripeConfig:
     """Configuration for Stripe client initialization."""
@@ -46,6 +54,22 @@ class StripeConfig:
     webhook_secret: str
     api_version: str = "2026-03-25.dahlia"
     max_network_retries: int = 2
+
+
+def normalize_stripe_api_version(version: str) -> str:
+    """Return a Stripe API version string accepted by the Stripe SDK."""
+    normalized = (version or "").strip()
+    if not normalized:
+        return STRIPE_API_VERSION_ALIASES["2026-03-25"]
+    if "." not in normalized and normalized in STRIPE_API_VERSION_ALIASES:
+        mapped = STRIPE_API_VERSION_ALIASES[normalized]
+        logger.warning(
+            "STRIPE_API_VERSION '%s' is date-only; using '%s' instead.",
+            normalized,
+            mapped,
+        )
+        return mapped
+    return normalized
 
 
 class StripePaymentService:
@@ -281,7 +305,9 @@ class StripePaymentService:
         if not api_key.startswith(("sk_test_", "sk_live_", "rk_test_", "rk_live_")):
             logger.warning("Stripe API key may be invalid - unexpected prefix")
 
-        api_version = os.environ.get("STRIPE_API_VERSION", "2026-03-25")
+        api_version = normalize_stripe_api_version(
+            os.environ.get("STRIPE_API_VERSION", StripeConfig.api_version)
+        )
         max_retries = int(os.environ.get("STRIPE_MAX_RETRIES", "2"))
 
         return StripeConfig(
