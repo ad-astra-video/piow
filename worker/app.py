@@ -541,6 +541,14 @@ class LiveTranscriptionWorker:
                 resampled_frames = LiveTranscriptionWorker._resampler.resample(av_frame)
                 audio_bytes = b''.join(bytes(rf.planes[0]) for rf in resampled_frames)
                 if audio_bytes:
+                    if LiveTranscriptionWorker._audio_frame_count % 100 == 1:
+                        n_samples = len(audio_bytes) // 2  # s16 = 2 bytes/sample
+                        logger.info(
+                            f"send_audio: resampled bytes={len(audio_bytes)}, "
+                            f"pcm16_samples={n_samples}, "
+                            f"implied_rate=16000Hz mono s16 "
+                            f"(~{n_samples/16000*1000:.1f}ms of audio)"
+                        )
                     await vllm_client.send_audio(audio_bytes)
             except Exception as exc:
                 logger.warning(f"VLLM send_audio error: {exc}")
