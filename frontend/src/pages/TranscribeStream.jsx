@@ -113,9 +113,8 @@ export default function TranscribeStream({ accessToken }) {
     }
 
     const canvas = document.createElement('canvas');
-    // 16x16 is tiny but broadly compatible with common WebRTC encoders.
-    canvas.width = 16;
-    canvas.height = 16;
+    canvas.width = 320;
+    canvas.height = 240;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) {
@@ -128,9 +127,9 @@ export default function TranscribeStream({ accessToken }) {
     };
     drawBlackFrame();
 
-    const intervalId = setInterval(drawBlackFrame, 1000);
+    const intervalId = setInterval(drawBlackFrame, 1000 / 15);
 
-    const stream = canvas.captureStream(1);
+    const stream = canvas.captureStream(15);
     const videoTrack = stream.getVideoTracks()[0];
 
     if (!videoTrack) {
@@ -139,9 +138,9 @@ export default function TranscribeStream({ accessToken }) {
 
     try {
       await videoTrack.applyConstraints({
-        width: { ideal: 2, max: 2 },
-        height: { ideal: 2, max: 2 },
-        frameRate: { ideal: 1, max: 1 },
+        width: { ideal: 320, max: 320 },
+        height: { ideal: 240, max: 240 },
+        frameRate: { ideal: 15, max: 15 },
       });
     } catch (e) {
       // Some browsers may reject constraints for canvas tracks; continue with capture defaults.
