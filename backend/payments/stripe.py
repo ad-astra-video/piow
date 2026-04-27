@@ -81,8 +81,8 @@ class StripePaymentService:
 
     NOTE on Stripe API version 2026-03-25+:
     - All .list() / .search() / .create() / .update() methods accept a single
-      positional argument which is a dict of request parameters.
-    - The dict key is "params" for request body fields.
+      positional argument which is a dict of request parameters (passed directly,
+      NOT wrapped in a {"params": ...} key).
     - Filtering by metadata is not supported on list endpoints; we paginate
       and filter client-side instead.
     """
@@ -237,7 +237,7 @@ class StripePaymentService:
         try:
             # Try search API first (more efficient, requires newer API version)
             search_result = self._client.v1.products.search(  # type: ignore
-                {"params": {"query": f"name:'{name}'", "limit": 1}},
+                {"query": f"name:'{name}'", "limit": 1},
             )
             if search_result.data:
                 return search_result.data[0]
@@ -247,7 +247,7 @@ class StripePaymentService:
 
         # Fallback: list products and filter by name client-side
         products = self._client.v1.products.list(  # type: ignore
-            {"params": {"limit": 100}},
+            {"limit": 100},
         )
         for product in products.auto_paging_iter():
             if product.name == name:
@@ -269,7 +269,7 @@ class StripePaymentService:
             StripeError: If Stripe API request fails
         """
         prices = self._client.v1.prices.list(  # type: ignore
-            {"params": {"product": product_id, "active": "true", "limit": 10}},
+            {"product": product_id, "active": "true", "limit": 10},
         )
         for price in prices.auto_paging_iter():
             if price.recurring:
@@ -464,7 +464,7 @@ class StripePaymentService:
             # Metadata filtering is not supported on list endpoints in 2026-03-25+,
             # so we use email as the lookup key (unique per user in Supabase).
             existing_customers = await self._client.v1.customers.list_async(  # type: ignore
-                {"params": {"email": email, "limit": 1}},
+                {"email": email, "limit": 1},
             )
 
             customers_list = list(existing_customers)
@@ -486,11 +486,11 @@ class StripePaymentService:
             idempotency_key = self._generate_idempotency_key("customer_")
 
             customer = await self._client.v1.customers.create_async(  # type: ignore
-                {"params": {
+                {
                     "email": email,
                     "name": name,
                     "metadata": {"supabase_user_id": user_id},
-                }},
+                },
                 options={"idempotency_key": idempotency_key},
             )
 
@@ -556,12 +556,12 @@ class StripePaymentService:
             idempotency_key = self._generate_idempotency_key("subscription_")
 
             subscription = await self._client.v1.subscriptions.create_async(  # type: ignore
-                {"params": {
+                {
                     "customer": customer.id,
                     "items": [{"price": price_id}],
                     "trial_period_days": trial_days,
                     "metadata": {"supabase_user_id": user_id},
-                }},
+                },
                 options={"idempotency_key": idempotency_key},
             )
 
@@ -690,13 +690,13 @@ class StripePaymentService:
 
             updated_subscription = await self._client.v1.subscriptions.update_async(  # type: ignore
                 subscription_id,
-                {"params": {
+                {
                     "items": [{
                         "id": subscription_item_id,
                         "price": price_id,
                     }],
                     "proration_behavior": "create_prorations",
-                }},
+                },
                 options={"idempotency_key": idempotency_key},
             )
 
