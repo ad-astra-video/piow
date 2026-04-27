@@ -44,7 +44,7 @@ class StripeConfig:
     """Configuration for Stripe client initialization."""
     api_key: str
     webhook_secret: str
-    api_version: str = "2026-03-25"
+    api_version: str = "2026-03-25.dahlia"
     max_network_retries: int = 2
 
 
