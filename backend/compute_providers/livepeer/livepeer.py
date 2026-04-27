@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import os
+import time
 from typing import Dict, Any, Optional
 import aiohttp
 from aiohttp import web
@@ -253,6 +254,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
                 - metadata: Full provider response
         """
         model = kwargs.get("model", "voxtral-realtime")
+        stream_request_id = kwargs.get("stream_request_id")
         
         # Build request to GPU runner
         start_request = {
@@ -262,22 +264,49 @@ class LivepeerComputeProvider(BaseComputeProvider):
                 "model": model
             }
         }
+        start_url = f"{self.GPU_RUNNER_URL}/process/stream/start"
+        request_started_at = time.perf_counter()
         
-        logger.info(f"Creating Livepeer streaming session: session_id={session_id}, language={language}, model={model}")
+        logger.info(
+            "Livepeer stream start request: request_id=%s url=%s session_id=%s language=%s model=%s payload=%s",
+            stream_request_id,
+            start_url,
+            session_id,
+            language,
+            model,
+            start_request,
+        )
         
         async with aiohttp.ClientSession() as http_session:
             async with http_session.post(
-                f"{self.GPU_RUNNER_URL}/process/stream/start",
+                start_url,
                 json=start_request,
                 headers={"Content-Type": "application/json"}
             ) as response:
+                elapsed_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error(f"Livepeer session creation failed: {response.status} - {error_text}")
+                    logger.error(
+                        "Livepeer stream start failed: request_id=%s url=%s session_id=%s status=%s elapsed_ms=%s error=%s",
+                        stream_request_id,
+                        start_url,
+                        session_id,
+                        response.status,
+                        elapsed_ms,
+                        error_text,
+                    )
                     raise Exception(f"Failed to create streaming session: HTTP {response.status} - {error_text}")
                 
                 provider_data = await response.json()
-                logger.info(f"Livepeer session created successfully: {provider_data}")
+                logger.info(
+                    "Livepeer stream start success: request_id=%s url=%s session_id=%s status=%s elapsed_ms=%s response_keys=%s",
+                    stream_request_id,
+                    start_url,
+                    session_id,
+                    response.status,
+                    elapsed_ms,
+                    sorted(list(provider_data.keys())),
+                )
                 
                 # Return the full provider response in standardized format
                 return {

@@ -314,10 +314,18 @@ async def transcribe_stream(request):
 
         if not session_id:
             session_id = str(uuid.uuid4())
+        stream_request_id = uuid.uuid4().hex[:12]
 
         # Get ranked list of providers for failover
         ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_stream", requirements={"language": language}
+        )
+        logger.info(
+            "Transcribe stream provider selection: request_id=%s session_id=%s language=%s providers=%s",
+            stream_request_id,
+            session_id,
+            language,
+            [provider.provider_name for provider in ranked_providers],
         )
         if not ranked_providers:
             return web.json_response({"error": "No compute provider available"}, status=503)
@@ -328,24 +336,43 @@ async def transcribe_stream(request):
         for provider in ranked_providers:
             try:
                 logger.info(
-                    f"Trying provider '{provider.provider_name}' for stream session {session_id}"
+                    "Starting provider stream session request: request_id=%s provider=%s session_id=%s language=%s",
+                    stream_request_id,
+                    provider.provider_name,
+                    session_id,
+                    language,
                 )
                 session_result = await provider.create_streaming_session(
-                    session_id=session_id, language=language
+                    session_id=session_id,
+                    language=language,
+                    stream_request_id=stream_request_id,
                 )
                 if _is_valid_streaming_session(session_result):
                     logger.info(
-                        f"Provider '{provider.provider_name}' returned valid streaming session"
+                        "Provider stream session ready: request_id=%s provider=%s session_id=%s provider_stream_id=%s",
+                        stream_request_id,
+                        provider.provider_name,
+                        session_id,
+                        session_result.get("provider_stream_id"),
                     )
                     break
                 else:
                     logger.warning(
-                        f"Provider '{provider.provider_name}' returned no whip_url; will try next provider"
+                        "Provider stream session missing whip_url: request_id=%s provider=%s session_id=%s response_keys=%s",
+                        stream_request_id,
+                        provider.provider_name,
+                        session_id,
+                        sorted(list(session_result.keys())),
                     )
                     session_result = None
             except Exception as e:
                 logger.warning(
-                    f"Provider '{provider.provider_name}' failed to create stream session: {e}"
+                    "Provider stream session request failed: request_id=%s provider=%s session_id=%s language=%s error=%s",
+                    stream_request_id,
+                    provider.provider_name,
+                    session_id,
+                    language,
+                    e,
                 )
                 last_error = e
                 session_result = None

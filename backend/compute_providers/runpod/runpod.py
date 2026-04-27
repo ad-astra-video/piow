@@ -332,6 +332,8 @@ class RunpodComputeProvider(BaseComputeProvider):
         Returns:
             Dictionary containing headers and session information for the provider
         """
+        stream_request_id = kwargs.get("stream_request_id")
+
         # Build Runpod request payload for streaming
         runpod_payload = {
             "input": {
@@ -355,6 +357,22 @@ class RunpodComputeProvider(BaseComputeProvider):
                 "model": "voxtral-realtime"
             })
         }
+
+        logger.info(
+            "Runpod stream start request prepared: request_id=%s endpoint_id=%s session_id=%s language=%s payload=%s",
+            stream_request_id,
+            self.endpoint_id,
+            session_id,
+            language,
+            runpod_payload,
+        )
+        logger.info(
+            "Runpod stream start provider payload prepared: request_id=%s endpoint_id=%s session_id=%s request_body=%s",
+            stream_request_id,
+            self.endpoint_id,
+            session_id,
+            request_body,
+        )
 
         return {
             "runpod_headers": runpod_headers,
