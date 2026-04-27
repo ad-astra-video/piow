@@ -1010,21 +1010,37 @@ async def stop_stream_session(request):
                 provider_urls["stop_url"],
                 json={"provider_stream_id": provider_urls.get("provider_stream_id")}
             ) as response:
+                response_text = await response.text()
                 logger.info(
                     "Stop stream provider response: stream_id=%s provider_stream_id=%s http_status=%s",
                     stream_id,
                     provider_urls.get("provider_stream_id"),
                     response.status,
                 )
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"Provider stop failed: {response.status} - {error_text}")
+
+                if response.status == 404:
+                    logger.warning(
+                        "Provider stop returned 404; treating as successful stop: stream_id=%s provider_stream_id=%s response_text=%s",
+                        stream_id,
+                        provider_urls.get("provider_stream_id"),
+                        response_text[:1000],
+                    )
+                    provider_response = {
+                        "status": "already_stopped",
+                        "provider_status": 404,
+                        "details": response_text,
+                    }
+                elif response.status not in (200, 204):
+                    logger.error(f"Provider stop failed: {response.status} - {response_text}")
                     return web.json_response({
                         "error": f"Failed to stop stream: HTTP {response.status}",
-                        "details": error_text
+                        "details": response_text
                     }, status=response.status)
-
-                provider_response = await response.json()
+                else:
+                    provider_response = {
+                        "provider_status": response.status,
+                        "details": response_text,
+                    }
 
         # Update local session
         await session_store.close_stream_session(stream_id)
