@@ -33,9 +33,41 @@ class LivepeerComputeProvider(BaseComputeProvider):
         super().__init__(provider_config)
 
         # Configuration - only GPU_RUNNER_URL is needed for worker communication
-        self.GPU_RUNNER_URL = provider_config.get('gpu_runner_url') or os.environ.get(
+        gpu_runner_url = provider_config.get('gpu_runner_url') or os.environ.get(
             "GPU_RUNNER_URL", "http://localhost:9935"
         )
+        
+        # Ensure URL has a scheme (https for remote, http for localhost)
+        self.GPU_RUNNER_URL = self._normalize_url(gpu_runner_url)
+    
+    def _normalize_url(self, url: str) -> str:
+        """
+        Normalize GPU runner URL to include scheme.
+        
+        For localhost/127.0.0.1, use http://
+        For remote hosts, use https://
+        
+        Args:
+            url: URL that may or may not have a scheme
+            
+        Returns:
+            Normalized URL with scheme
+        """
+        if not url:
+            return "http://localhost:9935"
+        
+        url = url.strip()
+        
+        # If already has scheme, return as-is
+        if url.startswith(("http://", "https://")):
+            return url
+        
+        # For localhost/127.0.0.1, use http
+        if url.startswith(("localhost", "127.0.0.1", "0.0.0.0")):
+            return f"http://{url}"
+        
+        # For remote URLs, use https
+        return f"https://{url}"
 
     async def get_whip_url(self, session_id: str, **kwargs) -> str:
         """
