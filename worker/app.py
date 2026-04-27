@@ -550,10 +550,14 @@ class LiveTranscriptionWorker:
                         LiveTranscriptionWorker._audio_buffer = LiveTranscriptionWorker._audio_buffer[LiveTranscriptionWorker._SEND_CHUNK_BYTES:]
                         if LiveTranscriptionWorker._audio_frame_count % 100 == 1:
                             n_samples = len(chunk) // 2
+                            pcm16 = np.frombuffer(chunk, dtype=np.int16)
+                            rms = float(np.sqrt(np.mean(pcm16.astype(np.float32) ** 2)))
+                            peak = int(np.abs(pcm16).max())
                             logger.info(
                                 f"send_audio: chunk bytes={len(chunk)}, "
                                 f"pcm16_samples={n_samples}, "
-                                f"~{n_samples/16000*1000:.1f}ms of audio"
+                                f"~{n_samples/16000*1000:.1f}ms of audio, "
+                                f"rms={rms:.1f}, peak={peak}"
                             )
                         await vllm_client.send_audio(chunk)
             except Exception as exc:
