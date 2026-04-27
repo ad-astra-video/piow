@@ -18,17 +18,25 @@ class StreamSessionData(TypedDict, total=False):
     Attributes:
         provider: Name of the compute provider
         provider_stream_id: Provider's internal stream ID
-        whip_url: WHIP ingestion URL for client
+        whip_url: WHIP ingestion URL for WebRTC ingest
+        whep_url: WHEP egress URL for WebRTC egress
+        rtmp_url: RTMP ingestion URL
+        rtmp_output_url: RTMP egress URLs (comma-separated)
         data_url: SSE connection URL for real-time data
         update_url: URL to send stream updates
+        status_url: URL to get stream status
         stop_url: URL to stop the stream
         metadata: Additional provider-specific data
     """
     provider: str
     provider_stream_id: str
     whip_url: str
+    whep_url: str
+    rtmp_url: str
+    rtmp_output_url: str
     data_url: str
     update_url: str
+    status_url: str
     stop_url: str
     metadata: Dict[str, Any]
 

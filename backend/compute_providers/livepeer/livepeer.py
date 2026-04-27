@@ -229,51 +229,105 @@ class LivepeerComputeProvider(BaseComputeProvider):
         """
         Create a streaming session by POSTing to GPU_RUNNER_URL/process/stream/start.
         
+        Implements the Livepeer BYOC AI Stream API specification with required:
+        - Livepeer header with request, parameters, capability, and timeout_seconds
+        - StartRequest body with stream_id, stream_name, and params
+        
         The GPU runner returns a response containing:
         {
-            "provider_stream_id": "...",
+            "stream_id": "...",
             "whip_url": "...",
+            "whep_url": "...",
+            "rtmp_url": "...",
+            "rtmp_output_url": "...",
             "data_url": "...",  # SSE connection
             "update_url": "...",
+            "status_url": "...",
             "stop_url": "..."
         }
 
         Args:
             session_id: Unique session identifier
             language: Language code for transcription
-            **kwargs: Additional parameters (model, etc.)
+            **kwargs: Additional parameters (model, capability, timeout_seconds, 
+                     enable_video_ingress, enable_video_egress, enable_data_output, etc.)
 
         Returns:
             StreamSessionData containing:
                 - provider: "livepeer"
                 - provider_stream_id: Provider's internal stream ID
                 - whip_url: WHIP ingestion URL for client
+                - whep_url: WHEP egress URL for client
+                - rtmp_url: RTMP ingestion URL
+                - rtmp_output_url: RTMP egress URLs
                 - data_url: SSE connection URL for real-time data
                 - update_url: URL to send stream updates
+                - status_url: URL to get stream status
                 - stop_url: URL to stop the stream
                 - metadata: Full provider response
         """
         model = kwargs.get("model", "voxtral-realtime")
+        capability = kwargs.get("capability", "live-transcription")
+        timeout_seconds = kwargs.get("timeout_seconds", 120)
+        stream_name = kwargs.get("stream_name", f"translation-{session_id}")
         stream_request_id = kwargs.get("stream_request_id")
+        rtmp_output = kwargs.get("rtmp_output")
         
-        # Build request to GPU runner
+        # JobRequestDetails - required fields for stream initialization
+        request_details = {
+            "stream_id": session_id
+        }
+        
+        # JobParameters - controls video/data ingress/egress
+        job_parameters = {
+            "enable_video_ingress": kwargs.get("enable_video_ingress", True),
+            "enable_video_egress": kwargs.get("enable_video_egress", False),
+            "enable_data_output": kwargs.get("enable_data_output", True)
+        }
+        
+        # Add orchestrator filters if provided
+        if "orchestrators" in kwargs:
+            job_parameters["orchestrators"] = kwargs["orchestrators"]
+        
+        # Build Livepeer header (must be JSON-encoded strings inside the header)
+        livepeer_header_payload = {
+            "request": json.dumps(request_details),
+            "parameters": json.dumps(job_parameters),
+            "capability": capability,
+            "timeout_seconds": timeout_seconds
+        }
+        
+        # Base64 encode the Livepeer header
+        livepeer_header = base64.b64encode(
+            json.dumps(livepeer_header_payload).encode()
+        ).decode()
+        
+        # Build StartRequest body
         start_request = {
             "stream_id": session_id,
-            "params": {
+            "stream_name": stream_name,
+            "params": json.dumps({
                 "language": language,
                 "model": model
-            }
+            })
         }
+        
+        # Add optional rtmp_output if provided
+        if rtmp_output:
+            start_request["rtmp_output"] = rtmp_output
+        
         start_url = f"{self.GPU_RUNNER_URL}/process/stream/start"
         request_started_at = time.perf_counter()
         
         logger.info(
-            "Livepeer stream start request: request_id=%s url=%s session_id=%s language=%s model=%s payload=%s",
+            "Livepeer stream start request: request_id=%s url=%s session_id=%s language=%s model=%s capability=%s timeout_seconds=%s payload=%s",
             stream_request_id,
             start_url,
             session_id,
             language,
             model,
+            capability,
+            timeout_seconds,
             start_request,
         )
         
@@ -281,7 +335,11 @@ class LivepeerComputeProvider(BaseComputeProvider):
             async with http_session.post(
                 start_url,
                 json=start_request,
-                headers={"Content-Type": "application/json"}
+                headers={
+                    "Content-Type": "application/json",
+                    "Livepeer": livepeer_header
+                },
+                timeout=aiohttp.ClientTimeout(total=300)
             ) as response:
                 elapsed_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
                 if response.status != 200:
@@ -300,24 +358,26 @@ class LivepeerComputeProvider(BaseComputeProvider):
                 
                 provider_data = await response.json()
                 logger.info(
-                    "Livepeer stream start success: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s request_payload=%s response_body=%s response_keys=%s",
+                    "Livepeer stream start success: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s response_keys=%s",
                     stream_request_id,
                     start_url,
                     session_id,
                     response.status,
                     elapsed_ms,
-                    start_request,
-                    provider_data,
                     sorted(list(provider_data.keys())),
                 )
                 
                 # Return the full provider response in standardized format
                 return {
                     "provider": "livepeer",
-                    "provider_stream_id": provider_data.get("provider_stream_id", session_id),
+                    "provider_stream_id": provider_data.get("stream_id", session_id),
                     "whip_url": provider_data.get("whip_url", ""),
+                    "whep_url": provider_data.get("whep_url", ""),
+                    "rtmp_url": provider_data.get("rtmp_url", ""),
+                    "rtmp_output_url": provider_data.get("rtmp_output_url", ""),
                     "data_url": provider_data.get("data_url", ""),
                     "update_url": provider_data.get("update_url", ""),
+                    "status_url": provider_data.get("status_url", ""),
                     "stop_url": provider_data.get("stop_url", ""),
                     "metadata": provider_data  # Store entire response for future use
                 }
@@ -356,10 +416,227 @@ class LivepeerComputeProvider(BaseComputeProvider):
                 "error": str(e)
             }
 
+    async def update_streaming_session(
+        self,
+        provider_stream_id: str,
+        params: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Update stream parameters via POST /process/stream/{streamId}/update.
+        
+        Sends updated parameters to the running stream. The Livepeer header must
+        include the stream_id in the request field.
+
+        Args:
+            provider_stream_id: The provider's stream ID to update
+            params: Dictionary of parameters to update (passed to pipeline worker)
+            **kwargs: Additional options (timeout_seconds, capability, etc.)
+
+        Returns:
+            Dictionary with update status and response
+
+        Raises:
+            Exception: If the update fails
+        """
+        timeout_seconds = kwargs.get("timeout_seconds", 15)
+        capability = kwargs.get("capability", "video-analysis")
+        stream_request_id = kwargs.get("stream_request_id")
+        
+        # Build Livepeer header for update request
+        request_details = {
+            "stream_id": provider_stream_id
+        }
+        
+        livepeer_header_payload = {
+            "request": json.dumps(request_details),
+            "parameters": "{}",
+            "capability": capability,
+            "timeout_seconds": timeout_seconds
+        }
+        
+        livepeer_header = base64.b64encode(
+            json.dumps(livepeer_header_payload).encode()
+        ).decode()
+        
+        update_url = f"{self.GPU_RUNNER_URL}/process/stream/{provider_stream_id}/update"
+        request_body = params or {}
+        
+        logger.info(
+            "Livepeer stream update request: request_id=%s url=%s stream_id=%s params=%s",
+            stream_request_id,
+            update_url,
+            provider_stream_id,
+            request_body,
+        )
+        
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.post(
+                update_url,
+                json=request_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Livepeer": livepeer_header
+                },
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(
+                        "Livepeer stream update failed: request_id=%s url=%s stream_id=%s http_status=%s response_body=%s",
+                        stream_request_id,
+                        update_url,
+                        provider_stream_id,
+                        response.status,
+                        error_text,
+                    )
+                    raise Exception(f"Failed to update streaming session: HTTP {response.status} - {error_text}")
+                
+                logger.info(
+                    "Livepeer stream update success: request_id=%s url=%s stream_id=%s http_status=%s",
+                    stream_request_id,
+                    update_url,
+                    provider_stream_id,
+                    response.status,
+                )
+                
+                return {
+                    "status": "updated",
+                    "stream_id": provider_stream_id
+                }
+
+    async def get_stream_status(
+        self,
+        provider_stream_id: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Get stream status via GET /process/stream/{streamId}/status.
+        
+        Retrieves current stream status including orchestrator and ingest metrics.
+
+        Args:
+            provider_stream_id: The provider's stream ID
+            **kwargs: Additional options
+
+        Returns:
+            Dictionary with stream status information
+
+        Raises:
+            Exception: If the status request fails
+        """
+        stream_request_id = kwargs.get("stream_request_id")
+        status_url = f"{self.GPU_RUNNER_URL}/process/stream/{provider_stream_id}/status"
+        
+        logger.info(
+            "Livepeer stream status request: request_id=%s url=%s stream_id=%s",
+            stream_request_id,
+            status_url,
+            provider_stream_id,
+        )
+        
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.get(
+                status_url,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(
+                        "Livepeer stream status failed: request_id=%s url=%s stream_id=%s http_status=%s response_body=%s",
+                        stream_request_id,
+                        status_url,
+                        provider_stream_id,
+                        response.status,
+                        error_text,
+                    )
+                    raise Exception(f"Failed to get stream status: HTTP {response.status} - {error_text}")
+                
+                status_data = await response.json()
+                logger.info(
+                    "Livepeer stream status success: request_id=%s url=%s stream_id=%s http_status=%s status_data_keys=%s",
+                    stream_request_id,
+                    status_url,
+                    provider_stream_id,
+                    response.status,
+                    sorted(list(status_data.keys())),
+                )
+                
+                return status_data
+
+    async def stop_streaming_session(
+        self,
+        provider_stream_id: str,
+        stop_data: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Stop a streaming session via POST /process/stream/{streamId}/stop.
+        
+        Stops and cleans up the running stream.
+
+        Args:
+            provider_stream_id: The provider's stream ID to stop
+            stop_data: Optional data to pass to the pipeline worker
+            **kwargs: Additional options
+
+        Returns:
+            Dictionary with stop status (HTTP 204 returns empty content)
+
+        Raises:
+            Exception: If the stop request fails
+        """
+        stream_request_id = kwargs.get("stream_request_id")
+        stop_url = f"{self.GPU_RUNNER_URL}/process/stream/{provider_stream_id}/stop"
+        request_body = stop_data or {}
+        
+        logger.info(
+            "Livepeer stream stop request: request_id=%s url=%s stream_id=%s",
+            stream_request_id,
+            stop_url,
+            provider_stream_id,
+        )
+        
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.post(
+                stop_url,
+                json=request_body,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                # 204 No Content is the expected success response
+                if response.status not in (200, 204):
+                    error_text = await response.text()
+                    logger.error(
+                        "Livepeer stream stop failed: request_id=%s url=%s stream_id=%s http_status=%s response_body=%s",
+                        stream_request_id,
+                        stop_url,
+                        provider_stream_id,
+                        response.status,
+                        error_text,
+                    )
+                    raise Exception(f"Failed to stop streaming session: HTTP {response.status} - {error_text}")
+                
+                logger.info(
+                    "Livepeer stream stop success: request_id=%s url=%s stream_id=%s http_status=%s",
+                    stream_request_id,
+                    stop_url,
+                    provider_stream_id,
+                    response.status,
+                )
+                
+                return {
+                    "status": "stopped",
+                    "stream_id": provider_stream_id
+                }
+
     # Keep the original utility methods for backward compatibility
     def build_livepeer_header(self, request_body: Dict[str, Any], capability: str, timeout_seconds: int = 60) -> str:
         """
         Build a Livepeer header for BYOC AI Stream API requests.
+        
+        Encodes the request and capability into a Livepeer header according to the
+        BYOC API specification.
 
         Args:
             request_body: The request body to encode
@@ -371,6 +648,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
         """
         livepeer_payload = {
             "request": json.dumps(request_body),
+            "parameters": "{}",
             "capability": capability,
             "timeout_seconds": timeout_seconds
         }
