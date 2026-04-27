@@ -11,25 +11,16 @@ Provides:
 
 import os
 import sys
-import ssl
-import socket
-import ipaddress
 import uuid
 import json
 import secrets
 import time
-import datetime
 import asyncio
 import tempfile
 import logging
 import requests
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-
-from cryptography import x509
-from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 import aiohttp
 import numpy as np
@@ -89,89 +80,6 @@ logger.info("Generated worker token: %s", WORKER_TOKEN)
 
 # Suppress urllib3 InsecureRequestWarning (we use verify=False for orchestrator)
 urllib3.disable_warnings()
-
-# ---------------------------------------------------------------------------
-# Auto-generated self-signed SSL certificate
-# ---------------------------------------------------------------------------
-def _generate_self_signed_cert() -> tuple:
-    """Generate a self-signed certificate and return (cert_pem, key_pem) as bytes."""
-    key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-    )
-
-    # Get hostname and IP for SAN
-    hostname = socket.gethostname()
-    ip_addr = socket.gethostbyname(hostname)
-
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
-        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "State"),
-        x509.NameAttribute(NameOID.LOCALITY_NAME, "City"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Live Translation Worker"),
-        x509.NameAttribute(NameOID.COMMON_NAME, hostname),
-    ])
-
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
-        .add_extension(
-            x509.SubjectAlternativeName([
-                x509.DNSName(hostname),
-                x509.DNSName("localhost"),
-                x509.IPAddress(ipaddress.IPv4Address(ip_addr)),
-                x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
-            ]),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-
-    cert_pem = cert.public_bytes(serialization.Encoding.PEM)
-    key_pem = key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    return cert_pem, key_pem
-
-
-def _create_ssl_context() -> ssl.SSLContext:
-    """Create an SSL context with the self-signed certificate."""
-    import tempfile
-    import os
-
-    cert_pem, key_pem = _generate_self_signed_cert()
-
-    # Write to temp files (required for ssl.SSLContext.load_cert_chain)
-    cert_fd, cert_path = tempfile.mkstemp(suffix=".pem", prefix="worker_cert_")
-    key_fd, key_path = tempfile.mkstemp(suffix=".pem", prefix="worker_key_")
-
-    try:
-        os.write(cert_fd, cert_pem)
-        os.close(cert_fd)
-        os.write(key_fd, key_pem)
-        os.close(key_fd)
-
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(cert_path, key_path)
-        return ctx
-    finally:
-        # Clean up temp files after loading into context
-        try:
-            os.unlink(cert_path)
-            os.unlink(key_path)
-        except OSError:
-            pass
-
-
-_ssl_ctx = _create_ssl_context()
-logger.info("Auto-generated self-signed SSL certificate")
 
 # Runtime mutable state for capacity/price
 _current_capacity = CAPABILITY_CAPACITY
@@ -632,6 +540,7 @@ async def main() -> None:
         port=PORT,
         host=HOST,
         enable_default_routes=True,
+        ssl=True,
     )
     # Register custom batch routes directly on the aiohttp app router
     # (avoids pytrickle custom_routes API incompatibility with tuples)
@@ -648,7 +557,7 @@ async def main() -> None:
         logger.warning("REGISTRATION_ENABLED is true but ORCH_SERVICE_ADDR is not set. Skipping registration.")
 
     logger.info("Starting PyTrickle worker on %s:%s with SSL", HOST, PORT)
-    await processor.run_forever(ssl=_ssl_ctx)
+    await processor.run_forever()
 
 
 if __name__ == "__main__":

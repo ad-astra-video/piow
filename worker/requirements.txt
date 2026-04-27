@@ -1,5 +1,5 @@
 # PyTrickle (installed from GitHub)
-git+https://github.com/livepeer/pytrickle.git
+git+https://github.com/livepeer/pytrickle.git@fb3cf51b086f82d5cb2225fc7d78c5fe0b0847d6
 
 # Async HTTP
 aiohttp>=3.9.0
