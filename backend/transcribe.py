@@ -439,7 +439,24 @@ async def whip_proxy(request):
         }, status=503)
 
     sdp_offer = await request.text()
-    logger.info(f"WHIP proxy: forwarding SDP offer for stream {stream_id}")
+    has_audio_mline = "m=audio" in sdp_offer
+    has_video_mline = "m=video" in sdp_offer
+    video_direction = "unknown"
+    if "m=video" in sdp_offer:
+        video_index = sdp_offer.find("m=video")
+        video_block = sdp_offer[video_index:]
+        for direction in ("a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"):
+            if direction in video_block:
+                video_direction = direction
+                break
+
+    logger.info(
+        "WHIP proxy: forwarding SDP offer for stream %s (audio_mline=%s video_mline=%s video_direction=%s)",
+        stream_id,
+        has_audio_mline,
+        has_video_mline,
+        video_direction,
+    )
 
     try:
         async with aiohttp.ClientSession() as http_session:

@@ -93,6 +93,7 @@ export default function TranscribeStream({ accessToken }) {
   const whipClientRef = useRef(null);
   const wsRef = useRef(null);
   const localStreamRef = useRef(null);
+  const blackVideoSourceRef = useRef(null);
   const isStartedRef = useRef(false);
   const streamIdRef = useRef(null);
 
@@ -107,12 +108,48 @@ export default function TranscribeStream({ accessToken }) {
   }, []);
 
   const createBlackVideoTrack = async () => {
+    if (blackVideoSourceRef.current?.intervalId) {
+      clearInterval(blackVideoSourceRef.current.intervalId);
+    }
+
     const canvas = document.createElement('canvas');
-    canvas.width = 320; canvas.height = 240;
+    // 16x16 is tiny but broadly compatible with common WebRTC encoders.
+    canvas.width = 16;
+    canvas.height = 16;
+
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    return canvas.captureStream().getVideoTracks()[0];
+    if (!ctx) {
+      throw new Error('Failed to initialize canvas context for black video track');
+    }
+
+    const drawBlackFrame = () => {
+      ctx.fillStyle = 'black';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    };
+    drawBlackFrame();
+
+    const intervalId = setInterval(drawBlackFrame, 1000);
+
+    const stream = canvas.captureStream(1);
+    const videoTrack = stream.getVideoTracks()[0];
+
+    if (!videoTrack) {
+      throw new Error('Failed to create black video track');
+    }
+
+    try {
+      await videoTrack.applyConstraints({
+        width: { ideal: 2, max: 2 },
+        height: { ideal: 2, max: 2 },
+        frameRate: { ideal: 1, max: 1 },
+      });
+    } catch (e) {
+      // Some browsers may reject constraints for canvas tracks; continue with capture defaults.
+    }
+
+    blackVideoSourceRef.current = { canvas, stream, intervalId };
+
+    return videoTrack;
   };
 
   const requestStreamStop = async (streamId) => {
@@ -162,6 +199,10 @@ export default function TranscribeStream({ accessToken }) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
+    if (blackVideoSourceRef.current?.intervalId) {
+      clearInterval(blackVideoSourceRef.current.intervalId);
+    }
+    blackVideoSourceRef.current = null;
     setPartialTranscript('');
     if (!preserveStatus && wasStarted) setStatus('Transcription stopped.');
   };
