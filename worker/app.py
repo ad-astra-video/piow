@@ -22,6 +22,7 @@ import requests
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+import av
 import aiohttp
 import numpy as np
 import urllib3
@@ -471,8 +472,11 @@ CUSTOM_ROUTES = [
 # =============================================================================
 # StreamProcessor handlers (decorator-based)
 # =============================================================================
-class LiveTranslationHandlers:
+class LiveTranscriptionWorker:
     """Decorator-based handlers for pytrickle StreamProcessor."""
+
+    _audio_frame_count: int = 0
+    _resampler: av.AudioResampler = av.AudioResampler(format='s16', layout='mono', rate=16000)
 
     @model_loader
     async def load(self, **kwargs: dict) -> None:
@@ -503,13 +507,30 @@ class LiveTranslationHandlers:
     @audio_handler
     async def handle_audio(self, frame: AudioFrame) -> List[AudioFrame]:
         """Forward audio frames to the VLLM realtime websocket."""
+        LiveTranscriptionWorker._audio_frame_count += 1
         if vllm_client and vllm_client.is_connected:
             try:
-                samples = frame.samples.flatten()
-                if samples.dtype == np.float32:
-                    samples = np.clip(samples * 32767, -32768, 32767).astype(np.int16)
-                audio_bytes = samples.tobytes()
-                await vllm_client.send_audio(audio_bytes)
+                samples = frame.samples  # shape (channels, samples), dtype float32
+                # Log sample rate periodically
+                if LiveTranscriptionWorker._audio_frame_count % 100 == 1:
+                    logger.info(
+                        f"handle_audio: frame={LiveTranscriptionWorker._audio_frame_count}, "
+                        f"sample_rate={getattr(frame, 'rate', 'unknown')}Hz, "
+                        f"shape={samples.shape}, dtype={samples.dtype}"
+                    )
+                # Resample to 16kHz mono PCM16 using PyAV
+                n_channels = samples.shape[0] if samples.ndim > 1 else 1
+                layout = 'stereo' if n_channels == 2 else 'mono'
+                av_frame = av.AudioFrame.from_ndarray(
+                    samples if samples.ndim > 1 else samples[np.newaxis, :],
+                    format='fltp',
+                    layout=layout,
+                )
+                av_frame.sample_rate = getattr(frame, 'rate', 48000)
+                resampled_frames = LiveTranscriptionWorker._resampler.resample(av_frame)
+                audio_bytes = b''.join(bytes(rf.planes[0]) for rf in resampled_frames)
+                if audio_bytes:
+                    await vllm_client.send_audio(audio_bytes)
             except Exception as exc:
                 logger.warning(f"VLLM send_audio error: {exc}")
         return [frame]
@@ -537,7 +558,7 @@ async def on_shutdown(app: aiohttp.web.Application):
 # =============================================================================
 async def main() -> None:
     """Create and run the StreamProcessor with custom batch routes."""
-    handlers = LiveTranslationHandlers()
+    handlers = LiveTranscriptionWorker()
     processor = StreamProcessor.from_handlers(
         handlers,
         name=CAPABILITY_NAME,
