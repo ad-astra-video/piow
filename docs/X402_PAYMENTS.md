@@ -1041,15 +1041,27 @@ CREATE TABLE x402_payments (
   settled_at TIMESTAMPTZ
 );
 
--- Agent usage tracking
-CREATE TABLE agent_usage (
+-- API usage tracking
+CREATE TABLE api_usage (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  agent_wallet TEXT NOT NULL,
+    actor_type TEXT NOT NULL CHECK (actor_type IN ('agent', 'user')),
+    agent_id UUID REFERENCES agents(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    agent_wallet TEXT,
   endpoint TEXT NOT NULL,
-  amount_paid NUMERIC NOT NULL,
-  asset TEXT NOT NULL,
+    method TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    success BOOLEAN NOT NULL,
+    cost_usdc_cents INTEGER,
+    amount_paid NUMERIC,
+    asset TEXT,
   transaction_hash TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    metadata JSONB,
+    CONSTRAINT api_usage_actor_identity_check CHECK (
+        (actor_type = 'agent' AND agent_id IS NOT NULL AND user_id IS NULL)
+        OR
+        (actor_type = 'user' AND user_id IS NOT NULL AND agent_id IS NULL)
+    )
 );
 
 -- Indexes
@@ -1057,25 +1069,31 @@ CREATE INDEX idx_x402_payments_agent_wallet ON x402_payments(agent_wallet);
 CREATE INDEX idx_x402_payments_resource_url ON x402_payments(resource_url);
 CREATE INDEX idx_x402_payments_transaction_hash ON x402_payments(transaction_hash);
 CREATE INDEX idx_x402_payments_status ON x402_payments(status);
-CREATE INDEX idx_agent_usage_agent_wallet ON agent_usage(agent_wallet);
-CREATE INDEX idx_agent_usage_created_at ON agent_usage(created_at);
+CREATE INDEX idx_api_usage_agent_time ON api_usage (actor_type, agent_id, timestamp) WHERE actor_type = 'agent';
+CREATE INDEX idx_api_usage_user_time ON api_usage (actor_type, user_id, timestamp) WHERE actor_type = 'user';
+CREATE INDEX idx_api_usage_agent_wallet ON api_usage(agent_wallet);
 
 -- RLS Policies
 ALTER TABLE x402_payments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE agent_usage ENABLE ROW LEVEL SECURITY;
+ALTER TABLE api_usage ENABLE ROW LEVEL SECURITY;
 
 -- Agents can view their own payments
 CREATE POLICY "Agents can view own payments" ON x402_payments
   FOR SELECT USING (agent_wallet = auth.jwt()->>'wallet_address');
 
-CREATE POLICY "Agents can view own usage" ON agent_usage
-  FOR SELECT USING (agent_wallet = auth.jwt()->>'wallet_address');
+CREATE POLICY "Agents can view own usage" ON api_usage
+    FOR SELECT USING (
+        actor_type = 'agent' AND (
+            agent_wallet = auth.jwt()->>'wallet_address'
+            OR agent_id::text = auth.jwt()->>'sub'
+        )
+    );
 
 -- Service role can manage all
 CREATE POLICY "Service role can manage x402 payments" ON x402_payments
   FOR ALL USING (auth.jwt()->>'role' = 'service_role');
 
-CREATE POLICY "Service role can manage agent usage" ON agent_usage
+CREATE POLICY "Service role can manage api usage" ON api_usage
   FOR ALL USING (auth.jwt()->>'role' = 'service_role');
 ```
 

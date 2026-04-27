@@ -412,7 +412,7 @@ flowchart TB
 
 1. **Authentication**: `require_auth` decorator tries agent HMAC auth first, then Supabase JWT user auth
 2. **Rate Limiting**: `check_rate_limit` decorator enforces 60 requests/minute per agent or user
-3. **Usage Tracking**: `track_usage` decorator logs to `agent_usage` table
+3. **Usage Tracking**: Auth middleware logs to `api_usage` table
 4. **Provider Selection**: `ComputeProviderManager.select_provider()` chooses best provider
 5. **Request Proxying**: Backend forwards request to selected provider
 6. **Response**: Backend returns provider response to client
@@ -574,12 +574,13 @@ The backend validates the JWT token from the `Authorization: Bearer <token>` hea
 
 ### 7.4 Rate Limiting ✅
 
-`check_rate_limit` decorator enforces 60 requests per minute per agent or user, tracked via the `agent_usage` table.
+`check_rate_limit` middleware logic enforces 60 requests per minute per agent or user, tracked via the `api_usage` table.
 
 ### 7.5 Usage Tracking ✅
 
-`track_usage` decorator logs every API request to the `agent_usage` table with:
-- `agent_id` (used for both agents and users)
+Usage logging records every authenticated API request to the `api_usage` table with:
+- `actor_type` (`agent` or `user`)
+- `agent_id` or `user_id` (exactly one is set)
 - `endpoint`, `method`, `success`
 - `cost_usdc_cents` (placeholder — currently 0)
 - `metadata` (processing time, user agent, auth type)
@@ -1147,7 +1148,7 @@ CREATE TABLE agents (
 | Table | Status | Notes |
 |-------|--------|-------|
 | `compute_providers` | ✅ | Multi-provider management |
-| `agent_usage` | ✅ | Per-request agent tracking (referenced in code but migration may be in usage_tracking) |
+| `api_usage` | ✅ | Per-request API tracking for both agents and users (migration `20260427_01`) |
 | `user_sessions` | ✅ | User session tracking (migration `20260418_01`) |
 | `stream_sessions` | ✅ | Live streaming session data with provider_session JSONB (migration `20260418_01`) |
 | `transcription_sessions` | ✅ | Batch transcription job tracking (migration `20260418_01`) |
