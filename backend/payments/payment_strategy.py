@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 def payment_required(service_type: str = 'transcribe_cpu',
                      require_subscription: bool = False,
-                     subscription_tier: str = 'starter'):
+                     subscription_tier: str = 'free'):
     """
     Unified payment decorator that accepts either x402 payment OR active subscription.
 
@@ -259,7 +259,7 @@ async def _update_x402_payment_status(payment_data, status, result_data):
 
 # Convenience decorators for common use cases
 def x402_or_subscription(service_type: str = 'transcribe_cpu',
-                         subscription_tier: str = 'starter'):
+                         subscription_tier: str = 'free'):
     """
     Decorator that accepts either x402 payment OR active subscription.
     """
@@ -268,7 +268,7 @@ def x402_or_subscription(service_type: str = 'transcribe_cpu',
                             subscription_tier=subscription_tier)
 
 
-def subscription_only(subscription_tier: str = 'starter'):
+def subscription_only(subscription_tier: str = 'free'):
     """
     Decorator that requires active subscription only (doesn't accept x402).
     """

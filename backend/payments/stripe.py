@@ -1288,7 +1288,7 @@ def reset_stripe_service() -> None:
 
 
 # Middleware for requiring active subscription
-def subscription_required(min_tier: str = 'starter'):
+def subscription_required(min_tier: str = 'free'):
     """
     Decorator to require an active subscription for an endpoint.
 
@@ -1348,20 +1348,21 @@ def subscription_required(min_tier: str = 'starter'):
                         sub = result.data[0]
                         if sub['status'] in ('active', 'trialing'):
                             tier = sub.get('plan', 'free')
-                            if service and service.get_tier_level(tier) >= service.get_tier_level(min_tier):
-                                return await handler(request)
-                            else:
-                                return web.json_response({
-                                    'error': f'Insufficient subscription tier. Required: {min_tier}, Current: {tier}',
-                                    'required_tier': min_tier,
-                                    'current_tier': tier,
-                                }, status=403)
+                        else:
+                            # Subscription exists but isn't active — treat as free
+                            tier = 'free'
+                    else:
+                        # No subscription row — new users default to free tier
+                        tier = 'free'
 
-                    # No active subscription found
-                    return web.json_response({
-                        'error': 'Active subscription required',
-                        'required_tier': min_tier,
-                    }, status=402)
+                    if service and service.get_tier_level(tier) >= service.get_tier_level(min_tier):
+                        return await handler(request)
+                    else:
+                        return web.json_response({
+                            'error': f'Insufficient subscription tier. Required: {min_tier}, Current: {tier}',
+                            'required_tier': min_tier,
+                            'current_tier': tier,
+                        }, status=403)
 
                 except Exception as e:
                     logger.error(f"Error checking subscription (fail-closed): {e}")
