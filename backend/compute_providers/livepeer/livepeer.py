@@ -287,24 +287,27 @@ class LivepeerComputeProvider(BaseComputeProvider):
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error(
-                        "Livepeer stream start failed: request_id=%s url=%s session_id=%s status=%s elapsed_ms=%s error=%s",
+                        "Livepeer stream start failed: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s request_payload=%s response_body=%s",
                         stream_request_id,
                         start_url,
                         session_id,
                         response.status,
                         elapsed_ms,
+                        start_request,
                         error_text,
                     )
                     raise Exception(f"Failed to create streaming session: HTTP {response.status} - {error_text}")
                 
                 provider_data = await response.json()
                 logger.info(
-                    "Livepeer stream start success: request_id=%s url=%s session_id=%s status=%s elapsed_ms=%s response_keys=%s",
+                    "Livepeer stream start success: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s request_payload=%s response_body=%s response_keys=%s",
                     stream_request_id,
                     start_url,
                     session_id,
                     response.status,
                     elapsed_ms,
+                    start_request,
+                    provider_data,
                     sorted(list(provider_data.keys())),
                 )
                 

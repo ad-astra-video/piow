@@ -357,9 +357,12 @@ class RunpodComputeProvider(BaseComputeProvider):
                 "model": "voxtral-realtime"
             })
         }
+        provider_response = {
+            "note": "No direct HTTP stream-start call is made by backend for Runpod in current implementation"
+        }
 
         logger.info(
-            "Runpod stream start request prepared: request_id=%s endpoint_id=%s session_id=%s language=%s payload=%s",
+            "Runpod stream start request prepared: request_id=%s endpoint_id=%s session_id=%s language=%s request_payload=%s",
             stream_request_id,
             self.endpoint_id,
             session_id,
@@ -367,11 +370,13 @@ class RunpodComputeProvider(BaseComputeProvider):
             runpod_payload,
         )
         logger.info(
-            "Runpod stream start provider payload prepared: request_id=%s endpoint_id=%s session_id=%s request_body=%s",
+            "Runpod stream start provider payload prepared: request_id=%s endpoint_id=%s session_id=%s request_body=%s provider_response=%s http_status=%s",
             stream_request_id,
             self.endpoint_id,
             session_id,
             request_body,
+            provider_response,
+            "n/a",
         )
 
         return {
