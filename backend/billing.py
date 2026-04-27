@@ -90,10 +90,10 @@ async def create_checkout_session(request):
         )
 
         # Create Checkout Session
-        from supabase_client import supabase
-
+        # NOTE: In Stripe API 2026-03-25+, the positional argument must be a dict
+        # with a "params" key containing the request parameters.
         checkout_session = await stripe_service._client.v1.checkout.sessions.create_async(  # type: ignore
-            params={
+            {"params": {
                 'customer': customer.id,
                 'mode': 'subscription',
                 'line_items': [{'price': price_id, 'quantity': 1}],
@@ -103,7 +103,7 @@ async def create_checkout_session(request):
                     'supabase_user_id': user_id,
                     'tier': tier,
                 },
-            },
+            }},
         )
 
         return web.json_response({

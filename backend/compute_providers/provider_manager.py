@@ -95,6 +95,48 @@ class ComputeProviderManager:
 
         return self.providers.get(provider_name)
 
+    def select_providers(self, job_type: str, requirements: Dict[str, Any] = None) -> List[BaseComputeProvider]:
+        """
+        Select and rank all suitable providers for a given job type.
+
+        Returns a list of provider instances sorted by score (best first).
+        """
+        requirements = requirements or {}
+
+        candidates = [
+            (name, provider) for name, provider in self.providers.items()
+            if provider.enabled
+        ]
+
+        if not candidates:
+            raise Exception("No enabled compute providers available")
+
+        capable_providers = []
+        for name, provider in candidates:
+            capable_providers.append((name, provider))
+
+        if not capable_providers:
+            raise Exception(f"No provider supports job type: {job_type}")
+
+        healthy_providers = []
+        for name, provider in capable_providers:
+            if self.is_healthy(name):
+                healthy_providers.append((name, provider))
+
+        providers_to_consider = healthy_providers if healthy_providers else capable_providers
+
+        scored_providers = []
+        for name, provider in providers_to_consider:
+            score = self._score_provider(provider, job_type, requirements)
+            scored_providers.append((score, name, provider))
+
+        scored_providers.sort(key=lambda x: x[0], reverse=True)
+
+        if not scored_providers:
+            raise Exception("No suitable providers found after scoring")
+
+        return [p[2] for p in scored_providers]
+
     def select_provider(self, job_type: str, requirements: Dict[str, Any] = None) -> BaseComputeProvider:
         """
         Select the best provider for a given job type and requirements.
@@ -109,52 +151,10 @@ class ComputeProviderManager:
         Raises:
             Exception: If no suitable provider is found
         """
-        requirements = requirements or {}
-        
-        # Filter enabled providers
-        candidates = [
-            (name, provider) for name, provider in self.providers.items()
-            if provider.enabled
-        ]
-        
-        if not candidates:
-            raise Exception("No enabled compute providers available")
-        
-        # Filter by job type capability (simplified - in reality would check provider capabilities)
-        capable_providers = []
-        for name, provider in candidates:
-            # For now, assume all providers can handle all job types
-            # In a real implementation, each provider would advertise its capabilities
-            capable_providers.append((name, provider))
-        
-        if not capable_providers:
-            raise Exception(f"No provider supports job type: {job_type}")
-        
-        # Filter by health (prefer healthy providers)
-        healthy_providers = []
-        for name, provider in capable_providers:
-            if self.is_healthy(name):
-                healthy_providers.append((name, provider))
-        
-        # Use healthy providers if available, otherwise fall back to all capable
-        providers_to_consider = healthy_providers if healthy_providers else capable_providers
-        
-        # Apply requirements-based filtering/scoring
-        scored_providers = []
-        for name, provider in providers_to_consider:
-            score = self._score_provider(provider, job_type, requirements)
-            scored_providers.append((score, name, provider))
-        
-        # Sort by score (highest first)
-        scored_providers.sort(key=lambda x: x[0], reverse=True)
-        
-        if not scored_providers:
-            raise Exception("No suitable providers found after scoring")
-        
-        # Return the highest scoring provider
-        selected_provider = scored_providers[0][2]
-        logger.info(f"Selected provider '{scored_providers[0][1]}' for job_type={job_type} with score {scored_providers[0][0]}")
-        return selected_provider
+        ranked = self.select_providers(job_type, requirements)
+        selected = ranked[0]
+        logger.info(f"Selected provider '{selected.provider_name}' for job_type={job_type}")
+        return selected
 
     def _score_provider(self, provider: BaseComputeProvider, job_type: str, requirements: Dict[str, Any]) -> float:
         """

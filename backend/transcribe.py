@@ -294,6 +294,14 @@ async def transcribe_url(request):
         return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
+def _is_valid_streaming_session(session_result):
+    """Check if a provider returned a usable streaming session with a WHIP URL."""
+    if not session_result:
+        return False
+    whip_url = session_result.get("whip_url")
+    return bool(whip_url and str(whip_url).strip())
+
+
 @x402_or_subscription(service_type='transcribe_gpu')
 async def transcribe_stream(request):
     """Handle real-time transcription streaming."""
@@ -307,15 +315,49 @@ async def transcribe_stream(request):
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        provider = compute_provider_manager.select_provider(
+        # Get ranked list of providers for failover
+        ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_stream", requirements={"language": language}
         )
-        if not provider:
+        if not ranked_providers:
             return web.json_response({"error": "No compute provider available"}, status=503)
 
-        session_result = await provider.create_streaming_session(
-            session_id=session_id, language=language
-        )
+        # Try providers in order until one returns a valid session with whip_url
+        session_result = None
+        last_error = None
+        for provider in ranked_providers:
+            try:
+                logger.info(
+                    f"Trying provider '{provider.provider_name}' for stream session {session_id}"
+                )
+                session_result = await provider.create_streaming_session(
+                    session_id=session_id, language=language
+                )
+                if _is_valid_streaming_session(session_result):
+                    logger.info(
+                        f"Provider '{provider.provider_name}' returned valid streaming session"
+                    )
+                    break
+                else:
+                    logger.warning(
+                        f"Provider '{provider.provider_name}' returned no whip_url; will try next provider"
+                    )
+                    session_result = None
+            except Exception as e:
+                logger.warning(
+                    f"Provider '{provider.provider_name}' failed to create stream session: {e}"
+                )
+                last_error = e
+                session_result = None
+
+        if not session_result:
+            error_msg = (
+                f"All providers failed to return a valid streaming session. Last error: {last_error}"
+                if last_error
+                else "All providers returned invalid streaming sessions (missing whip_url)"
+            )
+            logger.error(error_msg)
+            return web.json_response({"error": error_msg}, status=503)
 
         from sessions import session_store
         stream_id = await session_store.create_stream_session(

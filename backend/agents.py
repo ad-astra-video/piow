@@ -476,14 +476,16 @@ async def agent_create_subscription(request):
                 )
 
                 # Create Checkout Session
+                # NOTE: In Stripe API 2026-03-25+, the positional argument must be
+                # a dict with a "params" key containing the request parameters.
                 _base = _get_base_url()
                 default_success = f"{_base}/api/v1/billing/success" if _base else "http://localhost:5173/api/v1/billing/success"
                 default_cancel = f"{_base}/api/v1/billing/cancel" if _base else "http://localhost:5173/api/v1/billing/cancel"
                 success_url = os.environ.get("STRIPE_SUCCESS_URL", default_success)
                 cancel_url = os.environ.get("STRIPE_CANCEL_URL", default_cancel)
 
-                checkout_session = await stripe_service._client.v1.checkout.sessions.create_async(  # type: ignore
-                    params={
+                checkout_session = await stripe_service._client.v1.checkout.sessions.create_async(
+                    {"params": {
                         'customer': customer.id,
                         'mode': 'subscription',
                         'line_items': [{'price': price_id, 'quantity': 1}],
@@ -494,7 +496,7 @@ async def agent_create_subscription(request):
                             'agent_subscription': 'true',
                             'tier': tier,
                         },
-                    },
+                    }},
                 )
 
                 return web.json_response({

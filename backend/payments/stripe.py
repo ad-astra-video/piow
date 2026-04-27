@@ -5,6 +5,8 @@ Stripe Payment Implementation
 Handles subscription management and card payments for the platform.
 Refactored to use StripeClient with robust error handling, idempotency,
 and structured logging following Stripe Python SDK best practices.
+
+Compatible with Stripe API version 2026-03-25 and newer.
 """
 
 import asyncio
@@ -42,16 +44,23 @@ class StripeConfig:
     """Configuration for Stripe client initialization."""
     api_key: str
     webhook_secret: str
-    api_version: str = "2024-12-18.acacia"
+    api_version: str = "2026-03-25"
     max_network_retries: int = 2
 
 
 class StripePaymentService:
     """
     Service class for handling Stripe payment operations.
-    
+
     Uses StripeClient for all API operations with proper error handling,
     idempotency keys, and structured logging.
+
+    NOTE on Stripe API version 2026-03-25+:
+    - All .list() / .search() / .create() / .update() methods accept a single
+      positional argument which is a dict of request parameters.
+    - The dict key is "params" for request body fields.
+    - Filtering by metadata is not supported on list endpoints; we paginate
+      and filter client-side instead.
     """
 
     # Subscription tier price IDs (auto-discovered from Stripe or set via environment)
@@ -99,7 +108,7 @@ class StripePaymentService:
         # fall back to explicit environment variables
         self._load_price_ids()
 
-        logger.info("Stripe payment service initialized")
+        logger.info("Stripe payment service initialized (API version %s)", config.api_version)
 
     def _load_price_ids(self) -> None:
         """
@@ -187,7 +196,10 @@ class StripePaymentService:
         Find a Stripe product by its name.
 
         Tries search API first (requires Stripe API version 2022-11-15+),
-        falls back to listing all products and filtering.
+        falls back to listing all products and filtering client-side.
+
+        NOTE: In Stripe API 2026-03-25+, .search() and .list() accept a single
+        dict argument with a "params" key containing the request parameters.
 
         Args:
             name: Product name to search for
@@ -201,8 +213,7 @@ class StripePaymentService:
         try:
             # Try search API first (more efficient, requires newer API version)
             search_result = self._client.v1.products.search(  # type: ignore
-                query=f"name:'{name}'",
-                limit=1,
+                {"params": {"query": f"name:'{name}'", "limit": 1}},
             )
             if search_result.data:
                 return search_result.data[0]
@@ -210,9 +221,9 @@ class StripePaymentService:
             # Search may not be available or may fail; fall back to list
             logger.debug("Product search failed, falling back to list: %s", e)
 
-        # Fallback: list products and filter by name
+        # Fallback: list products and filter by name client-side
         products = self._client.v1.products.list(  # type: ignore
-            limit=100,
+            {"params": {"limit": 100}},
         )
         for product in products.auto_paging_iter():
             if product.name == name:
@@ -234,9 +245,7 @@ class StripePaymentService:
             StripeError: If Stripe API request fails
         """
         prices = self._client.v1.prices.list(  # type: ignore
-            product=product_id,
-            active=True,
-            limit=10,
+            {"params": {"product": product_id, "active": "true", "limit": 10}},
         )
         for price in prices.auto_paging_iter():
             if price.recurring:
@@ -272,7 +281,7 @@ class StripePaymentService:
         if not api_key.startswith(("sk_test_", "sk_live_", "rk_test_", "rk_live_")):
             logger.warning("Stripe API key may be invalid - unexpected prefix")
 
-        api_version = os.environ.get("STRIPE_API_VERSION", "2024-12-18.acacia")
+        api_version = os.environ.get("STRIPE_API_VERSION", "2026-03-25")
         max_retries = int(os.environ.get("STRIPE_MAX_RETRIES", "2"))
 
         return StripeConfig(
@@ -408,6 +417,9 @@ class StripePaymentService:
         """
         Create a Stripe customer for a user.
 
+        NOTE: In Stripe API 2026-03-25+, you cannot filter customers.list by
+        metadata. We search by email instead (unique per user in Supabase).
+
         Args:
             user_id: Supabase user ID
             email: User email
@@ -422,32 +434,37 @@ class StripePaymentService:
         operation = "create_customer"
 
         try:
-            # Check if customer already exists for this user
+            # Check if customer already exists for this email.
+            # Metadata filtering is not supported on list endpoints in 2026-03-25+,
+            # so we use email as the lookup key (unique per user in Supabase).
             existing_customers = await self._client.v1.customers.list_async(  # type: ignore
-                params={"metadata": {"supabase_user_id": user_id}, "limit": 1}
+                {"params": {"email": email, "limit": 1}},
             )
 
             customers_list = list(existing_customers)
             if customers_list:
                 customer = customers_list[0]
-                self._log_operation(
-                    logging.INFO,
-                    operation,
-                    user_id=user_id,
-                    stripe_id=customer.id,
-                    details={"action": "reused_existing"},
-                )
-                return customer
+                # Verify metadata matches to avoid collisions
+                meta = getattr(customer, 'metadata', None) or {}
+                if meta.get('supabase_user_id') == user_id:
+                    self._log_operation(
+                        logging.INFO,
+                        operation,
+                        user_id=user_id,
+                        stripe_id=customer.id,
+                        details={"action": "reused_existing"},
+                    )
+                    return customer
 
             # Create new customer with idempotency key
             idempotency_key = self._generate_idempotency_key("customer_")
 
             customer = await self._client.v1.customers.create_async(  # type: ignore
-                params={
+                {"params": {
                     "email": email,
                     "name": name,
                     "metadata": {"supabase_user_id": user_id},
-                },
+                }},
                 options={"idempotency_key": idempotency_key},
             )
 
@@ -513,12 +530,12 @@ class StripePaymentService:
             idempotency_key = self._generate_idempotency_key("subscription_")
 
             subscription = await self._client.v1.subscriptions.create_async(  # type: ignore
-                params={
+                {"params": {
                     "customer": customer.id,
                     "items": [{"price": price_id}],
                     "trial_period_days": trial_days,
                     "metadata": {"supabase_user_id": user_id},
-                },
+                }},
                 options={"idempotency_key": idempotency_key},
             )
 
@@ -647,13 +664,13 @@ class StripePaymentService:
 
             updated_subscription = await self._client.v1.subscriptions.update_async(  # type: ignore
                 subscription_id,
-                params={
+                {"params": {
                     "items": [{
                         "id": subscription_item_id,
                         "price": price_id,
                     }],
                     "proration_behavior": "create_prorations",
-                },
+                }},
                 options={"idempotency_key": idempotency_key},
             )
 

@@ -654,7 +654,7 @@ async def create_stream_session(request):
 
     This endpoint:
     1. Verifies the user owns the parent session
-    2. Selects an appropriate compute provider
+    2. Selects an appropriate compute provider (with failover)
     3. Negotiates a stream session with the provider
     4. Stores the provider's response (URLs) for later use
     5. Returns the stream URLs to the client
@@ -679,23 +679,62 @@ async def create_stream_session(request):
         provider_manager = ComputeProviderManager()
         provider_manager.register_providers_from_definitions(PROVIDER_DEFINITIONS)
 
-        # Select compute provider
-        provider = provider_manager.select_provider(
+        def _is_valid_streaming_session(session_result):
+            """Check if a provider returned a usable streaming session with a WHIP URL."""
+            if not session_result:
+                return False
+            whip_url = session_result.get("whip_url")
+            return bool(whip_url and str(whip_url).strip())
+
+        # Get ranked list of providers for failover
+        ranked_providers = provider_manager.select_providers(
             job_type="transcribe_stream",
             requirements={"language": language}
         )
 
-        if not provider:
+        if not ranked_providers:
             return web.json_response(
                 {"error": "No compute provider available"},
                 status=503
             )
 
-        # Negotiate with provider to create stream session
-        provider_session_data = await provider.create_streaming_session(
-            session_id=session_id,
-            language=language
-        )
+        # Try providers in order until one returns a valid session with whip_url
+        provider_session_data = None
+        last_error = None
+        for provider in ranked_providers:
+            try:
+                logger.info(
+                    f"Trying provider '{provider.provider_name}' for stream session {session_id}"
+                )
+                provider_session_data = await provider.create_streaming_session(
+                    session_id=session_id,
+                    language=language
+                )
+                if _is_valid_streaming_session(provider_session_data):
+                    logger.info(
+                        f"Provider '{provider.provider_name}' returned valid streaming session"
+                    )
+                    break
+                else:
+                    logger.warning(
+                        f"Provider '{provider.provider_name}' returned no whip_url; will try next provider"
+                    )
+                    provider_session_data = None
+            except Exception as e:
+                logger.warning(
+                    f"Provider '{provider.provider_name}' failed to create stream session: {e}"
+                )
+                last_error = e
+                provider_session_data = None
+
+        if not provider_session_data:
+            error_msg = (
+                f"All providers failed to return a valid streaming session. Last error: {last_error}"
+                if last_error
+                else "All providers returned invalid streaming sessions (missing whip_url)"
+            )
+            logger.error(error_msg)
+            return web.json_response({"error": error_msg}, status=503)
 
         # Store in session store with provider data
         stream_id = await session_store.create_stream_session(
