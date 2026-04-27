@@ -478,6 +478,9 @@ class LiveTranscriptionWorker:
 
     _audio_frame_count: int = 0
     _resampler: av.AudioResampler = av.AudioResampler(format='s16', layout='mono', rate=16000)
+    # 80ms @ 16kHz s16 mono = 16000 * 0.08 * 2 bytes = 2560 bytes
+    _SEND_CHUNK_BYTES: int = 2560
+    _audio_buffer: bytes = b""
 
     @model_loader
     async def load(self, **kwargs: dict) -> None:
@@ -541,15 +544,18 @@ class LiveTranscriptionWorker:
                 resampled_frames = LiveTranscriptionWorker._resampler.resample(av_frame)
                 audio_bytes = b''.join(bytes(rf.planes[0]) for rf in resampled_frames)
                 if audio_bytes:
-                    if LiveTranscriptionWorker._audio_frame_count % 100 == 1:
-                        n_samples = len(audio_bytes) // 2  # s16 = 2 bytes/sample
-                        logger.info(
-                            f"send_audio: resampled bytes={len(audio_bytes)}, "
-                            f"pcm16_samples={n_samples}, "
-                            f"implied_rate=16000Hz mono s16 "
-                            f"(~{n_samples/16000*1000:.1f}ms of audio)"
-                        )
-                    await vllm_client.send_audio(audio_bytes)
+                    LiveTranscriptionWorker._audio_buffer += audio_bytes
+                    while len(LiveTranscriptionWorker._audio_buffer) >= LiveTranscriptionWorker._SEND_CHUNK_BYTES:
+                        chunk = LiveTranscriptionWorker._audio_buffer[:LiveTranscriptionWorker._SEND_CHUNK_BYTES]
+                        LiveTranscriptionWorker._audio_buffer = LiveTranscriptionWorker._audio_buffer[LiveTranscriptionWorker._SEND_CHUNK_BYTES:]
+                        if LiveTranscriptionWorker._audio_frame_count % 100 == 1:
+                            n_samples = len(chunk) // 2
+                            logger.info(
+                                f"send_audio: chunk bytes={len(chunk)}, "
+                                f"pcm16_samples={n_samples}, "
+                                f"~{n_samples/16000*1000:.1f}ms of audio"
+                            )
+                        await vllm_client.send_audio(chunk)
             except Exception as exc:
                 logger.warning(f"VLLM send_audio error: {exc}")
         return [frame]
