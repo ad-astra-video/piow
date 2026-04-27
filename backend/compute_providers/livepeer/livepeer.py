@@ -4,6 +4,7 @@ Livepeer compute provider for the Live Translation Platform.
 Handles Livepeer header creation and communication with Livepeer orchestrator.
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -331,56 +332,105 @@ class LivepeerComputeProvider(BaseComputeProvider):
             start_request,
         )
         
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.post(
-                start_url,
-                json=start_request,
-                headers={
-                    "Content-Type": "application/json",
-                    "Livepeer": livepeer_header
-                },
-                timeout=aiohttp.ClientTimeout(total=300)
-            ) as response:
-                elapsed_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(
-                        "Livepeer stream start failed: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s request_payload=%s response_body=%s",
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.post(
+                    start_url,
+                    json=start_request,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Livepeer": livepeer_header
+                    },
+                    timeout=aiohttp.ClientTimeout(total=300)
+                ) as response:
+                    elapsed_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
+                    
+                    # Always log response details for debugging
+                    logger.info(
+                        "Livepeer stream start response received: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s content_type=%s",
                         stream_request_id,
                         start_url,
                         session_id,
                         response.status,
                         elapsed_ms,
-                        start_request,
-                        error_text,
+                        response.headers.get("content-type", "unknown"),
                     )
-                    raise Exception(f"Failed to create streaming session: HTTP {response.status} - {error_text}")
-                
-                provider_data = await response.json()
-                logger.info(
-                    "Livepeer stream start success: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s response_keys=%s",
-                    stream_request_id,
-                    start_url,
-                    session_id,
-                    response.status,
-                    elapsed_ms,
-                    sorted(list(provider_data.keys())),
-                )
-                
-                # Return the full provider response in standardized format
-                return {
-                    "provider": "livepeer",
-                    "provider_stream_id": provider_data.get("stream_id", session_id),
-                    "whip_url": provider_data.get("whip_url", ""),
-                    "whep_url": provider_data.get("whep_url", ""),
-                    "rtmp_url": provider_data.get("rtmp_url", ""),
-                    "rtmp_output_url": provider_data.get("rtmp_output_url", ""),
-                    "data_url": provider_data.get("data_url", ""),
-                    "update_url": provider_data.get("update_url", ""),
-                    "status_url": provider_data.get("status_url", ""),
-                    "stop_url": provider_data.get("stop_url", ""),
-                    "metadata": provider_data  # Store entire response for future use
-                }
+                    
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(
+                            "Livepeer stream start failed: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s request_headers=%s request_payload=%s response_headers=%s response_body=%s",
+                            stream_request_id,
+                            start_url,
+                            session_id,
+                            response.status,
+                            elapsed_ms,
+                            dict(response.request_info.headers) if hasattr(response, 'request_info') else "n/a",
+                            start_request,
+                            dict(response.headers),
+                            error_text[:1000],
+                        )
+                        raise Exception(f"HTTP {response.status}: {error_text[:500]}")
+                    
+                    provider_data = await response.json()
+                    logger.info(
+                        "Livepeer stream start success: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s response_keys=%s whip_url=%s data_url=%s",
+                        stream_request_id,
+                        start_url,
+                        session_id,
+                        response.status,
+                        elapsed_ms,
+                        sorted(list(provider_data.keys())),
+                        provider_data.get("whip_url", "NOT_PROVIDED"),
+                        provider_data.get("data_url", "NOT_PROVIDED"),
+                    )
+                    
+                    # Return the full provider response in standardized format
+                    return {
+                        "provider": "livepeer",
+                        "provider_stream_id": provider_data.get("stream_id", session_id),
+                        "whip_url": provider_data.get("whip_url", ""),
+                        "whep_url": provider_data.get("whep_url", ""),
+                        "rtmp_url": provider_data.get("rtmp_url", ""),
+                        "rtmp_output_url": provider_data.get("rtmp_output_url", ""),
+                        "data_url": provider_data.get("data_url", ""),
+                        "update_url": provider_data.get("update_url", ""),
+                        "status_url": provider_data.get("status_url", ""),
+                        "stop_url": provider_data.get("stop_url", ""),
+                        "metadata": provider_data  # Store entire response for future use
+                    }
+        except asyncio.TimeoutError as e:
+            logger.error(
+                "Livepeer stream start timeout: request_id=%s url=%s session_id=%s elapsed_ms=%s error=%s",
+                stream_request_id,
+                start_url,
+                session_id,
+                round((time.perf_counter() - request_started_at) * 1000, 2),
+                str(e),
+            )
+            raise Exception(f"Livepeer timeout: {str(e)}")
+        except aiohttp.ClientError as e:
+            logger.error(
+                "Livepeer stream start connection error: request_id=%s url=%s session_id=%s elapsed_ms=%s error_type=%s error=%s",
+                stream_request_id,
+                start_url,
+                session_id,
+                round((time.perf_counter() - request_started_at) * 1000, 2),
+                type(e).__name__,
+                str(e),
+            )
+            raise Exception(f"Livepeer connection error: {type(e).__name__}: {str(e)}")
+        except Exception as e:
+            logger.error(
+                "Livepeer stream start unexpected error: request_id=%s url=%s session_id=%s elapsed_ms=%s error_type=%s error=%s",
+                stream_request_id,
+                start_url,
+                session_id,
+                round((time.perf_counter() - request_started_at) * 1000, 2),
+                type(e).__name__,
+                str(e),
+            )
+            raise
 
     async def health_check(self) -> Dict[str, Any]:
         """
@@ -461,6 +511,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
         
         update_url = f"{self.GPU_RUNNER_URL}/process/stream/{provider_stream_id}/update"
         request_body = params or {}
+        request_started_at = time.perf_counter()
         
         logger.info(
             "Livepeer stream update request: request_id=%s url=%s stream_id=%s params=%s",
@@ -470,40 +521,67 @@ class LivepeerComputeProvider(BaseComputeProvider):
             request_body,
         )
         
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.post(
-                update_url,
-                json=request_body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Livepeer": livepeer_header
-                },
-                timeout=aiohttp.ClientTimeout(total=60)
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(
-                        "Livepeer stream update failed: request_id=%s url=%s stream_id=%s http_status=%s response_body=%s",
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.post(
+                    update_url,
+                    json=request_body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Livepeer": livepeer_header
+                    },
+                    timeout=aiohttp.ClientTimeout(total=60)
+                ) as response:
+                    elapsed_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
+                    
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(
+                            "Livepeer stream update failed: request_id=%s url=%s stream_id=%s http_status=%s elapsed_ms=%s response_headers=%s response_body=%s",
+                            stream_request_id,
+                            update_url,
+                            provider_stream_id,
+                            response.status,
+                            elapsed_ms,
+                            dict(response.headers),
+                            error_text[:500],
+                        )
+                        raise Exception(f"HTTP {response.status}: {error_text[:300]}")
+                    
+                    logger.info(
+                        "Livepeer stream update success: request_id=%s url=%s stream_id=%s http_status=%s elapsed_ms=%s",
                         stream_request_id,
                         update_url,
                         provider_stream_id,
                         response.status,
-                        error_text,
+                        elapsed_ms,
                     )
-                    raise Exception(f"Failed to update streaming session: HTTP {response.status} - {error_text}")
-                
-                logger.info(
-                    "Livepeer stream update success: request_id=%s url=%s stream_id=%s http_status=%s",
-                    stream_request_id,
-                    update_url,
-                    provider_stream_id,
-                    response.status,
-                )
-                
-                return {
-                    "status": "updated",
-                    "stream_id": provider_stream_id
-                }
+                    
+                    return {
+                        "status": "updated",
+                        "stream_id": provider_stream_id
+                    }
+        except asyncio.TimeoutError as e:
+            logger.error(
+                "Livepeer stream update timeout: request_id=%s url=%s stream_id=%s elapsed_ms=%s error=%s",
+                stream_request_id,
+                update_url,
+                provider_stream_id,
+                round((time.perf_counter() - request_started_at) * 1000, 2),
+                str(e),
+            )
+            raise Exception(f"Livepeer timeout: {str(e)}")
+        except aiohttp.ClientError as e:
+            logger.error(
+                "Livepeer stream update connection error: request_id=%s url=%s stream_id=%s elapsed_ms=%s error_type=%s error=%s",
+                stream_request_id,
+                update_url,
+                provider_stream_id,
+                round((time.perf_counter() - request_started_at) * 1000, 2),
+                type(e).__name__,
+                str(e),
+            )
+            raise Exception(f"Livepeer connection error: {type(e).__name__}: {str(e)}")
 
     async def get_stream_status(
         self,
@@ -527,6 +605,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
         """
         stream_request_id = kwargs.get("stream_request_id")
         status_url = f"{self.GPU_RUNNER_URL}/process/stream/{provider_stream_id}/status"
+        request_started_at = time.perf_counter()
         
         logger.info(
             "Livepeer stream status request: request_id=%s url=%s stream_id=%s",
@@ -535,34 +614,61 @@ class LivepeerComputeProvider(BaseComputeProvider):
             provider_stream_id,
         )
         
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.get(
-                status_url,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(
-                        "Livepeer stream status failed: request_id=%s url=%s stream_id=%s http_status=%s response_body=%s",
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.get(
+                    status_url,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    elapsed_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
+                    
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(
+                            "Livepeer stream status failed: request_id=%s url=%s stream_id=%s http_status=%s elapsed_ms=%s response_headers=%s response_body=%s",
+                            stream_request_id,
+                            status_url,
+                            provider_stream_id,
+                            response.status,
+                            elapsed_ms,
+                            dict(response.headers),
+                            error_text[:500],
+                        )
+                        raise Exception(f"HTTP {response.status}: {error_text[:300]}")
+                    
+                    status_data = await response.json()
+                    logger.info(
+                        "Livepeer stream status success: request_id=%s url=%s stream_id=%s http_status=%s elapsed_ms=%s status_data_keys=%s",
                         stream_request_id,
                         status_url,
                         provider_stream_id,
                         response.status,
-                        error_text,
+                        elapsed_ms,
+                        sorted(list(status_data.keys())),
                     )
-                    raise Exception(f"Failed to get stream status: HTTP {response.status} - {error_text}")
-                
-                status_data = await response.json()
-                logger.info(
-                    "Livepeer stream status success: request_id=%s url=%s stream_id=%s http_status=%s status_data_keys=%s",
-                    stream_request_id,
-                    status_url,
-                    provider_stream_id,
-                    response.status,
-                    sorted(list(status_data.keys())),
-                )
-                
-                return status_data
+                    
+                    return status_data
+        except asyncio.TimeoutError as e:
+            logger.error(
+                "Livepeer stream status timeout: request_id=%s url=%s stream_id=%s elapsed_ms=%s error=%s",
+                stream_request_id,
+                status_url,
+                provider_stream_id,
+                round((time.perf_counter() - request_started_at) * 1000, 2),
+                str(e),
+            )
+            raise Exception(f"Livepeer timeout: {str(e)}")
+        except aiohttp.ClientError as e:
+            logger.error(
+                "Livepeer stream status connection error: request_id=%s url=%s stream_id=%s elapsed_ms=%s error_type=%s error=%s",
+                stream_request_id,
+                status_url,
+                provider_stream_id,
+                round((time.perf_counter() - request_started_at) * 1000, 2),
+                type(e).__name__,
+                str(e),
+            )
+            raise Exception(f"Livepeer connection error: {type(e).__name__}: {str(e)}")
 
     async def stop_streaming_session(
         self,
@@ -589,6 +695,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
         stream_request_id = kwargs.get("stream_request_id")
         stop_url = f"{self.GPU_RUNNER_URL}/process/stream/{provider_stream_id}/stop"
         request_body = stop_data or {}
+        request_started_at = time.perf_counter()
         
         logger.info(
             "Livepeer stream stop request: request_id=%s url=%s stream_id=%s",
@@ -597,38 +704,65 @@ class LivepeerComputeProvider(BaseComputeProvider):
             provider_stream_id,
         )
         
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.post(
-                stop_url,
-                json=request_body,
-                headers={"Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                # 204 No Content is the expected success response
-                if response.status not in (200, 204):
-                    error_text = await response.text()
-                    logger.error(
-                        "Livepeer stream stop failed: request_id=%s url=%s stream_id=%s http_status=%s response_body=%s",
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.post(
+                    stop_url,
+                    json=request_body,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    elapsed_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
+                    
+                    # 204 No Content is the expected success response
+                    if response.status not in (200, 204):
+                        error_text = await response.text()
+                        logger.error(
+                            "Livepeer stream stop failed: request_id=%s url=%s stream_id=%s http_status=%s elapsed_ms=%s response_headers=%s response_body=%s",
+                            stream_request_id,
+                            stop_url,
+                            provider_stream_id,
+                            response.status,
+                            elapsed_ms,
+                            dict(response.headers),
+                            error_text[:500],
+                        )
+                        raise Exception(f"HTTP {response.status}: {error_text[:300]}")
+                    
+                    logger.info(
+                        "Livepeer stream stop success: request_id=%s url=%s stream_id=%s http_status=%s elapsed_ms=%s",
                         stream_request_id,
                         stop_url,
                         provider_stream_id,
                         response.status,
-                        error_text,
+                        elapsed_ms,
                     )
-                    raise Exception(f"Failed to stop streaming session: HTTP {response.status} - {error_text}")
-                
-                logger.info(
-                    "Livepeer stream stop success: request_id=%s url=%s stream_id=%s http_status=%s",
-                    stream_request_id,
-                    stop_url,
-                    provider_stream_id,
-                    response.status,
-                )
-                
-                return {
-                    "status": "stopped",
-                    "stream_id": provider_stream_id
-                }
+                    
+                    return {
+                        "status": "stopped",
+                        "stream_id": provider_stream_id
+                    }
+        except asyncio.TimeoutError as e:
+            logger.error(
+                "Livepeer stream stop timeout: request_id=%s url=%s stream_id=%s elapsed_ms=%s error=%s",
+                stream_request_id,
+                stop_url,
+                provider_stream_id,
+                round((time.perf_counter() - request_started_at) * 1000, 2),
+                str(e),
+            )
+            raise Exception(f"Livepeer timeout: {str(e)}")
+        except aiohttp.ClientError as e:
+            logger.error(
+                "Livepeer stream stop connection error: request_id=%s url=%s stream_id=%s elapsed_ms=%s error_type=%s error=%s",
+                stream_request_id,
+                stop_url,
+                provider_stream_id,
+                round((time.perf_counter() - request_started_at) * 1000, 2),
+                type(e).__name__,
+                str(e),
+            )
+            raise Exception(f"Livepeer connection error: {type(e).__name__}: {str(e)}")
 
     # Keep the original utility methods for backward compatibility
     def build_livepeer_header(self, request_body: Dict[str, Any], capability: str, timeout_seconds: int = 60) -> str:
