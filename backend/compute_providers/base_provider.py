@@ -55,34 +55,6 @@ class BaseComputeProvider(ABC):
         self.provider_config = provider_config
         self.provider_name = provider_config.get('name', 'unknown')
         self.enabled = provider_config.get('enabled', True)
-        
-    @abstractmethod
-    async def get_whip_url(self, session_id: str, **kwargs) -> str:
-        """
-        Get WHIP ingestion URL for a streaming session.
-        
-        Args:
-            session_id: Unique session identifier
-            **kwargs: Additional parameters (language, model, etc.)
-            
-        Returns:
-            WHIP URL for the client to connect to
-        """
-        pass
-    
-    @abstractmethod
-    async def get_websocket_url(self, session_id: str, **kwargs) -> str:
-        """
-        Get WebSocket URL for real-time communication.
-        
-        Args:
-            session_id: Unique session identifier
-            **kwargs: Additional parameters
-            
-        Returns:
-            WebSocket URL for client communication
-        """
-        pass
     
     @abstractmethod
     async def create_transcription_job(

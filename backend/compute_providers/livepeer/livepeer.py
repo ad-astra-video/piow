@@ -69,38 +69,6 @@ class LivepeerComputeProvider(BaseComputeProvider):
         # For remote URLs, use https
         return f"https://{url}"
 
-    async def get_whip_url(self, session_id: str, **kwargs) -> str:
-        """
-        Get WHIP ingestion URL for a streaming session.
-        For Livepeer, this would typically be provided by the orchestrator/worker.
-
-        Args:
-            session_id: Unique session identifier
-            **kwargs: Additional parameters (language, model, etc.)
-
-        Returns:
-            WHIP URL for the client to connect to
-        """
-        # In a real implementation, this would call the Livepeer orchestrator
-        # to get a WHIP URL for the session
-        # For now, we'll return a placeholder that indicates the worker should handle this
-        return f"{self.GPU_RUNNER_URL}/process/stream/start"
-
-    async def get_websocket_url(self, session_id: str, **kwargs) -> str:
-        """
-        Get WebSocket URL for real-time communication.
-
-        Args:
-            session_id: Unique session identifier
-            **kwargs: Additional parameters
-
-        Returns:
-            WebSocket URL for client communication
-        """
-        # For Livepeer, WebSocket communication might be handled differently
-        # This would typically be the worker's WebSocket endpoint
-        return f"{self.GPU_RUNNER_URL}/ws"
-
     async def create_transcription_job(
         self,
         audio_url: str,

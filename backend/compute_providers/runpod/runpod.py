@@ -38,37 +38,6 @@ class RunpodComputeProvider(BaseComputeProvider):
         if not self.endpoint_id:
             logger.warning("Runpod endpoint ID not provided")
 
-    async def get_whip_url(self, session_id: str, **kwargs) -> str:
-        """
-        Get WHIP ingestion URL for a streaming session.
-        For Runpod, WHIP would typically be handled by the worker endpoint.
-
-        Args:
-            session_id: Unique session identifier
-            **kwargs: Additional parameters (language, model, etc.)
-
-        Returns:
-            WHIP URL for the client to connect to
-        """
-        # In a real implementation, this would call the Runpod endpoint
-        # to get a WHIP URL for the session
-        # For now, we'll return a placeholder that indicates the worker should handle this
-        return f"{self.base_url}/endpoint/{self.endpoint_id}/process/stream/{session_id}/whip"
-
-    async def get_websocket_url(self, session_id: str, **kwargs) -> str:
-        """
-        Get WebSocket URL for real-time communication.
-
-        Args:
-            session_id: Unique session identifier
-            **kwargs: Additional parameters
-
-        Returns:
-            WebSocket URL for client communication
-        """
-        # For Runpod, WebSocket communication would be handled by the worker endpoint
-        return f"{self.base_url}/endpoint/{self.endpoint_id}/ws"
-
     async def create_transcription_job(
         self,
         audio_url: str,
