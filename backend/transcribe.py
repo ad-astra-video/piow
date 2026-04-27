@@ -314,6 +314,7 @@ async def transcribe_stream(request):
 
         if not session_id:
             session_id = str(uuid.uuid4())
+        user_id = _get_user_id(request)
         stream_request_id = uuid.uuid4().hex[:12]
 
         # Get ranked list of providers for failover
@@ -387,9 +388,17 @@ async def transcribe_stream(request):
             return web.json_response({"error": error_msg}, status=503)
 
         from sessions import session_store
-        stream_id = await session_store.create_stream_session(
-            session_id=session_id, language=language, provider_session_data=session_result
-        )
+        try:
+            stream_id = await session_store.create_stream_session(
+                session_id=session_id,
+                language=language,
+                provider_session_data=session_result,
+                user_id=user_id,
+            )
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=403)
+
+        await session_store.add_stream_to_session(session_id, stream_id)
 
         return web.json_response({
             "session_id": session_id,

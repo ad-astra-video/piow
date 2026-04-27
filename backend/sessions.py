@@ -41,19 +41,14 @@ class SessionStore:
         self._transcriptions_cache: Dict[str, Dict[str, Any]] = {}  # transcription_id -> data
         self._stream_sessions_cache: Dict[str, Dict[str, Any]] = {}  # stream_id -> data
 
-    # ------------------------------------------------------------------
-    # User Sessions
-    # ------------------------------------------------------------------
-
-    async def create_session(self, user_id: str) -> str:
-        """Create a new user session. Persists to Supabase."""
-        session_id = str(uuid.uuid4())
-        now = time.time()
-        session_data = {
+    def _build_session_data(self, session_id: str, user_id: str, now: Optional[float] = None) -> Dict[str, Any]:
+        """Build in-memory session data with defaults."""
+        ts = now if now is not None else time.time()
+        return {
             "id": session_id,
             "user_id": user_id,
-            "created_at": now,
-            "last_activity": now,
+            "created_at": ts,
+            "last_activity": ts,
             "transcriptions": [],
             "stream_sessions": [],
             "settings": {
@@ -61,6 +56,15 @@ class SessionStore:
                 "translate_to": []
             }
         }
+
+    # ------------------------------------------------------------------
+    # User Sessions
+    # ------------------------------------------------------------------
+
+    async def create_session(self, user_id: str) -> str:
+        """Create a new user session. Persists to Supabase."""
+        session_id = str(uuid.uuid4())
+        session_data = self._build_session_data(session_id=session_id, user_id=user_id)
 
         try:
             supabase.table("user_sessions").insert({
@@ -75,6 +79,53 @@ class SessionStore:
         self._sessions_cache[session_id] = session_data
         logger.info(f"Created session {session_id}")
         return session_id
+
+    async def ensure_session(self, session_id: str, user_id: Optional[str]) -> bool:
+        """
+        Ensure a user session exists for the given session_id.
+
+        Returns True when the session exists or is created.
+        Returns False if the session does not exist and user_id is unavailable.
+        Raises ValueError if session_id already exists but belongs to another user.
+        """
+        existing_session = await self.get_session(session_id)
+        if existing_session:
+            existing_user_id = existing_session.get("user_id")
+            if user_id and existing_user_id and str(existing_user_id) != str(user_id):
+                raise ValueError(
+                    f"Session {session_id} belongs to a different user"
+                )
+            return True
+
+        if not user_id:
+            logger.warning(
+                "Cannot ensure missing user session without user_id: session_id=%s",
+                session_id,
+            )
+            return False
+
+        session_data = self._build_session_data(session_id=session_id, user_id=user_id)
+        try:
+            supabase.table("user_sessions").insert({
+                "id": session_id,
+                "user_id": user_id,
+                "settings": session_data["settings"],
+            }).execute()
+            self._sessions_cache[session_id] = session_data
+            logger.info("Ensured user session exists: session_id=%s", session_id)
+            return True
+        except Exception as e:
+            # Handle a concurrent insert race by re-reading the row.
+            if "23505" in str(e):
+                refreshed = await self.get_session(session_id)
+                if refreshed:
+                    existing_user_id = refreshed.get("user_id")
+                    if user_id and existing_user_id and str(existing_user_id) != str(user_id):
+                        raise ValueError(
+                            f"Session {session_id} belongs to a different user"
+                        )
+                    return True
+            raise
 
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get session by ID. Checks cache first, then Supabase."""
@@ -144,7 +195,8 @@ class SessionStore:
         self,
         session_id: str,
         language: str,
-        provider_session_data: Any
+        provider_session_data: Any,
+        user_id: Optional[str] = None,
     ) -> str:
         """
         Create a new stream session with provider data.
@@ -163,6 +215,18 @@ class SessionStore:
             "total_audio_bytes": 0,
             "transcription_segments": []
         }
+
+        try:
+            await self.ensure_session(session_id=session_id, user_id=user_id)
+        except ValueError:
+            # Surface ownership mismatches to callers so they can return 403.
+            raise
+        except Exception as e:
+            logger.warning(
+                "Failed to ensure user session before stream creation: session_id=%s error=%s",
+                session_id,
+                e,
+            )
 
         try:
             supabase.table("stream_sessions").insert({
@@ -763,10 +827,12 @@ async def create_stream_session(request):
             return web.json_response({"error": error_msg}, status=503)
 
         # Store in session store with provider data
+        entity_id, _ = _get_authenticated_entity_id(request)
         stream_id = await session_store.create_stream_session(
             session_id=session_id,
             language=language,
-            provider_session_data=provider_session_data
+            provider_session_data=provider_session_data,
+            user_id=entity_id,
         )
 
         # Link to user session
