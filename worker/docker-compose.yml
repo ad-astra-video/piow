@@ -40,12 +40,14 @@ services:
       - "0.90"
       - "--max-model-len"
       - "45500"
-      - "--kv-cache-dtype"
-      - "fp8"
-      - "--attention-backend"
-      - "TRITON_ATTN"
-      - "--compilation_config"
-      - '{"cudagraph_mode": "PIECEWISE"}'
+      # Voxtral realtime requires mistral tokenizer mode
+      - "--tokenizer-mode"
+      - "mistral"
+      # Match the official Voxtral realtime example; aggressive
+      # compilation/cudagraph + fp8 kv-cache flags previously caused empty
+      # transcription deltas. Re-introduce optimizations one-by-one only after
+      # verifying transcription works end-to-end.
+      - "--enforce-eager"
       - "--trust-remote-code"
     volumes:
       - vllm_models:/root/.cache

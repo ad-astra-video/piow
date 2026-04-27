@@ -484,9 +484,30 @@ class LiveTranscriptionWorker:
 
     @model_loader
     async def load(self, **kwargs: dict) -> None:
-        """Called once at startup to initialize the VLLM websocket connection."""
-        global vllm_client
+        """Called once at worker startup. The VLLM websocket connection is
+        established per-stream in ``on_start`` so each stream gets a fresh
+        realtime session."""
         logger.info("Initializing Live Translation handlers")
+
+    @on_stream_start
+    async def on_start(self, params: Dict[str, Any]) -> None:
+        """Called when a trickle stream starts. Opens a fresh VLLM realtime
+        websocket session for this stream."""
+        global vllm_client
+        logger.info(f"Stream started with params: {params}")
+
+        # Reset per-stream audio buffering state
+        LiveTranscriptionWorker._audio_frame_count = 0
+        LiveTranscriptionWorker._audio_buffer = b""
+
+        # Close any stale client from a previous stream just in case
+        if vllm_client is not None:
+            try:
+                await vllm_client.close()
+            except Exception as exc:
+                logger.warning(f"Error closing stale VLLM client: {exc}")
+            vllm_client = None
+
         vllm_client = VLLMRealtimeClient(
             ws_url=WS_URL,
             source_lang=VLLM_SOURCE_LANG,
@@ -506,12 +527,7 @@ class LiveTranscriptionWorker:
             await vllm_client.connect()
             logger.info("VLLM client connected successfully")
         except Exception as exc:
-            logger.warning(f"Could not connect to VLLM on startup: {exc}")
-
-    @on_stream_start
-    async def on_start(self, params: Dict[str, Any]) -> None:
-        """Called when a trickle stream starts."""
-        logger.info(f"Stream started with params: {params}")
+            logger.warning(f"Could not connect to VLLM on stream start: {exc}")
 
     @video_handler
     async def handle_video(self, frame: VideoFrame) -> VideoFrame:
@@ -566,8 +582,16 @@ class LiveTranscriptionWorker:
 
     @on_stream_stop
     async def on_stop(self) -> None:
-        """Called when a trickle stream stops."""
+        """Called when a trickle stream stops. Closes the per-stream VLLM
+        realtime websocket so the next stream gets a fresh session."""
+        global vllm_client
         logger.info("Stream stopped")
+        if vllm_client is not None:
+            try:
+                await vllm_client.close()
+            except Exception as exc:
+                logger.warning(f"Error closing VLLM client on stream stop: {exc}")
+            vllm_client = None
 
 
 # =============================================================================

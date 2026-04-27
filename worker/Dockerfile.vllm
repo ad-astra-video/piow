@@ -9,8 +9,9 @@ RUN pip install --no-cache-dir uv
 # Install required packages using uv
 RUN uv pip install --system soxr librosa soundfile
 
-# Upgrade transformers to v5
-RUN uv pip install --system --upgrade transformers
+# VoxtralRealtimeGeneration requires mistral-common[audio]
+# (per https://docs.vllm.ai/en/latest/models/supported_models/)
+RUN uv pip install --system 'mistral-common[audio]'
 
 # Copy and run the vLLM WebSocket patch script
 COPY patch_vllm.py /patch_vllm.py
