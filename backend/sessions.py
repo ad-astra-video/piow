@@ -165,10 +165,19 @@ class SessionStore:
             self._sessions_cache[session_id]["transcriptions"].append(transcription_id)
             self._sessions_cache[session_id]["last_activity"] = time.time()
 
-        # Persist to Supabase using array append
+        # Persist to Supabase by reading current array and writing the updated one
         try:
+            transcription_ids = []
+            if session_id in self._sessions_cache:
+                transcription_ids = list(self._sessions_cache[session_id]["transcriptions"])
+            else:
+                result = supabase.table("user_sessions").select("transcription_ids").eq("id", session_id).execute()
+                if result.data:
+                    transcription_ids = list(result.data[0].get("transcription_ids") or [])
+                transcription_ids.append(transcription_id)
+
             supabase.table("user_sessions").update({
-                "transcription_ids": f"array_append(transcription_ids, '{transcription_id}')"
+                "transcription_ids": transcription_ids
             }).eq("id", session_id).execute()
         except Exception as e:
             logger.warning(f"Failed to add transcription to session in Supabase: {e}")
@@ -179,10 +188,19 @@ class SessionStore:
             self._sessions_cache[session_id]["stream_sessions"].append(stream_id)
             self._sessions_cache[session_id]["last_activity"] = time.time()
 
-        # Persist to Supabase using array append
+        # Persist to Supabase by reading current array and writing the updated one
         try:
+            stream_session_ids = []
+            if session_id in self._sessions_cache:
+                stream_session_ids = list(self._sessions_cache[session_id]["stream_sessions"])
+            else:
+                result = supabase.table("user_sessions").select("stream_session_ids").eq("id", session_id).execute()
+                if result.data:
+                    stream_session_ids = list(result.data[0].get("stream_session_ids") or [])
+                stream_session_ids.append(stream_id)
+
             supabase.table("user_sessions").update({
-                "stream_session_ids": f"array_append(stream_session_ids, '{stream_id}')"
+                "stream_session_ids": stream_session_ids
             }).eq("id", session_id).execute()
         except Exception as e:
             logger.warning(f"Failed to add stream to session in Supabase: {e}")
