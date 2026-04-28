@@ -22,19 +22,14 @@ async def get_languages(request):
     """Get supported languages."""
     logger.info("Received get languages request")
 
-    # Return a list of supported languages
+    # Return a list of supported languages (Granite 4.0 1B Speech model)
     languages = [
         {"code": "en", "name": "English"},
         {"code": "es", "name": "Spanish"},
         {"code": "fr", "name": "French"},
         {"code": "de", "name": "German"},
-        {"code": "it", "name": "Italian"},
         {"code": "pt", "name": "Portuguese"},
-        {"code": "ru", "name": "Russian"},
-        {"code": "ja", "name": "Japanese"},
-        {"code": "ko", "name": "Korean"},
-        {"code": "zh", "name": "Chinese"},
-        {"code": "ar", "name": "Arabic"}
+        {"code": "ja", "name": "Japanese"}
     ]
 
     return web.json_response({
