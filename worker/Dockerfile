@@ -31,7 +31,7 @@ RUN uv pip install -r requirements.txt
 # Copy the worker source
 COPY . .
 
-# Create models directory for Granite ONNX model
+# Create models directory for an optional local Granite model snapshot
 RUN mkdir -p /models
 
 # Expose the port the worker runs on

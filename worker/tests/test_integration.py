@@ -32,11 +32,13 @@ class TestWorkerIntegration(unittest.TestCase):
         is_available = transcriber.is_available()
         self.assertIsInstance(is_available, bool)
         
-        # Test mock transcription when not loaded
+        # Test explicit failure payload when not loaded
         transcriber.is_loaded = False
+        transcriber.load_error = 'Granite runtime unavailable'
         result = transcriber.transcribe("/fake/path.wav")
         self.assertIn('text', result)
-        self.assertEqual(result['model'], 'granite-4.0-1b-mock')
+        self.assertIn('error', result)
+        self.assertEqual(result['model'], 'granite-4.0-1b')
     
     @patch('vllm_client.websockets.connect')
     def test_vllm_client_integration(self, mock_connect):
