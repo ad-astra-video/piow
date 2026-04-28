@@ -183,17 +183,78 @@ class Granite4Transcriber:
             }
 
     def translate(self, text: str, source_lang: str, target_lang: str) -> Dict[str, Any]:
-        """Translate text using Granite 4.0."""
-        logger.warning("Granite speech translation path is not implemented yet")
-        return {
-            "error": "Granite speech translation path is not implemented yet",
-            "original_text": text,
-            "translated_text": "",
-            "source_language": source_lang,
-            "target_language": target_lang,
-            "model": PUBLIC_MODEL_NAME,
-            "hardware": "cpu",
-        }
+        """Translate text using Granite 4.0's LLM backbone (text-only, no audio token)."""
+        start_time = time.time()
+
+        if not self.is_loaded:
+            logger.error("Granite 4.0 not available for translation: %s", self.load_error or "unknown error")
+            return {
+                "error": self.load_error or "Granite 4.0 translation backend is unavailable",
+                "original_text": text,
+                "translated_text": "",
+                "source_language": source_lang,
+                "target_language": target_lang,
+                "model": PUBLIC_MODEL_NAME,
+                "hardware": "cpu",
+            }
+
+        try:
+            logger.info("Translating from %s to %s with Granite 4.0", source_lang, target_lang)
+
+            chat = [
+                {
+                    "role": "user",
+                    "content": f"Translate the following text from {source_lang} to {target_lang}:\n\n{text}",
+                }
+            ]
+            prompt = self.tokenizer.apply_chat_template(
+                chat,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+
+            with torch.inference_mode():
+                model_inputs = self.tokenizer(prompt, return_tensors="pt")
+                model_inputs = {name: tensor.to(self.device) for name, tensor in model_inputs.items()}
+                model_outputs = self.model.generate(
+                    **model_inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,
+                    num_beams=1,
+                )
+
+            num_input_tokens = model_inputs["input_ids"].shape[-1]
+            new_tokens = model_outputs[:, num_input_tokens:]
+            decoded = self.tokenizer.batch_decode(
+                new_tokens,
+                add_special_tokens=False,
+                skip_special_tokens=True,
+            )
+            translated_text = decoded[0].strip() if decoded else ""
+
+            processing_time = time.time() - start_time
+            logger.info("Translation completed in %.2fs", processing_time)
+
+            return {
+                "original_text": text,
+                "translated_text": translated_text,
+                "source_language": source_lang,
+                "target_language": target_lang,
+                "processing_time": processing_time,
+                "model": PUBLIC_MODEL_NAME,
+                "hardware": "cpu",
+            }
+        except Exception as exc:
+            logger.exception("Error during Granite translation")
+            return {
+                "error": str(exc),
+                "original_text": text,
+                "translated_text": "",
+                "source_language": source_lang,
+                "target_language": target_lang,
+                "model": PUBLIC_MODEL_NAME,
+                "hardware": "cpu",
+            }
 
     def _run_transcription(self, audio: np.ndarray) -> str:
         prompt = self._build_prompt()
