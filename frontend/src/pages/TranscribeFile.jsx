@@ -6,7 +6,7 @@ export default function TranscribeFile() {
   const [file, setFile] = useState(null);
   const [language, setLanguage] = useState('en');
   const [languages, setLanguages] = useState([]);
-  const [punctuationPass, setPunctuationPass] = useState(false);
+  const [punctuationPass, setPunctuationPass] = useState(true);
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);

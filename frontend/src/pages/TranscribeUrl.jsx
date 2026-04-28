@@ -6,7 +6,7 @@ export default function TranscribeUrl() {
   const [url, setUrl] = useState('');
   const [language, setLanguage] = useState('en');
   const [languages, setLanguages] = useState([]);
-  const [punctuationPass, setPunctuationPass] = useState(false);
+  const [punctuationPass, setPunctuationPass] = useState(true);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
