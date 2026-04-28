@@ -356,7 +356,9 @@ async def health_check(request):
 
 async def init_app():
     """Initialize the aiohttp web application."""
-    app = web.Application(middlewares=[auth_middleware])
+    # 225 MB — enough for ~2 hours of 16 kHz mono 16-bit audio
+    _MAX_UPLOAD = int(os.environ.get("BACKEND_MAX_BODY_SIZE", str(225 * 1024 * 1024)))
+    app = web.Application(middlewares=[auth_middleware], client_max_size=_MAX_UPLOAD)
     app.on_startup.append(sync_compute_providers_to_db)
     app.on_startup.append(start_stream_usage_monitor)
     app.on_shutdown.append(stop_stream_usage_monitor)

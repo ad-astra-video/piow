@@ -44,7 +44,7 @@ compute_provider_manager = ComputeProviderManager()
 # Register providers from definitions
 compute_provider_manager.register_providers_from_definitions(PROVIDER_DEFINITIONS)
 
-MAX_REMOTE_AUDIO_BYTES = 100 * 1024 * 1024
+MAX_REMOTE_AUDIO_BYTES = 225 * 1024 * 1024  # ~2 hours of 16 kHz mono 16-bit audio
 
 
 def _infer_audio_mime_type(file_path):

@@ -771,6 +771,14 @@ async def main() -> None:
     for method, path, handler in CUSTOM_ROUTES:
         processor.server.app.router.add_route(method, path, handler)
 
+    # Raise the body-size limit to 300 MB so large audio data-URLs are accepted.
+    # aiohttp enforces client_max_size at read() time; patching the app attr is
+    # the only way to change it after the Application object already exists.
+    # 300 MB covers ~2 hours of 16 kHz mono audio after base64 encoding (~4/3 overhead).
+    _MAX_BODY = int(os.environ.get("WORKER_MAX_BODY_SIZE", str(300 * 1024 * 1024)))
+    processor.server.app._client_max_size = _MAX_BODY
+    logger.info("aiohttp client_max_size set to %d bytes", _MAX_BODY)
+
     processor.server.app.on_shutdown.append(on_shutdown)
 
     # Start the periodic orchestrator registration background task
