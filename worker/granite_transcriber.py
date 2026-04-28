@@ -226,7 +226,7 @@ class Granite4Transcriber:
         try:
             logger.info(f"Transcribing {audio_path} with Granite 4.0 (language: {language})")
 
-            audio, _ = librosa.load(audio_path, sr=self.sample_rate)
+            audio = self._decode_audio_to_array(audio_path)
             inputs = self._prepare_inputs(audio)
 
             audio_features = self.audio_encoder_session.run(
@@ -296,6 +296,43 @@ class Granite4Transcriber:
             "hardware": "cpu",
         }
     
+    def _decode_audio_to_array(self, input_path: str) -> np.ndarray:
+        """
+        Decode any audio format to a 16 kHz mono float32 numpy array in memory
+        using PyAV.  No intermediate files are written to disk.
+        """
+        import av
+
+        resampler = av.AudioResampler(
+            format="fltp",
+            layout="mono",
+            rate=self.sample_rate,
+        )
+
+        chunks: list[np.ndarray] = []
+        try:
+            with av.open(input_path) as container:
+                for frame in container.decode(audio=0):
+                    for out_frame in resampler.resample(frame):
+                        chunks.append(out_frame.to_ndarray()[0])  # mono → shape (n,)
+            # Flush resampler
+            for out_frame in resampler.resample(None):
+                chunks.append(out_frame.to_ndarray()[0])
+        except Exception as exc:
+            raise RuntimeError(
+                f"PyAV could not decode audio from '{input_path}': {exc}"
+            ) from exc
+
+        if not chunks:
+            raise RuntimeError(f"No audio frames decoded from '{input_path}'")
+
+        audio_data = np.concatenate(chunks).astype(np.float32)
+        logger.debug(
+            "Decoded '%s' → %d samples @ %d Hz (in memory)",
+            input_path, len(audio_data), self.sample_rate,
+        )
+        return audio_data
+
     def _prepare_inputs(self, audio: np.ndarray) -> dict:
         """
         Prepare audio input for model inference.
