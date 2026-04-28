@@ -102,10 +102,10 @@ class LivepeerComputeProvider(BaseComputeProvider):
             "format": format,
         }
 
-        livepeer_header = self.build_livepeer_header(
+        livepeer_header = self.build_livepeer_batch_header(
             request_body=request_body,
-            capability="transcription",
-            timeout_seconds=300
+            capability=kwargs.get("capability", "transcribe-translate"),
+            timeout_seconds=kwargs.get("timeout_seconds", 300),
         )
 
         logger.info(f"Livepeer: Submitting transcription job to {self.GPU_RUNNER_URL}/process/request/transcribe")
@@ -178,10 +178,10 @@ class LivepeerComputeProvider(BaseComputeProvider):
             "target_language": target_language,
         }
 
-        livepeer_header = self.build_livepeer_header(
+        livepeer_header = self.build_livepeer_batch_header(
             request_body=request_body,
-            capability="translation",
-            timeout_seconds=60
+            capability=kwargs.get("capability", "transcribe-translate"),
+            timeout_seconds=kwargs.get("timeout_seconds", 60),
         )
 
         logger.info(f"Livepeer: Submitting translation job to {self.GPU_RUNNER_URL}/process/request/translate")
@@ -763,6 +763,30 @@ class LivepeerComputeProvider(BaseComputeProvider):
                 str(e),
             )
             raise Exception(f"Livepeer connection error: {type(e).__name__}: {str(e)}")
+
+    def build_livepeer_batch_header(
+        self,
+        request_body: Dict[str, Any],
+        capability: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        """
+        Build a Livepeer header for BYOC batch request endpoints.
+
+        The payload shape matches the documented format:
+        {
+            "request": "<json-string>",
+            "capability": "<capability-name>",
+            "timeout_seconds": <seconds>
+        }
+        """
+        livepeer_payload = {
+            "request": json.dumps(request_body),
+            "capability": capability,
+            "timeout_seconds": timeout_seconds,
+        }
+
+        return base64.b64encode(json.dumps(livepeer_payload).encode()).decode()
 
     # Keep the original utility methods for backward compatibility
     def build_livepeer_header(self, request_body: Dict[str, Any], capability: str, timeout_seconds: int = 60) -> str:
