@@ -8,12 +8,12 @@ import asyncio
 import aiohttp
 import aiohttp.web as web
 import base64
+import io
 import ipaddress
 import logging
 import math
 import os
 import re
-import tempfile
 import time
 import uuid
 import json
@@ -71,6 +71,38 @@ def _build_data_url_from_file(file_path):
     mime_type = _infer_audio_mime_type(file_path)
     encoded = base64.b64encode(binary).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
+
+
+def _build_data_url_from_bytes(data: bytes, filename: str) -> str:
+    """Encode in-memory audio bytes as a base64 data URL."""
+    mime_type = _infer_audio_mime_type(filename)
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _probe_duration_from_bytes(data: bytes, filename: str = "") -> "Optional[int]":
+    """Extract audio duration from in-memory bytes using PyAV (no disk I/O)."""
+    if not av:
+        return None
+
+    ext = (os.path.splitext(filename)[1] or "").lstrip(".").lower()
+    fmt = ext if ext else None
+    try:
+        buf = io.BytesIO(data)
+        with av.open(buf, format=fmt) as container:
+            if container.duration is not None:
+                return max(0, int(math.ceil(float(container.duration / av.time_base))))
+
+            durations = [
+                float(s.duration * s.time_base)
+                for s in container.streams.audio
+                if s.duration is not None and s.time_base is not None
+            ]
+            if durations:
+                return max(0, int(math.ceil(max(durations))))
+    except Exception as e:
+        logger.warning("Failed to probe duration from bytes (%s): %s", filename, e)
+    return None
 
 def setup_routes(app):
     """Setup transcription-related routes."""
@@ -239,18 +271,25 @@ async def _resolve_public_ips_for_host(hostname):
     return public_ips
 
 
-def _safe_download_suffix_from_url(audio_url):
-    """Infer a safe temporary file suffix from URL path."""
+def _filename_from_url(audio_url: str) -> str:
+    """Infer a safe filename (with extension) from a URL path."""
     parsed = urlparse(audio_url)
-    basename = os.path.basename(parsed.path or "")
+    basename = os.path.basename(parsed.path or "") or "audio"
     _, ext = os.path.splitext(basename)
     ext = (ext or "").lower()
     allowed = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm", ".aac", ".mp4"}
-    return ext if ext in allowed else ".bin"
+    if ext not in allowed:
+        ext = ".bin"
+    name = re.sub(r'[^\w\-.]', '_', os.path.splitext(basename)[0])
+    return f"{name}{ext}" if name else f"audio{ext}"
 
 
-async def _safe_download_audio_url(audio_url):
-    """Download remote audio URL to a local temp file with basic SSRF/size protections."""
+async def _safe_download_audio_bytes(audio_url: str) -> tuple[bytes, str]:
+    """
+    Download a remote audio URL into memory with SSRF/size protections.
+
+    Returns (data_bytes, inferred_filename).
+    """
     parsed = urlparse(audio_url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError("Only http/https audio URLs are supported")
@@ -259,39 +298,29 @@ async def _safe_download_audio_url(audio_url):
 
     await _resolve_public_ips_for_host(parsed.hostname)
 
-    temp_path = None
+    filename = _filename_from_url(audio_url)
+    chunks: list[bytes] = []
     bytes_downloaded = 0
     timeout = aiohttp.ClientTimeout(total=90, connect=10, sock_read=30)
-    try:
-        suffix = _safe_download_suffix_from_url(audio_url)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-            temp_path = tmp_file.name
 
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(audio_url, allow_redirects=False) as response:
-                    if response.status != 200:
-                        raise ValueError(f"Failed to download audio URL (HTTP {response.status})")
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(audio_url, allow_redirects=False) as response:
+            if response.status != 200:
+                raise ValueError(f"Failed to download audio URL (HTTP {response.status})")
 
-                    content_length = response.headers.get("Content-Length")
-                    if content_length and int(content_length) > MAX_REMOTE_AUDIO_BYTES:
-                        raise ValueError("Remote audio file is too large")
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > MAX_REMOTE_AUDIO_BYTES:
+                raise ValueError("Remote audio file is too large")
 
-                    async for chunk in response.content.iter_chunked(8192):
-                        if not chunk:
-                            continue
-                        bytes_downloaded += len(chunk)
-                        if bytes_downloaded > MAX_REMOTE_AUDIO_BYTES:
-                            raise ValueError("Remote audio file exceeds size limit")
-                        tmp_file.write(chunk)
+            async for chunk in response.content.iter_chunked(8192):
+                if not chunk:
+                    continue
+                bytes_downloaded += len(chunk)
+                if bytes_downloaded > MAX_REMOTE_AUDIO_BYTES:
+                    raise ValueError("Remote audio file exceeds size limit")
+                chunks.append(chunk)
 
-        return temp_path
-    except Exception:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.unlink(temp_path)
-            except Exception:
-                pass
-        raise
+    return b"".join(chunks), filename
 
 
 # ============================================================================
@@ -309,53 +338,44 @@ async def transcribe_file(request):
     """
     logger.info("Received transcription file upload request")
 
-    temp_path = None
     try:
         reader = await request.multipart()
 
-        file_part = None
+        file_data = None
+        filename = "uploaded_audio"
         language = "en"
 
         async for part in reader:
             if part.name == 'file':
-                file_part = part
+                filename = part.filename or "uploaded_audio"
+                file_data = await part.read()
             elif part.name == 'language':
                 language = await part.text()
 
-        if not file_part:
-            return web.json_response({
-                "error": "No file provided"
-            }, status=400)
+        if not file_data:
+            return web.json_response({"error": "No file provided"}, status=400)
 
-        filename = file_part.filename or "uploaded_audio"
-        safe_filename = re.sub(r'[^\w\-_]', '_', filename)
-        if not safe_filename.endswith(('.wav', '.mp3', '.m4a', '.flac', '.ogg')):
-            safe_filename += '.wav'
+        if len(file_data) == 0:
+            return web.json_response({"error": "Uploaded file is empty"}, status=400)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(safe_filename)[1]) as tmp_file:
-            temp_path = tmp_file.name
-            chunk_size = 8192
-            while True:
-                chunk = await file_part.read_chunk(chunk_size)
-                if not chunk:
-                    break
-                tmp_file.write(chunk)
-
-        source_duration_seconds = _get_audio_duration_seconds(temp_path)
+        source_duration_seconds = _probe_duration_from_bytes(file_data, filename)
+        logger.info(
+            "File upload received: name=%s size=%d bytes duration_probe=%s",
+            filename,
+            len(file_data),
+            f"{source_duration_seconds}s" if source_duration_seconds is not None else "unknown",
+        )
 
         ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_batch",
             requirements={"streaming": False, "language": language}
         )
         if not ranked_providers:
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
             return web.json_response({"error": "No compute provider available"}, status=503)
 
-        provider_audio_url = _build_data_url_from_file(temp_path)
-        audio_url = f"file://{temp_path}"
+        safe_filename = re.sub(r'[^\w\-.()]', '_', filename)
+        provider_audio_url = _build_data_url_from_bytes(file_data, filename)
+        audio_url = f"upload://{safe_filename}"
 
         job_result = None
         last_error = None
@@ -374,20 +394,12 @@ async def transcribe_file(request):
                 last_error = provider_error
 
         if not job_result:
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
             return web.json_response({
                 "error": f"All providers failed for transcription. Last error: {str(last_error)}",
                 "status": "error"
             }, status=503)
 
         if not _is_successful_transcription_result(job_result):
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
             return web.json_response({
                 "error": "Provider transcription job did not complete successfully",
                 "status": job_result.get('status', 'error'),
@@ -395,12 +407,6 @@ async def transcribe_file(request):
 
         if source_duration_seconds is not None:
             job_result['duration'] = source_duration_seconds
-
-        try:
-            os.unlink(temp_path)
-            temp_path = None
-        except:
-            pass
 
         transcription_id = await _store_transcription_result(
             request,
@@ -427,11 +433,6 @@ async def transcribe_file(request):
 
     except Exception as e:
         logger.error(f"Error in transcribe_file: {e}")
-        if temp_path:
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
         return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
@@ -447,7 +448,6 @@ async def transcribe_url(request):
     """
     logger.info("Received transcription URL request")
 
-    temp_path = None
     try:
         data = await request.json()
         audio_url = data.get('audio_url')
@@ -458,12 +458,19 @@ async def transcribe_url(request):
             return web.json_response({"error": "Missing audio_url parameter"}, status=400)
 
         try:
-            temp_path = await _safe_download_audio_url(audio_url)
+            file_data, filename = await _safe_download_audio_bytes(audio_url)
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
 
-        source_duration_seconds = _get_audio_duration_seconds(temp_path)
-        provider_audio_url = _build_data_url_from_file(temp_path)
+        source_duration_seconds = _probe_duration_from_bytes(file_data, filename)
+        logger.info(
+            "URL audio downloaded: url=%s size=%d bytes duration_probe=%s",
+            audio_url,
+            len(file_data),
+            f"{source_duration_seconds}s" if source_duration_seconds is not None else "unknown",
+        )
+
+        provider_audio_url = _build_data_url_from_bytes(file_data, filename)
 
         ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_batch", requirements={"language": language}
@@ -528,12 +535,6 @@ async def transcribe_url(request):
     except Exception as e:
         logger.error(f"Error in transcribe_url: {e}")
         return web.json_response({"error": str(e), "status": "error"}, status=500)
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.unlink(temp_path)
-            except Exception:
-                pass
 
 
 def _is_valid_streaming_session(session_result):
