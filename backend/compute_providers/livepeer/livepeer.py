@@ -103,7 +103,8 @@ class LivepeerComputeProvider(BaseComputeProvider):
         }
 
         livepeer_header = self.build_livepeer_batch_header(
-            request_body=request_body,
+            request={"job": "transcribe"},
+            parameters={},
             capability=kwargs.get("capability", "transcribe-translate"),
             timeout_seconds=kwargs.get("timeout_seconds", 300),
         )
@@ -179,7 +180,8 @@ class LivepeerComputeProvider(BaseComputeProvider):
         }
 
         livepeer_header = self.build_livepeer_batch_header(
-            request_body=request_body,
+            request={"job": "translate"},
+            parameters={},
             capability=kwargs.get("capability", "transcribe-translate"),
             timeout_seconds=kwargs.get("timeout_seconds", 60),
         )
@@ -766,7 +768,8 @@ class LivepeerComputeProvider(BaseComputeProvider):
 
     def build_livepeer_batch_header(
         self,
-        request_body: Dict[str, Any],
+        request: Dict[str, Any],
+        parameters: Dict[str, Any],
         capability: str,
         timeout_seconds: int = 60,
     ) -> str:
@@ -782,8 +785,8 @@ class LivepeerComputeProvider(BaseComputeProvider):
         }
         """
         livepeer_payload = {
-            "request": json.dumps(request_body),
-            "parameters": "{}",
+            "request": json.dumps(request),
+            "parameters": json.dumps(parameters),
             "capability": capability,
             "timeout_seconds": timeout_seconds,
         }
