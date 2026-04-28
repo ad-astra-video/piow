@@ -5,6 +5,7 @@ CPU-based batch transcription and translation using Granite 4.0 model
 """
 
 import os
+import io
 import json
 import subprocess
 import numpy as np
@@ -150,7 +151,11 @@ class Granite4Transcriber:
                 self.num_layers = int(text_cfg.get("num_hidden_layers", self.num_layers))
                 self.num_kv_heads = int(text_cfg.get("num_key_value_heads", self.num_kv_heads))
                 hidden_size = int(text_cfg.get("hidden_size", self.num_kv_heads * self.head_dim))
-                if self.num_kv_heads > 0:
+                # head_dim = hidden_size / num_attention_heads (not num_kv_heads) for GQA models
+                num_attn_heads = int(text_cfg.get("num_attention_heads", 0))
+                if num_attn_heads > 0:
+                    self.head_dim = hidden_size // num_attn_heads
+                elif self.num_kv_heads > 0:
                     self.head_dim = hidden_size // self.num_kv_heads
 
             gen_path = self.model_path / "generation_config.json"
@@ -198,19 +203,19 @@ class Granite4Transcriber:
         """Check if the Granite backend is available and loaded."""
         return self.is_loaded
     
-    def transcribe(self, audio_path: str, language: str = "en") -> Dict[str, Any]:
+    def transcribe(self, audio_source: "str | bytes", language: str = "en") -> Dict[str, Any]:
         """
-        Transcribe audio file using Granite 4.0 on CPU.
-        
+        Transcribe audio using Granite 4.0 on CPU.
+
         Args:
-            audio_path: Path to audio file (mp3, wav, etc.)
+            audio_source: Path to audio file OR raw audio bytes.
             language: Language code for transcription
-            
+
         Returns:
             Dictionary with transcription results
         """
         start_time = time.time()
-        
+
         if not self.is_loaded:
             logger.error("Granite 4.0 not available for transcription: %s", self.load_error or "unknown error")
             return {
@@ -222,11 +227,12 @@ class Granite4Transcriber:
                 "model": "granite-4.0-1b",
                 "hardware": "cpu",
             }
-        
-        try:
-            logger.info(f"Transcribing {audio_path} with Granite 4.0 (language: {language})")
 
-            audio = self._decode_audio_to_array(audio_path)
+        try:
+            label = f"<{len(audio_source)} bytes>" if isinstance(audio_source, (bytes, bytearray)) else audio_source
+            logger.info("Transcribing %s with Granite 4.0 (language: %s)", label, language)
+
+            audio = self._decode_audio_to_array(audio_source)
             inputs = self._prepare_inputs(audio)
 
             audio_features = self.audio_encoder_session.run(
@@ -296,10 +302,11 @@ class Granite4Transcriber:
             "hardware": "cpu",
         }
     
-    def _decode_audio_to_array(self, input_path: str) -> np.ndarray:
+    def _decode_audio_to_array(self, source: "str | bytes | io.IOBase") -> np.ndarray:
         """
         Decode any audio format to a 16 kHz mono float32 numpy array in memory
-        using PyAV.  No intermediate files are written to disk.
+        using PyAV.  Accepts a file path string, raw bytes, or a file-like object.
+        No intermediate files are written to disk.
         """
         import av
 
@@ -309,12 +316,24 @@ class Granite4Transcriber:
             rate=self.sample_rate,
         )
 
-        file_size = os.path.getsize(input_path)
-        logger.debug("Decoding '%s' (%d bytes) with PyAV", input_path, file_size)
+        if isinstance(source, (bytes, bytearray)):
+            av_input = io.BytesIO(source)
+            label = f"<{len(source)} bytes>"
+        elif isinstance(source, io.IOBase):
+            av_input = source
+            label = repr(source)
+        else:
+            av_input = source  # file path string
+            label = source
+
+        file_size = len(source) if isinstance(source, (bytes, bytearray)) else (
+            os.path.getsize(source) if isinstance(source, str) else -1
+        )
+        logger.debug("Decoding '%s' (%d bytes) with PyAV", label, file_size)
 
         chunks: list[np.ndarray] = []
         try:
-            with av.open(input_path) as container:
+            with av.open(av_input) as container:
                 for frame in container.decode(audio=0):
                     for out_frame in resampler.resample(frame):
                         chunks.append(out_frame.to_ndarray()[0])  # mono → shape (n,)
@@ -324,24 +343,27 @@ class Granite4Transcriber:
         except Exception as av_exc:
             logger.warning(
                 "PyAV failed on '%s' (%d bytes): %s — falling back to librosa",
-                input_path, file_size, av_exc,
+                label, file_size, av_exc,
             )
             try:
-                audio_data, _ = librosa.load(input_path, sr=self.sample_rate, mono=True)
+                if isinstance(source, (bytes, bytearray)):
+                    audio_data, _ = librosa.load(io.BytesIO(source), sr=self.sample_rate, mono=True)
+                else:
+                    audio_data, _ = librosa.load(source, sr=self.sample_rate, mono=True)
                 return audio_data
             except Exception as librosa_exc:
                 raise RuntimeError(
-                    f"All decoders failed for '{input_path}': "
+                    f"All decoders failed for '{label}': "
                     f"PyAV={av_exc!r}, librosa={librosa_exc!r}"
                 ) from librosa_exc
 
         if not chunks:
-            raise RuntimeError(f"No audio frames decoded from '{input_path}'")
+            raise RuntimeError(f"No audio frames decoded from '{label}'")
 
         audio_data = np.concatenate(chunks).astype(np.float32)
         logger.debug(
             "Decoded '%s' → %d samples @ %d Hz (in memory)",
-            input_path, len(audio_data), self.sample_rate,
+            label, len(audio_data), self.sample_rate,
         )
         return audio_data
 

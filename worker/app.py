@@ -18,7 +18,6 @@ import binascii
 import secrets
 import time
 import asyncio
-import tempfile
 import logging
 import requests
 from pathlib import Path
@@ -445,17 +444,7 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                 uploaded_name, len(file_data), suffix,
             )
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(file_data)
-                tmp_path = tmp.name
-
-            try:
-                result = granite_transcriber.transcribe(tmp_path, language)
-            finally:
-                try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
+            result = granite_transcriber.transcribe(file_data, language)
 
         else:
             body = await request.json()
@@ -467,44 +456,35 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                     {"error": "Missing audio_url"}, status=400
                 )
 
-            tmp_path = tempfile.mktemp(suffix=".wav")
-            try:
-                if isinstance(audio_url, str) and audio_url.startswith("data:"):
-                    marker = ";base64,"
-                    if marker not in audio_url:
-                        return aiohttp.web.json_response(
-                            {"error": "Invalid data URL payload (expected base64)"},
-                            status=400,
-                        )
+            if isinstance(audio_url, str) and audio_url.startswith("data:"):
+                marker = ";base64,"
+                if marker not in audio_url:
+                    return aiohttp.web.json_response(
+                        {"error": "Invalid data URL payload (expected base64)"},
+                        status=400,
+                    )
 
-                    try:
-                        payload = audio_url.split(marker, 1)[1]
-                        decoded = base64.b64decode(payload, validate=True)
-                    except (ValueError, binascii.Error):
-                        return aiohttp.web.json_response(
-                            {"error": "Invalid base64 audio payload"},
-                            status=400,
-                        )
-
-                    with open(tmp_path, "wb") as f:
-                        f.write(decoded)
-                else:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(audio_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
-                            if resp.status != 200:
-                                return aiohttp.web.json_response(
-                                    {"error": f"Failed to download audio: HTTP {resp.status}"},
-                                    status=502,
-                                )
-                            with open(tmp_path, "wb") as f:
-                                f.write(await resp.read())
-
-                result = granite_transcriber.transcribe(tmp_path, language)
-            finally:
                 try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
+                    payload = audio_url.split(marker, 1)[1]
+                    audio_bytes = base64.b64decode(payload, validate=True)
+                except (ValueError, binascii.Error):
+                    return aiohttp.web.json_response(
+                        {"error": "Invalid base64 audio payload"},
+                        status=400,
+                    )
+
+                result = granite_transcriber.transcribe(audio_bytes, language)
+            else:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(audio_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                        if resp.status != 200:
+                            return aiohttp.web.json_response(
+                                {"error": f"Failed to download audio: HTTP {resp.status}"},
+                                status=502,
+                            )
+                        audio_bytes = await resp.read()
+
+                result = granite_transcriber.transcribe(audio_bytes, language)
 
         normalized = _normalize_transcription_result(result, job_id, language)
         transcriptions_db[job_id] = normalized
