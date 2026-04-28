@@ -36,7 +36,11 @@ from auth import setup_routes as setup_auth_routes, auth_middleware, no_auth
 from transcribe import setup_routes as setup_transcribe_routes
 from translate import setup_routes as setup_translate_routes
 from languages import setup_routes as setup_languages_routes
-from sessions import setup_routes as setup_sessions_routes
+from sessions import (
+    setup_routes as setup_sessions_routes,
+    start_stream_usage_monitor,
+    stop_stream_usage_monitor,
+)
 from billing import setup_routes as setup_billing_routes
 from user_routes import setup_routes as setup_user_routes
 
@@ -354,6 +358,8 @@ async def init_app():
     """Initialize the aiohttp web application."""
     app = web.Application(middlewares=[auth_middleware])
     app.on_startup.append(sync_compute_providers_to_db)
+    app.on_startup.append(start_stream_usage_monitor)
+    app.on_shutdown.append(stop_stream_usage_monitor)
     app.on_shutdown.append(shutdown_app)
 
     # Add routes

@@ -113,6 +113,119 @@ class TestSessionStoreStreamPersistence(unittest.IsolatedAsyncioTestCase):
         user_sessions_table.insert.assert_not_called()
         stream_sessions_table.insert.assert_not_called()
 
+    async def test_record_stream_usage_records_one_interval(self):
+        sessions = self._import_sessions_with_stubbed_supabase()
+
+        store = sessions.SessionStore()
+        session_id = "session-1"
+        stream_id = "stream-1"
+
+        store._sessions_cache[session_id] = {
+            "id": session_id,
+            "user_id": "user-1",
+            "created_at": 0,
+            "last_activity": 0,
+            "transcriptions": [],
+            "stream_sessions": [stream_id],
+            "settings": {"default_language": "en", "translate_to": []},
+        }
+        store._stream_sessions_cache[stream_id] = {
+            "id": stream_id,
+            "session_id": session_id,
+            "language": "en",
+            "status": "active",
+            "created_at": 100.0,
+            "updated_at": 160.0,
+            "provider_session": {"model": "voxtral-realtime", "hardware": "gpu"},
+            "total_audio_bytes": 0,
+            "transcription_segments": [],
+            "final_text": "",
+        }
+
+        usage_table = MagicMock()
+        usage_table.insert.return_value.execute.return_value = SimpleNamespace(data=[])
+
+        supabase_mock = MagicMock()
+
+        def table_side_effect(table_name):
+            if table_name == "transcription_usage":
+                return usage_table
+            raise AssertionError(f"Unexpected table: {table_name}")
+
+        supabase_mock.table.side_effect = table_side_effect
+
+        with patch.object(sessions, "supabase", supabase_mock):
+            billed = await store._record_stream_usage(
+                stream_data=store._stream_sessions_cache[stream_id],
+                duration_seconds=60,
+                final_text="hello world from stream",
+            )
+
+        self.assertTrue(billed)
+        usage_table.insert.assert_called_once()
+        payload = usage_table.insert.call_args[0][0]
+        self.assertEqual(payload["user_id"], "user-1")
+        self.assertEqual(payload["duration_seconds"], 60)
+        self.assertEqual(payload["word_count"], 4)
+        self.assertEqual(payload["source_type"], "stream")
+        self.assertEqual(payload["hardware"], "gpu")
+        self.assertEqual(payload["model"], "voxtral-realtime")
+
+    async def test_close_stream_session_only_updates_status(self):
+        sessions = self._import_sessions_with_stubbed_supabase()
+
+        store = sessions.SessionStore()
+        session_id = "session-1"
+        stream_id = "stream-2"
+
+        store._sessions_cache[session_id] = {
+            "id": session_id,
+            "user_id": "user-1",
+            "created_at": 0,
+            "last_activity": 0,
+            "transcriptions": [],
+            "stream_sessions": [stream_id],
+            "settings": {"default_language": "en", "translate_to": []},
+        }
+        store._stream_sessions_cache[stream_id] = {
+            "id": stream_id,
+            "session_id": session_id,
+            "language": "en",
+            "status": "active",
+            "created_at": 100.0,
+            "updated_at": 140.0,
+            "provider_session": {},
+            "total_audio_bytes": 0,
+            "transcription_segments": [],
+            "final_text": "",
+        }
+
+        stream_sessions_table = MagicMock()
+        stream_sessions_table.update.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[])
+
+        supabase_mock = MagicMock()
+
+        def table_side_effect(table_name):
+            if table_name == "stream_sessions":
+                return stream_sessions_table
+            raise AssertionError(f"Unexpected table: {table_name}")
+
+        supabase_mock.table.side_effect = table_side_effect
+
+        with patch.object(sessions, "supabase", supabase_mock):
+            await store.close_stream_session(stream_id, "stream completed")
+
+        self.assertEqual(store._stream_sessions_cache[stream_id]["status"], "completed")
+        self.assertEqual(store._stream_sessions_cache[stream_id]["final_text"], "stream completed")
+
+    async def test_stream_payload_indicates_running(self):
+        sessions = self._import_sessions_with_stubbed_supabase()
+
+        self.assertTrue(sessions._stream_payload_indicates_running({"status": "running"}))
+        self.assertTrue(sessions._stream_payload_indicates_running({"live": True}))
+        self.assertFalse(sessions._stream_payload_indicates_running({"status": "stopped"}))
+        self.assertFalse(sessions._stream_payload_indicates_running({"is_running": False}))
+
 
 if __name__ == "__main__":
     unittest.main()

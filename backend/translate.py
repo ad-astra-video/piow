@@ -51,6 +51,19 @@ def _get_user_id(request):
     return None
 
 
+def _get_total_text_sent_chars(text):
+    """Count total input text characters sent for translation usage accounting."""
+    if text is None:
+        return 0
+    if isinstance(text, str):
+        return len(text)
+    if isinstance(text, (list, tuple)):
+        return sum(_get_total_text_sent_chars(item) for item in text)
+    if isinstance(text, dict):
+        return sum(_get_total_text_sent_chars(value) for value in text.values())
+    return len(str(text))
+
+
 # ============================================================================
 # HELPER: Store translation result and record usage
 # ============================================================================
@@ -81,9 +94,10 @@ async def _store_translation_result(request, job_result, original_text, source_l
         logger.warning(f"Failed to store translation in database: {db_error}")
 
     try:
+        total_text_sent_chars = _get_total_text_sent_chars(original_text)
         supabase.table('translation_usage').insert({
             'user_id': user_id,
-            'characters_translated': len(original_text),
+            'characters_translated': total_text_sent_chars,
             'source_language': job_result.get('source_language', source_language),
             'target_language': job_result.get('target_language', target_language),
             'model': job_result.get('model', 'unknown'),

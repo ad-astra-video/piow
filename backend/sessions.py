@@ -9,9 +9,13 @@ Uses a write-through cache pattern:
 - This provides persistence across backend restarts while keeping hot-path reads fast
 """
 
+import asyncio
+import contextlib
 from aiohttp import web
+import aiohttp
 import logging
 import uuid
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 import time
 from typing import Any as TypingAny
@@ -20,6 +24,12 @@ from supabase_client import supabase
 from payments.payment_strategy import x402_or_subscription
 
 logger = logging.getLogger(__name__)
+
+STREAM_USAGE_POLL_SECONDS = 60
+STREAM_STATUS_TIMEOUT_SECONDS = 10
+
+_stream_usage_monitor_task: Optional[asyncio.Task] = None
+_stream_usage_billed_minute: Dict[str, int] = {}
 
 
 class SessionStore:
@@ -56,6 +66,87 @@ class SessionStore:
                 "translate_to": []
             }
         }
+
+    def _coerce_timestamp(self, value: Any) -> float:
+        """Convert supported timestamp types into epoch seconds."""
+        if value is None:
+            return time.time()
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, datetime):
+            return value.timestamp()
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return time.time()
+        return time.time()
+
+    def _extract_stream_text(self, stream_data: Dict[str, Any], final_text: str) -> str:
+        """Build best-effort text for usage word counts from final text or segments."""
+        text = (final_text or "").strip()
+        if text:
+            return text
+
+        cached_final = (stream_data.get("final_text") or "").strip()
+        if cached_final:
+            return cached_final
+
+        segments = stream_data.get("transcription_segments") or []
+        collected: List[str] = []
+        for segment in segments:
+            if isinstance(segment, str):
+                segment_text = segment.strip()
+            elif isinstance(segment, dict):
+                segment_text = str(segment.get("text") or segment.get("transcript") or "").strip()
+            else:
+                segment_text = ""
+            if segment_text:
+                collected.append(segment_text)
+
+        return " ".join(collected).strip()
+
+    async def _record_stream_usage(self, stream_data: Dict[str, Any], duration_seconds: int, final_text: str = "") -> bool:
+        """Persist a transcription_usage row for a live stream interval."""
+        if not stream_data:
+            return False
+
+        if duration_seconds <= 0:
+            return False
+
+        session_id = stream_data.get("session_id")
+        if not session_id:
+            logger.warning("Skipping stream usage log: stream has no parent session")
+            return False
+
+        parent_session = await self.get_session(session_id)
+        user_id = str(parent_session.get("user_id")) if parent_session and parent_session.get("user_id") else None
+        if not user_id:
+            logger.warning("Skipping stream usage log: missing user_id for stream %s", stream_data.get("id"))
+            return False
+
+        text = self._extract_stream_text(stream_data, final_text)
+        word_count = len(text.split()) if text else 0
+
+        provider_session = stream_data.get("provider_session") or {}
+        model = provider_session.get("model") or "voxtral-realtime"
+        hardware = provider_session.get("hardware") or "gpu"
+        source_language = stream_data.get("language") or "en"
+
+        try:
+            supabase.table("transcription_usage").insert({
+                "user_id": user_id,
+                "duration_seconds": duration_seconds,
+                "word_count": word_count,
+                "source_language": source_language,
+                "model": model,
+                "hardware": hardware,
+                "source_type": "stream",
+            }).execute()
+            return True
+        except Exception as e:
+            logger.warning("Failed to record stream usage for %s: %s", stream_data.get("id"), e)
+            return False
 
     # ------------------------------------------------------------------
     # User Sessions
@@ -480,6 +571,131 @@ class SessionStore:
 
 # Global session store
 session_store = SessionStore()
+
+
+def _stream_payload_indicates_running(payload: Any) -> bool:
+    """Interpret provider status payloads in a tolerant way."""
+    if not isinstance(payload, dict):
+        return True
+
+    bool_flags = ["running", "is_running", "active", "is_active", "live", "is_live"]
+    for key in bool_flags:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+
+    state_keys = ["status", "state", "phase", "lifecycle", "lifecycle_phase"]
+    for key in state_keys:
+        value = payload.get(key)
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip().lower()
+        if normalized in {"running", "active", "live", "started", "ready", "connected", "ok"}:
+            return True
+        if normalized in {"stopped", "stopping", "completed", "ended", "failed", "error", "terminated", "offline", "inactive"}:
+            return False
+
+    return True
+
+
+async def _provider_stream_is_running(provider_session: Dict[str, Any]) -> bool:
+    """Ping provider status_url and infer whether stream is still running."""
+    status_url = provider_session.get("status_url")
+    if not status_url:
+        return False
+
+    params = {}
+    provider_stream_id = provider_session.get("provider_stream_id")
+    if provider_stream_id:
+        params["provider_stream_id"] = provider_stream_id
+
+    timeout = aiohttp.ClientTimeout(total=STREAM_STATUS_TIMEOUT_SECONDS)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as http_session:
+            async with http_session.get(status_url, params=params) as response:
+                if response.status != 200:
+                    return False
+                content_type = (response.headers.get("Content-Type") or "").lower()
+                if "application/json" in content_type:
+                    payload = await response.json(content_type=None)
+                    return _stream_payload_indicates_running(payload)
+                return True
+    except Exception as e:
+        logger.warning("Failed stream status check: status_url=%s error=%s", status_url, e)
+        return False
+
+
+async def _bill_active_stream_minutes() -> None:
+    """Bill one usage minute for each active stream confirmed running by provider status endpoint."""
+    try:
+        stream_result = supabase.table("stream_sessions").select(
+            "id,user_session_id,language,provider_session,status,created_at,updated_at,total_audio_bytes,transcription_segments,final_text"
+        ).eq("status", "active").execute()
+    except Exception as e:
+        logger.warning("Failed to query active stream sessions for usage monitor: %s", e)
+        return
+
+    active_streams = stream_result.data or []
+    now_minute = int(time.time() // 60)
+    active_stream_ids = set()
+
+    for row in active_streams:
+        stream_id = str(row.get("id") or "")
+        if not stream_id:
+            continue
+        active_stream_ids.add(stream_id)
+
+        if _stream_usage_billed_minute.get(stream_id) == now_minute:
+            continue
+
+        provider_session = row.get("provider_session") or {}
+        if not provider_session.get("status_url"):
+            continue
+
+        is_running = await _provider_stream_is_running(provider_session)
+        if not is_running:
+            continue
+
+        stream_data = session_store._row_to_stream_session(row)
+        billed = await session_store._record_stream_usage(stream_data, duration_seconds=60)
+        if billed:
+            _stream_usage_billed_minute[stream_id] = now_minute
+
+    stale_ids = [sid for sid in list(_stream_usage_billed_minute.keys()) if sid not in active_stream_ids]
+    for stale_id in stale_ids:
+        _stream_usage_billed_minute.pop(stale_id, None)
+
+
+async def _stream_usage_monitor_loop() -> None:
+    """Background loop to enforce minute-based stream usage billing."""
+    while True:
+        try:
+            await _bill_active_stream_minutes()
+        except Exception as e:
+            logger.warning("Stream usage monitor iteration failed: %s", e)
+        await asyncio.sleep(STREAM_USAGE_POLL_SECONDS)
+
+
+async def start_stream_usage_monitor(_app: web.Application) -> None:
+    """Start background stream usage monitor task."""
+    global _stream_usage_monitor_task
+    if _stream_usage_monitor_task and not _stream_usage_monitor_task.done():
+        return
+    _stream_usage_monitor_task = asyncio.create_task(_stream_usage_monitor_loop())
+    logger.info("Started stream usage monitor")
+
+
+async def stop_stream_usage_monitor(_app: web.Application) -> None:
+    """Stop background stream usage monitor task."""
+    global _stream_usage_monitor_task
+    if not _stream_usage_monitor_task:
+        return
+
+    _stream_usage_monitor_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await _stream_usage_monitor_task
+    _stream_usage_monitor_task = None
+    logger.info("Stopped stream usage monitor")
 
 
 # ======================================================================

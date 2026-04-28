@@ -7,13 +7,21 @@ Handles all transcription and translation related API routes.
 import asyncio
 import aiohttp
 import aiohttp.web as web
+import ipaddress
 import logging
+import math
 import os
 import re
 import tempfile
 import time
 import uuid
 import json
+from urllib.parse import urlparse
+
+try:
+    import av
+except ImportError:
+    av = None
 
 from auth import no_auth, require_user_auth
 from payments.payment_strategy import x402_or_subscription
@@ -34,6 +42,8 @@ compute_provider_manager = ComputeProviderManager()
 
 # Register providers from definitions
 compute_provider_manager.register_providers_from_definitions(PROVIDER_DEFINITIONS)
+
+MAX_REMOTE_AUDIO_BYTES = 100 * 1024 * 1024
 
 def setup_routes(app):
     """Setup transcription-related routes."""
@@ -67,7 +77,7 @@ def _get_user_id(request):
 # HELPER: Store transcription result and record usage
 # ============================================================================
 
-async def _store_transcription_result(request, job_result, audio_url, language, source_type='upload'):
+async def _store_transcription_result(request, job_result, audio_url, language, source_type='upload', duration_seconds_override=None):
     """
     Store transcription result in the database and record usage.
     
@@ -87,6 +97,12 @@ async def _store_transcription_result(request, job_result, audio_url, language, 
         return None
     transcription_id = None
 
+    effective_duration_seconds = (
+        duration_seconds_override
+        if duration_seconds_override is not None
+        else (job_result.get('duration', 0) or 0)
+    )
+
     # Store transcription in database
     try:
         transcription_record = supabase.table('transcriptions').insert({
@@ -94,7 +110,7 @@ async def _store_transcription_result(request, job_result, audio_url, language, 
             'audio_url': audio_url,
             'text': job_result.get('text', ''),
             'language': job_result.get('language', language),
-            'duration': job_result.get('duration', 0) or 0,
+            'duration': int(effective_duration_seconds),
             'word_count': job_result.get('word_count', 0) or 0,
             'segments': job_result.get('segments'),
             'status': 'completed',
@@ -108,10 +124,9 @@ async def _store_transcription_result(request, job_result, audio_url, language, 
 
     # Record usage
     try:
-        duration_seconds = job_result.get('duration', 0) or 0
         supabase.table('transcription_usage').insert({
             'user_id': user_id,
-            'duration_seconds': int(duration_seconds),
+            'duration_seconds': int(effective_duration_seconds),
             'word_count': job_result.get('word_count', 0) or 0,
             'source_language': job_result.get('language', language),
             'model': job_result.get('model', 'unknown'),
@@ -122,6 +137,123 @@ async def _store_transcription_result(request, job_result, audio_url, language, 
         logger.warning(f"Failed to record transcription usage: {usage_error}")
 
     return transcription_id
+
+
+def _get_audio_duration_seconds(file_path):
+    """Extract audio duration in whole seconds from a local media file using PyAV."""
+    if not av:
+        return None
+
+    try:
+        with av.open(file_path) as container:
+            if container.duration is not None:
+                duration_seconds = float(container.duration / av.time_base)
+                return max(0, int(math.ceil(duration_seconds)))
+
+            audio_stream_durations = []
+            for stream in container.streams.audio:
+                if stream.duration is not None and stream.time_base is not None:
+                    audio_stream_durations.append(float(stream.duration * stream.time_base))
+
+            if audio_stream_durations:
+                return max(0, int(math.ceil(max(audio_stream_durations))))
+    except Exception as e:
+        logger.warning("Failed to derive duration with PyAV for %s: %s", file_path, e)
+
+    return None
+
+
+async def _resolve_public_ips_for_host(hostname):
+    """Resolve hostname and return a list of public IP objects."""
+    loop = asyncio.get_running_loop()
+    try:
+        addr_infos = await loop.getaddrinfo(hostname, None, type=0, proto=0)
+    except Exception as e:
+        raise ValueError(f"Failed to resolve host '{hostname}': {e}") from e
+
+    public_ips = []
+    for info in addr_infos:
+        sockaddr = info[4]
+        if not sockaddr:
+            continue
+
+        host = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            continue
+
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise ValueError(f"URL host resolves to a non-public address: {ip}")
+
+        public_ips.append(ip)
+
+    if not public_ips:
+        raise ValueError("URL host did not resolve to any valid public IP address")
+
+    return public_ips
+
+
+def _safe_download_suffix_from_url(audio_url):
+    """Infer a safe temporary file suffix from URL path."""
+    parsed = urlparse(audio_url)
+    basename = os.path.basename(parsed.path or "")
+    _, ext = os.path.splitext(basename)
+    ext = (ext or "").lower()
+    allowed = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm", ".aac", ".mp4"}
+    return ext if ext in allowed else ".bin"
+
+
+async def _safe_download_audio_url(audio_url):
+    """Download remote audio URL to a local temp file with basic SSRF/size protections."""
+    parsed = urlparse(audio_url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http/https audio URLs are supported")
+    if not parsed.hostname:
+        raise ValueError("Invalid audio URL: missing hostname")
+
+    await _resolve_public_ips_for_host(parsed.hostname)
+
+    temp_path = None
+    bytes_downloaded = 0
+    timeout = aiohttp.ClientTimeout(total=90, connect=10, sock_read=30)
+    try:
+        suffix = _safe_download_suffix_from_url(audio_url)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            temp_path = tmp_file.name
+
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(audio_url, allow_redirects=False) as response:
+                    if response.status != 200:
+                        raise ValueError(f"Failed to download audio URL (HTTP {response.status})")
+
+                    content_length = response.headers.get("Content-Length")
+                    if content_length and int(content_length) > MAX_REMOTE_AUDIO_BYTES:
+                        raise ValueError("Remote audio file is too large")
+
+                    async for chunk in response.content.iter_chunked(8192):
+                        if not chunk:
+                            continue
+                        bytes_downloaded += len(chunk)
+                        if bytes_downloaded > MAX_REMOTE_AUDIO_BYTES:
+                            raise ValueError("Remote audio file exceeds size limit")
+                        tmp_file.write(chunk)
+
+        return temp_path
+    except Exception:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+        raise
 
 
 # ============================================================================
@@ -171,6 +303,8 @@ async def transcribe_file(request):
                     break
                 tmp_file.write(chunk)
 
+        source_duration_seconds = _get_audio_duration_seconds(temp_path)
+
         ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_batch",
             requirements={"streaming": False, "language": language}
@@ -210,6 +344,9 @@ async def transcribe_file(request):
                 "status": "error"
             }, status=503)
 
+        if source_duration_seconds is not None:
+            job_result['duration'] = source_duration_seconds
+
         try:
             os.unlink(temp_path)
             temp_path = None
@@ -217,7 +354,12 @@ async def transcribe_file(request):
             pass
 
         transcription_id = await _store_transcription_result(
-            request, job_result, audio_url, language, source_type='upload'
+            request,
+            job_result,
+            audio_url,
+            language,
+            source_type='upload',
+            duration_seconds_override=source_duration_seconds,
         )
 
         return web.json_response({
@@ -256,6 +398,7 @@ async def transcribe_url(request):
     """
     logger.info("Received transcription URL request")
 
+    temp_path = None
     try:
         data = await request.json()
         audio_url = data.get('audio_url')
@@ -264,6 +407,13 @@ async def transcribe_url(request):
 
         if not audio_url:
             return web.json_response({"error": "Missing audio_url parameter"}, status=400)
+
+        try:
+            temp_path = await _safe_download_audio_url(audio_url)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+        source_duration_seconds = _get_audio_duration_seconds(temp_path)
 
         ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_batch", requirements={"language": language}
@@ -293,8 +443,16 @@ async def transcribe_url(request):
                 "status": "error"
             }, status=503)
 
+        if source_duration_seconds is not None:
+            job_result['duration'] = source_duration_seconds
+
         transcription_id = await _store_transcription_result(
-            request, job_result, audio_url, language, source_type='url'
+            request,
+            job_result,
+            audio_url,
+            language,
+            source_type='url',
+            duration_seconds_override=source_duration_seconds,
         )
 
         return web.json_response({
@@ -314,6 +472,12 @@ async def transcribe_url(request):
     except Exception as e:
         logger.error(f"Error in transcribe_url: {e}")
         return web.json_response({"error": str(e), "status": "error"}, status=500)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
 
 
 def _is_valid_streaming_session(session_result):
