@@ -151,6 +151,8 @@ html, body {
   box-shadow: 0 0 0 3px rgba(91,124,250,0.15);
 }
 .form-row select option { background: var(--surface); color: var(--text); }
+.form-row-check label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 400; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.form-row-check input[type="checkbox"] { width: auto; padding: 0; accent-color: var(--accent); cursor: pointer; }
 
 .lang-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 

@@ -416,6 +416,7 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
             uploaded_name = "audio.wav"
             language = "en"
             fmt = "json"
+            punctuation_pass = False
 
             while field is not None:
                 if field.filename and not file_data:
@@ -425,6 +426,9 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                     language = (await field.read()).decode("utf-8", "replace").strip() or "en"
                 elif field.name == "format":
                     fmt = (await field.read()).decode("utf-8", "replace").strip() or "json"
+                elif field.name == "punctuation_pass":
+                    val = (await field.read()).decode("utf-8", "replace").strip().lower()
+                    punctuation_pass = val in ("1", "true", "yes")
                 field = await reader.next()
 
             if not file_data:
@@ -444,12 +448,13 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                 uploaded_name, len(file_data), suffix,
             )
 
-            result = granite_transcriber.transcribe(file_data, language)
+            result = granite_transcriber.transcribe(file_data, language, punctuation_pass=punctuation_pass)
 
         else:
             body = await request.json()
             audio_url = body.get("audio_url")
             language = body.get("language", "en")
+            punctuation_pass = bool(body.get("punctuation_pass", False))
 
             if not audio_url:
                 return aiohttp.web.json_response(
@@ -473,7 +478,7 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                         status=400,
                     )
 
-                result = granite_transcriber.transcribe(audio_bytes, language)
+                result = granite_transcriber.transcribe(audio_bytes, language, punctuation_pass=punctuation_pass)
             else:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(audio_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
@@ -484,7 +489,7 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                             )
                         audio_bytes = await resp.read()
 
-                result = granite_transcriber.transcribe(audio_bytes, language)
+                result = granite_transcriber.transcribe(audio_bytes, language, punctuation_pass=punctuation_pass)
 
         normalized = _normalize_transcription_result(result, job_id, language)
         transcriptions_db[job_id] = normalized

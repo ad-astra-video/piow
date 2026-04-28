@@ -6,6 +6,7 @@ export default function TranscribeUrl() {
   const [url, setUrl] = useState('');
   const [language, setLanguage] = useState('en');
   const [languages, setLanguages] = useState([]);
+  const [punctuationPass, setPunctuationPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -20,7 +21,7 @@ export default function TranscribeUrl() {
     setError('');
     setResult(null);
     try {
-      const res = await api.transcribeUrl({ audio_url: url.trim(), language });
+      const res = await api.transcribeUrl({ audio_url: url.trim(), language, punctuation_pass: punctuationPass });
       setResult(res);
     } catch (err) {
       setError(err.message || 'Transcription failed');
@@ -70,6 +71,17 @@ export default function TranscribeUrl() {
                 <option key={lang.code} value={lang.code}>{lang.name}</option>
               ))}
             </select>
+          </div>
+
+          <div className="form-row form-row-check">
+            <label>
+              <input
+                type="checkbox"
+                checked={punctuationPass}
+                onChange={(e) => setPunctuationPass(e.target.checked)}
+              />
+              Add punctuation
+            </label>
           </div>
 
           <button

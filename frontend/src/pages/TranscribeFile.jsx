@@ -6,6 +6,7 @@ export default function TranscribeFile() {
   const [file, setFile] = useState(null);
   const [language, setLanguage] = useState('en');
   const [languages, setLanguages] = useState([]);
+  const [punctuationPass, setPunctuationPass] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -37,6 +38,7 @@ export default function TranscribeFile() {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('language', language);
+      formData.append('punctuation_pass', punctuationPass ? 'true' : 'false');
       const res = await api.transcribeFile(formData);
       setResult(res);
     } catch (err) {
@@ -97,6 +99,17 @@ export default function TranscribeFile() {
                 <option key={lang.code} value={lang.code}>{lang.name}</option>
               ))}
             </select>
+          </div>
+
+          <div className="form-row form-row-check">
+            <label>
+              <input
+                type="checkbox"
+                checked={punctuationPass}
+                onChange={(e) => setPunctuationPass(e.target.checked)}
+              />
+              Add punctuation
+            </label>
           </div>
 
           <button

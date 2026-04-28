@@ -99,7 +99,7 @@ class Granite4Transcriber:
         """Check if the Granite backend is available and loaded."""
         return self.is_loaded
 
-    def transcribe(self, audio_source: "str | bytes", language: str = "en") -> Dict[str, Any]:
+    def transcribe(self, audio_source: "str | bytes", language: str = "en", punctuation_pass: bool = False) -> Dict[str, Any]:
         """Transcribe audio using Granite 4.0 on CPU."""
         start_time = time.time()
 
@@ -122,7 +122,10 @@ class Granite4Transcriber:
             audio = self._decode_audio_to_array(audio_source)
             logger.info("Audio converted to array with shape %s", audio.shape)
             output_text = self._run_transcription(audio)
-            logger.info("Transcription result: %s", output_text)
+            logger.info("Raw transcription result: %s", output_text)
+            if punctuation_pass and output_text:
+                output_text = self._run_punctuation_pass(output_text)
+                logger.info("Punctuated transcription result: %s", output_text)
 
             processing_time = time.time() - start_time
             duration = len(audio) / self.sample_rate
@@ -194,6 +197,41 @@ class Granite4Transcriber:
             skip_special_tokens=True,
         )
         return decoded[0].strip() if decoded else ""
+
+    def _run_punctuation_pass(self, text: str) -> str:
+        """Second-pass text-only LLM call to restore punctuation and capitalisation."""
+        chat = [
+            {
+                "role": "user",
+                "content": (
+                    "Add proper punctuation and capitalisation to the following transcript. "
+                    "Return only the corrected text with no additional commentary.\n\n"
+                    f"{text}"
+                ),
+            }
+        ]
+        prompt = self.tokenizer.apply_chat_template(
+            chat,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        with torch.inference_mode():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,
+                num_beams=1,
+            )
+        num_input_tokens = inputs["input_ids"].shape[-1]
+        new_tokens = outputs[:, num_input_tokens:]
+        decoded = self.tokenizer.batch_decode(
+            new_tokens,
+            add_special_tokens=False,
+            skip_special_tokens=True,
+        )
+        result = decoded[0].strip() if decoded else ""
+        return result if result else text
 
     def _build_prompt(self) -> str:
         chat = [

@@ -344,6 +344,7 @@ async def transcribe_file(request):
         file_data = None
         filename = "uploaded_audio"
         language = "en"
+        punctuation_pass = False
 
         async for part in reader:
             if part.name == 'file':
@@ -351,6 +352,9 @@ async def transcribe_file(request):
                 file_data = await part.read()
             elif part.name == 'language':
                 language = await part.text()
+            elif part.name == 'punctuation_pass':
+                val = (await part.text()).strip().lower()
+                punctuation_pass = val in ('1', 'true', 'yes')
 
         if not file_data:
             return web.json_response({"error": "No file provided"}, status=400)
@@ -382,7 +386,8 @@ async def transcribe_file(request):
         for provider in ranked_providers:
             try:
                 job_result = await provider.create_transcription_job(
-                    audio_url=provider_audio_url, language=language, format="json"
+                    audio_url=provider_audio_url, language=language, format="json",
+                    punctuation_pass=punctuation_pass
                 )
                 break
             except Exception as provider_error:
@@ -453,6 +458,7 @@ async def transcribe_url(request):
         audio_url = data.get('audio_url')
         language = data.get('language', 'en')
         format = data.get('format', 'json')
+        punctuation_pass = bool(data.get('punctuation_pass', False))
 
         if not audio_url:
             return web.json_response({"error": "Missing audio_url parameter"}, status=400)
@@ -483,7 +489,8 @@ async def transcribe_url(request):
         for provider in ranked_providers:
             try:
                 job_result = await provider.create_transcription_job(
-                    audio_url=provider_audio_url, language=language, format=format
+                    audio_url=provider_audio_url, language=language, format=format,
+                    punctuation_pass=punctuation_pass
                 )
                 break
             except Exception as provider_error:

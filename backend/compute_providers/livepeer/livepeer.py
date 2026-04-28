@@ -74,6 +74,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
         audio_url: str,
         language: str = "en",
         format: str = "json",
+        punctuation_pass: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -100,6 +101,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
             "audio_url": audio_url,
             "language": language,
             "format": format,
+            "punctuation_pass": punctuation_pass,
         }
 
         livepeer_header = self.build_livepeer_batch_header(
@@ -128,7 +130,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
                         f"Livepeer transcription job failed: HTTP {response.status} - {error_text[:500]}"
                     )
 
-                result = await response.json()
+                result = await response.json(content_type=None)
                 logger.info(f"Livepeer transcription completed: job_id={result.get('job_id', 'unknown')}")
 
         # Normalize the response to a consistent format
@@ -205,7 +207,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
                         f"Livepeer translation job failed: HTTP {response.status} - {error_text[:500]}"
                     )
 
-                result = await response.json()
+                result = await response.json(content_type=None)
                 logger.info(f"Livepeer translation completed: job_id={result.get('job_id', 'unknown')}")
 
         # Normalize the response to a consistent format
@@ -374,9 +376,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
                         )
                         raise Exception(f"HTTP {response.status}: {error_text[:500]}")
                     
-                    provider_data = await response.json()
-                    logger.info(
-                        "Livepeer stream start success: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s response_keys=%s whip_url=%s data_url=%s",
+                    provider_data = await response.json(content_type=None)
                         stream_request_id,
                         start_url,
                         session_id,
@@ -638,7 +638,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
                         )
                         raise Exception(f"HTTP {response.status}: {error_text[:300]}")
                     
-                    status_data = await response.json()
+                    status_data = await response.json(content_type=None)
                     logger.info(
                         "Livepeer stream status success: request_id=%s url=%s stream_id=%s http_status=%s elapsed_ms=%s status_data_keys=%s",
                         stream_request_id,

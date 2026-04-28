@@ -43,6 +43,7 @@ class RunpodComputeProvider(BaseComputeProvider):
         audio_url: str,
         language: str = "en",
         format: str = "json",
+        punctuation_pass: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -72,6 +73,7 @@ class RunpodComputeProvider(BaseComputeProvider):
                 "audio_url": audio_url,
                 "language": language,
                 "format": format,
+                "punctuation_pass": punctuation_pass,
                 **kwargs
             }
         }

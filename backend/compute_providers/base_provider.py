@@ -62,6 +62,7 @@ class BaseComputeProvider(ABC):
         audio_url: str,
         language: str = "en",
         format: str = "json",
+        punctuation_pass: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
