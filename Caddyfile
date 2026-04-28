@@ -2,32 +2,35 @@
 
 tls internal
 
-# Reverse proxy for the live translation app
-reverse_proxy /whip* {
-    to http://backend:8000
-    header_up X-Forwarded-Proto {scheme}
-    header_up X-Forwarded-Host {host}
-    header_up X-Real-IP {remote_host}
-    header_up X-Forwarded-For {remote_host}
-}
+route {
+    # Reverse proxy for the live translation app
+    reverse_proxy /whip* {
+        to http://backend:8000
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+    }
 
-reverse_proxy /ws* {
-    to http://backend:8000
-    header_up X-Forwarded-Proto {scheme}
-    header_up X-Forwarded-Host {host}
-    header_up X-Real-IP {remote_host}
-    header_up X-Forwarded-For {remote_host}
-}
+    reverse_proxy /ws* {
+        to http://backend:8000
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+    }
 
-# Serve the frontend static files
-root * /frontend/dist
-file_server
+    # Proxy to VLLM if needed for direct access (optional)
+    reverse_proxy /v1/* {
+        to http://vllm:6000
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+    }
 
-# Proxy to VLLM if needed for direct access (optional)
-reverse_proxy /v1/* {
-    to http://vllm:6000
-    header_up X-Forwarded-Proto {scheme}
-    header_up X-Forwarded-Host {host}
-    header_up X-Real-IP {remote_host}
-    header_up X-Forwarded-For {remote_host}
+    # Serve the frontend as an SPA so deep links resolve on refresh
+    root * /frontend/dist
+    try_files {path} /index.html
+    file_server
 }
