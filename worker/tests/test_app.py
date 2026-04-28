@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Mock pytrickle before importing app
 sys.modules['pytrickle'] = MagicMock()
 sys.modules['pytrickle.server'] = MagicMock()
+sys.modules['pytrickle.decorators'] = MagicMock()
 
 import app as worker_app
 
@@ -122,3 +123,16 @@ async def test_transcribe_accepts_data_url(cli):
     payload = await resp.json()
     assert payload["status"] == "completed"
     assert payload["text"] == "ok"
+
+
+async def test_transcribe_returns_500_for_transcriber_errors(cli):
+    """Test failed transcription results return HTTP 500 and failed status."""
+    data_url = "data:audio/wav;base64,UklGRg=="
+
+    with patch.object(worker_app.granite_transcriber, "transcribe", return_value={"error": "decoder failure", "language": "en", "text": ""}):
+        resp = await cli.post("/transcribe", json={"audio_url": data_url, "language": "en"})
+
+    assert resp.status == 500
+    payload = await resp.json()
+    assert payload["status"] == "failed"
+    assert payload["error"] == "decoder failure"

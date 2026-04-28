@@ -14,13 +14,13 @@ import soundfile as sf
 # Add the worker directory to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from granite_transcriber import Granite4Transcriber, create_granite_transcriber, granite_health_check
+from granite_transcriber import Granite4Transcriber, create_granite_transcriber, granite_health_check, _resolve_model_path
 
 class TestGranite4Transcriber(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures"""
-        self.test_audio_path = None
+        self.test_audio_path = ""
         self.create_test_audio_file()
         
     def tearDown(self):
@@ -67,52 +67,52 @@ class TestGranite4Transcriber(unittest.TestCase):
         """Test transcription when model is not loaded"""
         transcriber = Granite4Transcriber()
         transcriber.is_loaded = False  # Simulate not loaded
+        transcriber.load_error = 'Granite runtime unavailable'
         
         result = transcriber.transcribe(self.test_audio_path)
         
-        # Should return mock result
-        self.assertIn('text', result)
+        self.assertIn('error', result)
         self.assertIn('segments', result)
         self.assertIn('language', result)
         self.assertIn('duration', result)
-        self.assertEqual(result['model'], 'granite-4.0-1b-mock')
+        self.assertEqual(result['model'], 'granite-4.0-1b')
         self.assertEqual(result['hardware'], 'cpu')
-        self.assertTrue(len(result['text']) > 0)
+        self.assertEqual(result['error'], 'Granite runtime unavailable')
+        self.assertEqual(result['text'], '')
     
     @patch('granite_transcriber.Granite4Transcriber._load_model')
     @patch('granite_transcriber.librosa.load')
-    @patch('numpy.pad')
-    def test_transcribe_loaded_mock_inference(self, mock_pad, mock_load, mock_load_model):
+    def test_transcribe_loaded_mock_inference(self, mock_load, mock_load_model):
         """Test transcription with mocked model inference"""
         # Setup mocks
         mock_load.return_value = (np.array([0.1, 0.2, 0.3]), 16000)  # fake audio, sr
-        mock_pad.return_value = np.array([0.1, 0.2, 0.3])  # padded audio
         
         transcriber = Granite4Transcriber()
         transcriber.is_loaded = True
-        
-        # Mock the session and tokenizer
-        mock_session = MagicMock()
-        mock_session.run.return_value = [np.array([[1, 2, 3]])]  # fake output
-        transcriber.session = mock_session
+
+        transcriber.audio_encoder_session = MagicMock()
+        transcriber.audio_encoder_session.run.return_value = [np.zeros((1, 2, 2048), dtype=np.float32)]
+
+        transcriber.embed_tokens_session = MagicMock()
+        transcriber.embed_tokens_session.run.return_value = [np.zeros((1, 3, 2048), dtype=np.float32)]
         
         mock_tokenizer = MagicMock()
         mock_tokenizer.decode.return_value = "mock transcription"
         transcriber.tokenizer = mock_tokenizer
-        
-        # Mock _prepare_inputs
-        with patch.object(transcriber, '_prepare_inputs') as mock_prepare:
-            mock_prepare.return_value = {'input_features': np.array([]), 'decoder_input_ids': np.array([])}
-            
+
+        with patch.object(transcriber, '_prepare_inputs', return_value={'input_features': np.zeros((1, 2, 160), dtype=np.float32)}), \
+             patch.object(transcriber, '_build_prompt_input_ids', return_value=np.array([[1, 100352, 2]], dtype=np.int64)), \
+             patch.object(transcriber, '_merge_audio_into_prompt', return_value=np.zeros((1, 4, 2048), dtype=np.float32)), \
+             patch.object(transcriber, '_generate_greedy', return_value=[1, 2, 3]):
             result = transcriber.transcribe(self.test_audio_path)
-            
-            # Check result structure
-            self.assertIn('text', result)
-            self.assertIn('segments', result)
-            self.assertEqual(result['text'], "mock transcription")
-            self.assertEqual(result['model'], 'granite-4.0-1b')
-            self.assertEqual(result['hardware'], 'cpu')
-            self.assertGreaterEqual(result['processing_time'], 0)
+
+        # Check result structure
+        self.assertIn('text', result)
+        self.assertIn('segments', result)
+        self.assertEqual(result['text'], "mock transcription")
+        self.assertEqual(result['model'], 'granite-4.0-1b')
+        self.assertEqual(result['hardware'], 'cpu')
+        self.assertGreaterEqual(result['processing_time'], 0)
     
     @patch('granite_transcriber.Granite4Transcriber._load_model')
     def test_translate_not_loaded(self, mock_load_model):
@@ -122,15 +122,16 @@ class TestGranite4Transcriber(unittest.TestCase):
         
         result = transcriber.translate("Hello world", "en", "es")
         
-        # Should return mock result
+        # Should return explicit not-implemented result
         self.assertIn('original_text', result)
         self.assertIn('translated_text', result)
         self.assertIn('source_language', result)
         self.assertIn('target_language', result)
+        self.assertIn('error', result)
         self.assertEqual(result['original_text'], "Hello world")
         self.assertEqual(result['source_language'], "en")
         self.assertEqual(result['target_language'], "es")
-        self.assertEqual(result['model'], 'granite-4.0-1b-mock')
+        self.assertEqual(result['model'], 'granite-4.0-1b')
         self.assertEqual(result['hardware'], 'cpu')
     
     @patch('granite_transcriber.Granite4Transcriber._load_model')
@@ -159,12 +160,12 @@ class TestGranite4Transcriber(unittest.TestCase):
         
         # Check result
         self.assertEqual(result['original_text'], "Hello world")
-        self.assertEqual(result['translated_text'], "Hola mundo")
+        self.assertEqual(result['translated_text'], "")
         self.assertEqual(result['source_language'], "en")
         self.assertEqual(result['target_language'], "es")
+        self.assertIn('error', result)
         self.assertEqual(result['model'], 'granite-4.0-1b')
         self.assertEqual(result['hardware'], 'cpu')
-        self.assertGreaterEqual(result['processing_time'], 0)
     
     @patch('granite_transcriber.librosa.feature.melspectrogram')
     @patch('granite_transcriber.librosa.power_to_db')
@@ -175,11 +176,9 @@ class TestGranite4Transcriber(unittest.TestCase):
         
         # Create fake audio data
         audio = np.random.randn(16000).astype(np.float32)  # 1 second of audio
-        language = "en"
-        
         # Setup mocks
-        mock_mel.return_value = np.random.randn(128, 100)  # mel spec
-        mock_db.return_value = np.random.randn(128, 100)  # db mel
+        mock_mel.return_value = np.random.randn(80, 100)  # mel spec
+        mock_db.return_value = np.random.randn(80, 100)  # db mel
         
         mock_tokenizer = MagicMock()
         mock_tokenizer_class.from_pretrained.return_value = mock_tokenizer
@@ -188,12 +187,23 @@ class TestGranite4Transcriber(unittest.TestCase):
             'attention_mask': np.array([[1, 1, 1]])
         }
         
-        result = transcriber._prepare_inputs(audio, language)
+        result = transcriber._prepare_inputs(audio)
         
         self.assertIn('input_features', result)
-        self.assertIn('decoder_input_ids', result)
         self.assertIsInstance(result['input_features'], np.ndarray)
-        self.assertIsInstance(result['decoder_input_ids'], np.ndarray)
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_transcribe_returns_error_when_granite_unavailable(self, mock_load_model):
+        """Test unavailable Granite backend returns an explicit error."""
+        transcriber = Granite4Transcriber()
+        transcriber.is_loaded = False
+        transcriber.load_error = 'Granite runtime unavailable'
+
+        result = transcriber.transcribe(self.test_audio_path)
+
+        self.assertEqual(result['error'], 'Granite runtime unavailable')
+        self.assertEqual(result['text'], '')
+        self.assertEqual(result['model'], 'granite-4.0-1b')
     
     def test_mock_transcription(self):
         """Test _mock_transcription method"""
@@ -233,6 +243,11 @@ class TestGranite4Transcriber(unittest.TestCase):
         # Test with custom path
         transcriber2 = create_granite_transcriber("/custom/path")
         self.assertIsInstance(transcriber2, Granite4Transcriber)
+
+    def test_resolve_model_path_prefers_worker_models_dir(self):
+        """Test default model path resolution finds the checked-in worker model."""
+        resolved = _resolve_model_path()
+        self.assertTrue(str(resolved).endswith("worker\\models\\granite-4.0-1b-speech-onnx"))
     
     def test_granite_health_check(self):
         """Test health check function"""

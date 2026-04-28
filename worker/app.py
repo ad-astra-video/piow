@@ -342,6 +342,22 @@ async def capability_status_handler(request: aiohttp.web.Request) -> aiohttp.web
 # =============================================================================
 def _normalize_transcription_result(result: Dict[str, Any], job_id: str, language: str) -> Dict[str, Any]:
     """Ensure a consistent response shape for transcription jobs."""
+    if result.get("error"):
+        return {
+            "job_id": job_id,
+            "status": "failed",
+            "error": result.get("error"),
+            "text": result.get("text", ""),
+            "language": result.get("language", language),
+            "duration": result.get("duration"),
+            "segments": result.get("segments"),
+            "word_count": result.get("word_count"),
+            "model": result.get("model", "granite-4.0-1b"),
+            "hardware": result.get("hardware", "cpu"),
+            "provider": "worker",
+            "raw_response": result,
+        }
+
     return {
         "job_id": job_id,
         "status": "completed",
@@ -479,6 +495,8 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
 
         normalized = _normalize_transcription_result(result, job_id, language)
         transcriptions_db[job_id] = normalized
+        if result.get("error"):
+            return aiohttp.web.json_response(normalized, status=500)
         return aiohttp.web.json_response(normalized)
 
     except Exception as exc:
