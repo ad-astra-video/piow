@@ -100,6 +100,20 @@ class TestGranite4Transcriber(unittest.TestCase):
         self.assertEqual(result['model'], 'granite-4.0-1b')
         self.assertEqual(result['hardware'], 'cpu')
         self.assertGreaterEqual(result['processing_time'], 0)
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_transcribe_with_punctuation_pass_routes_by_language(self, mock_load_model):
+        """Test punctuation pass uses the language-specific punctuation router."""
+        transcriber = Granite4Transcriber()
+        transcriber.is_loaded = True
+
+        with patch.object(transcriber, '_decode_audio_to_array', return_value=np.array([0.1, 0.2, 0.3], dtype=np.float32)), \
+             patch.object(transcriber, '_run_transcription', return_value='hello world'), \
+             patch.object(transcriber, '_apply_punctuation', return_value='Hello world.') as mock_apply:
+            result = transcriber.transcribe(self.test_audio_path, language='en', punctuation_pass=True)
+
+        self.assertEqual(result['text'], 'Hello world.')
+        mock_apply.assert_called_once_with('hello world', 'en')
     
     @patch('granite_transcriber.Granite4Transcriber._load_model')
     def test_translate_not_loaded(self, mock_load_model):
@@ -162,6 +176,32 @@ class TestGranite4Transcriber(unittest.TestCase):
         self.assertEqual(result['error'], 'Granite runtime unavailable')
         self.assertEqual(result['text'], '')
         self.assertEqual(result['model'], 'granite-4.0-1b')
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_apply_punctuation_routes_languages(self, mock_load_model):
+        """Test punctuation routing by language code."""
+        transcriber = Granite4Transcriber()
+
+        with patch.object(transcriber, '_apply_english_punctuation', return_value='Hello world.') as mock_en, \
+             patch.object(transcriber, '_apply_multilingual_punctuation', return_value='bonjour le monde.') as mock_multi:
+            self.assertEqual(transcriber._apply_punctuation('hello world', 'en-US'), 'Hello world.')
+            self.assertEqual(transcriber._apply_punctuation('bonjour le monde', 'fr'), 'bonjour le monde.')
+            self.assertEqual(transcriber._apply_punctuation('konnichiwa sekai', 'ja'), 'konnichiwa sekai')
+
+        mock_en.assert_called_once_with('hello world')
+        mock_multi.assert_called_once_with('bonjour le monde')
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_reconstruct_multilingual_text(self, mock_load_model):
+        """Test multilingual punctuation reconstruction from token labels."""
+        transcriber = Granite4Transcriber()
+
+        tokens = ['<s>', '▁bonjour', '▁le', '▁monde', '</s>']
+        pred_ids = [0, 2, 0, 1, 0]
+
+        result = transcriber._reconstruct_multilingual_text(tokens, pred_ids)
+
+        self.assertEqual(result, 'bonjour, le monde.')
     
     def test_create_granite_transcriber(self):
         """Test factory function"""

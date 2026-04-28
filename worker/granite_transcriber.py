@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 import librosa
 import numpy as np
 import torch
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+from transformers import AutoModelForSpeechSeq2Seq, AutoModelForTokenClassification, AutoProcessor, AutoTokenizer
 import av
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,26 @@ DEFAULT_MODEL_DIRNAME = "granite-4.0-1b-speech"
 DEFAULT_MODEL_ID = "ibm-granite/granite-4.0-1b-speech"
 DEFAULT_TRANSCRIBE_PROMPT = "can you transcribe the speech into a written format?"
 PUBLIC_MODEL_NAME = "granite-4.0-1b"
+ENGLISH_PUNCT_MODEL_ID = os.environ.get("ENGLISH_PUNCT_MODEL_ID", "pcs_en")
+MULTILINGUAL_PUNCT_MODEL_ID = os.environ.get(
+    "MULTILINGUAL_PUNCT_MODEL_ID",
+    "oliverguhr/fullstop-punctuation-multilingual-base",
+)
+MULTILINGUAL_PUNCT_LABELS = {
+    0: "",
+    1: ".",
+    2: ",",
+    3: "?",
+    4: "-",
+    5: ":",
+}
+MULTILINGUAL_PUNCT_LANGS = {"de", "fr", "es", "pt"}
+
+
+def _normalise_language_code(language: Optional[str]) -> str:
+    if not language:
+        return ""
+    return str(language).strip().lower().replace("_", "-").split("-", 1)[0]
 
 
 def _resolve_model_path(model_path: Optional[str] = None) -> Path:
@@ -63,6 +83,10 @@ class Granite4Transcriber:
         self.is_loaded = False
         self.active_backend = "unavailable"
         self.load_error: Optional[str] = None
+        self.english_punctuator: Any = None
+        self.multilingual_punct_tokenizer: Any = None
+        self.multilingual_punct_model: Any = None
+        self.multilingual_punct_max_length = 512
 
         self._load_model()
 
@@ -124,7 +148,7 @@ class Granite4Transcriber:
             output_text = self._run_transcription(audio)
             logger.info("Raw transcription result: %s", output_text)
             if punctuation_pass and output_text:
-                output_text = self._run_punctuation_pass(output_text)
+                output_text = self._apply_punctuation(output_text, language)
                 logger.info("Punctuated transcription result: %s", output_text)
 
             processing_time = time.time() - start_time
@@ -198,40 +222,123 @@ class Granite4Transcriber:
         )
         return decoded[0].strip() if decoded else ""
 
-    def _run_punctuation_pass(self, text: str) -> str:
-        """Second-pass text-only LLM call to restore punctuation and capitalisation."""
-        chat = [
-            {
-                "role": "user",
-                "content": (
-                    "Add proper punctuation and capitalisation to the following transcript. "
-                    "Return only the corrected text with no additional commentary.\n\n"
-                    f"{text}"
-                ),
-            }
-        ]
-        prompt = self.tokenizer.apply_chat_template(
-            chat,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
-        with torch.inference_mode():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=self.max_new_tokens,
-                do_sample=False,
-                num_beams=1,
+    def _apply_punctuation(self, text: str, language: Optional[str]) -> str:
+        """Apply language-specific punctuation restoration when supported."""
+        cleaned_text = " ".join(text.split())
+        if not cleaned_text:
+            return text
+
+        normalised_language = _normalise_language_code(language)
+        try:
+            if normalised_language == "en":
+                return self._apply_english_punctuation(cleaned_text)
+            if normalised_language in MULTILINGUAL_PUNCT_LANGS:
+                return self._apply_multilingual_punctuation(cleaned_text)
+        except Exception:
+            logger.exception(
+                "Punctuation pass failed for language=%s; returning original text",
+                normalised_language or "unknown",
             )
-        num_input_tokens = inputs["input_ids"].shape[-1]
-        new_tokens = outputs[:, num_input_tokens:]
-        decoded = self.tokenizer.batch_decode(
-            new_tokens,
-            add_special_tokens=False,
-            skip_special_tokens=True,
+        return cleaned_text
+
+    def _load_english_punctuator(self) -> Any:
+        if self.english_punctuator is not None:
+            return self.english_punctuator
+
+        from punctuators.models import PunctCapSegModelONNX
+
+        logger.info("Loading English punctuator model %s", ENGLISH_PUNCT_MODEL_ID)
+        self.english_punctuator = PunctCapSegModelONNX.from_pretrained(ENGLISH_PUNCT_MODEL_ID)
+        return self.english_punctuator
+
+    def _apply_english_punctuation(self, text: str) -> str:
+        punctuator = self._load_english_punctuator()
+        outputs = punctuator.infer([text])
+        if not outputs or not outputs[0]:
+            return text
+        punctuated = " ".join(segment.strip() for segment in outputs[0] if segment and segment.strip()).strip()
+        return punctuated or text
+
+    def _load_multilingual_punctuator(self) -> tuple[Any, Any]:
+        if self.multilingual_punct_tokenizer is not None and self.multilingual_punct_model is not None:
+            return self.multilingual_punct_tokenizer, self.multilingual_punct_model
+
+        logger.info("Loading multilingual punctuator model %s", MULTILINGUAL_PUNCT_MODEL_ID)
+        self.multilingual_punct_tokenizer = AutoTokenizer.from_pretrained(MULTILINGUAL_PUNCT_MODEL_ID)
+        self.multilingual_punct_model = AutoModelForTokenClassification.from_pretrained(MULTILINGUAL_PUNCT_MODEL_ID)
+        self.multilingual_punct_model.to(self.device)
+        self.multilingual_punct_model.eval()
+        self.multilingual_punct_max_length = min(
+            getattr(self.multilingual_punct_tokenizer, "model_max_length", 512),
+            512,
         )
-        result = decoded[0].strip() if decoded else ""
-        return result if result else text
+        return self.multilingual_punct_tokenizer, self.multilingual_punct_model
+
+    def _apply_multilingual_punctuation(self, text: str) -> str:
+        tokenizer, model = self._load_multilingual_punctuator()
+        chunks = self._chunk_text_for_multilingual_punctuation(text, tokenizer)
+        punctuated_chunks = []
+        for chunk in chunks:
+            inputs = tokenizer(
+                chunk,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.multilingual_punct_max_length,
+            )
+            input_ids = inputs["input_ids"].to(self.device)
+            attention_mask = inputs["attention_mask"].to(self.device)
+            with torch.inference_mode():
+                logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
+            pred_ids = logits.argmax(dim=-1)[0].tolist()
+            tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0].tolist())
+            punctuated_chunk = self._reconstruct_multilingual_text(tokens, pred_ids)
+            punctuated_chunks.append(punctuated_chunk)
+        return " ".join(chunk for chunk in punctuated_chunks if chunk).strip() or text
+
+    def _chunk_text_for_multilingual_punctuation(self, text: str, tokenizer: Any) -> list[str]:
+        words = text.split()
+        if not words:
+            return []
+
+        chunks: list[str] = []
+        current_words: list[str] = []
+        max_length = self.multilingual_punct_max_length
+
+        for word in words:
+            candidate_words = current_words + [word]
+            candidate_text = " ".join(candidate_words)
+            token_count = len(tokenizer(candidate_text, truncation=False)["input_ids"])
+            if token_count <= max_length or not current_words:
+                current_words = candidate_words
+                continue
+
+            chunks.append(" ".join(current_words))
+            current_words = [word]
+
+        if current_words:
+            chunks.append(" ".join(current_words))
+        return chunks
+
+    def _reconstruct_multilingual_text(self, tokens: list[str], pred_ids: list[int]) -> str:
+        pieces: list[str] = []
+        special_tokens = {"<s>", "</s>", "<pad>"}
+
+        for token, pred_id in zip(tokens, pred_ids):
+            if token in special_tokens:
+                continue
+
+            if token.startswith("▁"):
+                if pieces:
+                    pieces.append(" ")
+                pieces.append(token[1:])
+            else:
+                pieces.append(token)
+
+            punctuation = MULTILINGUAL_PUNCT_LABELS.get(pred_id, "")
+            if punctuation:
+                pieces.append(punctuation)
+
+        return "".join(pieces).strip()
 
     def _build_prompt(self) -> str:
         chat = [

@@ -22,6 +22,8 @@ huggingface-hub>=0.31.0
 torch>=2.6.0
 torchaudio>=2.6.0
 transformers>=4.44.0
+punctuators>=0.0.7
+sentencepiece>=0.2.0
 
 # Video/audio processing (PyAV)
 av>=14.0.0
