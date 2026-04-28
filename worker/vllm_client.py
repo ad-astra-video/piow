@@ -248,7 +248,7 @@ class VLLMRealtimeClient:
         # Handle transcription events - log ALL delta events even if empty
         if msg_type == "transcription.delta":
             delta = data.get("delta", "")
-            logger.info(f"VLLM transcription.delta: '{delta}' (len={len(delta)})")
+            # logger.info(f"VLLM transcription.delta: '{delta}' (len={len(delta)})")
             if delta and self.text_callback:
                 result = self.text_callback(delta)
                 if inspect.isawaitable(result):

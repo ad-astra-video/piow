@@ -518,7 +518,12 @@ class LiveTranscriptionWorker:
             """Forward vLLM transcription results back through the pytrickle data channel."""
             if processor is None:
                 return
+            if not text or not text.strip():
+                return
             payload = json.dumps({"type": "transcription", "text": text, "is_final": is_final})
+            logger.info(
+                f"Sending transcription on data channel: is_final={is_final}, len={len(text)}"
+            )
             await processor.send_data(payload)
 
         vllm_client.set_text_callback(_on_transcription)
