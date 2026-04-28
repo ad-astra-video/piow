@@ -84,7 +84,7 @@ class Granite4Transcriber:
             logger.info(f"Loading Granite 4.0 model from {self.model_path}")
             
             # Check if model exists
-            model_onnx_path = self.model_path / "model.onnx"
+            model_onnx_path = self.model_path / "onnx" / "decoder_model_merged.onnx"
             if not model_onnx_path.exists():
                 logger.warning(f"Model file not found at {model_onnx_path}")
                 logger.info("Attempting to download model from Hugging Face...")
