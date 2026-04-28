@@ -236,7 +236,11 @@ async def _cleanup_ws_streams(ws: web.WebSocketResponse):
 
 @no_auth
 async def index(request):
-    """Serve the frontend HTML."""
+    """Serve the frontend HTML (SPA shell).
+
+    Used both for `/` and as the catch-all fallback so that React Router
+    deep links resolve on a hard refresh.
+    """
     logger.info("Serving index.html")
     try:
         with open('./frontend/dist/index.html', 'r') as f:
@@ -245,36 +249,6 @@ async def index(request):
     except FileNotFoundError:
         logger.error("Frontend index.html not found")
         return web.Response(text="Frontend not built. Please run frontend build.", status=500)
-
-@no_auth
-async def static_file(request):
-    """Serve static files (JS, CSS, etc.) from the dist directory.
-
-    Falls back to ``index.html`` for unknown paths so that client-side
-    routes (React Router deep links) resolve correctly on a hard refresh.
-    """
-    path = request.match_info.get('path', '')
-    logger.info(f"Serving static file: {path}")
-    if '..' in path or path.startswith('/'):
-        raise web.HTTPNotFound()
-    try:
-        with open(f'./frontend/dist/{path}', 'r') as f:
-            content = f.read()
-        if path.endswith('.js'):
-            return web.Response(text=content, content_type='application/javascript')
-        elif path.endswith('.css'):
-            return web.Response(text=content, content_type='text/css')
-        elif path.endswith('.html'):
-            return web.Response(text=content, content_type='text/html')
-        else:
-            return web.Response(text=content, content_type='text/plain')
-    except FileNotFoundError:
-        # SPA fallback: only rewrite paths that look like client-side
-        # routes (no file extension), otherwise return 404 for missing
-        # assets so callers get a real error instead of HTML.
-        if '.' in os.path.basename(path):
-            raise web.HTTPNotFound()
-        return await index(request)
 
 @no_auth
 async def websocket_handler(request):
@@ -373,9 +347,8 @@ async def init_app():
     app.on_shutdown.append(stop_stream_usage_monitor)
     app.on_shutdown.append(shutdown_app)
 
-    # Add routes
-    app.router.add_get('/', index)
-    app.router.add_get('/{path:.*}', static_file)
+    # API / WebSocket routes (registered before the SPA catch-all so they
+    # are not shadowed by it).
     app.router.add_get('/ws', websocket_handler)
     app.router.add_get('/health', health_check)
 
@@ -388,6 +361,19 @@ async def init_app():
     setup_sessions_routes(app)
     setup_billing_routes(app)
     setup_user_routes(app)
+
+    # Frontend: serve hashed build assets under a known prefix so that
+    # missing assets return a real 404, then fall back to index.html for
+    # everything else (SPA deep-link refresh support).
+    frontend_dist = './frontend/dist'
+    if os.path.isdir(os.path.join(frontend_dist, 'assets')):
+        app.router.add_static(
+            '/assets',
+            os.path.join(frontend_dist, 'assets'),
+            name='assets',
+        )
+    app.router.add_get('/', index)
+    app.router.add_get('/{path:.*}', index)
 
     return app
 
