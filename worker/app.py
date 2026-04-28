@@ -66,14 +66,18 @@ VLLM_TARGET_LANG = os.environ.get("VLLM_TARGET_LANG", "es")
 # ---------------------------------------------------------------------------
 ORCH_SERVICE_ADDR = os.environ.get("ORCH_SERVICE_ADDR", "")
 ORCH_SECRET = os.environ.get("ORCH_SECRET", "")
-CAPABILITY_NAME = "live-transcribe"
+CAPABILITY_NAME = "live-transcription"
 CAPABILITY_DESCRIPTION = "Transcribe audio to text"
 CAPABILITY_NAME_2 = "transcribe-translate"
 CAPABILITY_DESCRIPTION_2 = "Transcribe audio to text and translate to a target language"
 CAPABILITY_URL = os.environ.get("CAPABILITY_URL", f"https://localhost:{PORT}")
-CAPABILITY_CAPACITY = int(os.environ.get("CAPABILITY_CAPACITY", "1"))
-CAPABILITY_PRICE_PER_UNIT = int(os.environ.get("CAPABILITY_PRICE_PER_UNIT", "0"))
-CAPABILITY_PRICE_SCALING = int(os.environ.get("CAPABILITY_PRICE_SCALING", "1"))
+# Per-capability pricing and capacity
+LIVE_CAPABILITY_CAPACITY = int(os.environ.get("LIVE_CAPABILITY_CAPACITY", "1"))
+LIVE_CAPABILITY_PRICE_PER_UNIT = int(os.environ.get("LIVE_CAPABILITY_PRICE_PER_UNIT", "0"))
+LIVE_CAPABILITY_PRICE_SCALING = int(os.environ.get("LIVE_CAPABILITY_PRICE_SCALING", "1"))
+BATCH_CAPABILITY_CAPACITY = int(os.environ.get("BATCH_CAPABILITY_CAPACITY", "1"))
+BATCH_CAPABILITY_PRICE_PER_UNIT = int(os.environ.get("BATCH_CAPABILITY_PRICE_PER_UNIT", "0"))
+BATCH_CAPABILITY_PRICE_SCALING = int(os.environ.get("BATCH_CAPABILITY_PRICE_SCALING", "1"))
 REGISTRATION_ENABLED = os.environ.get("REGISTRATION_ENABLED", "true").lower() in ("true", "1", "yes")
 REGISTRATION_INTERVAL = int(os.environ.get("REGISTRATION_INTERVAL", "60"))  # seconds
 
@@ -84,9 +88,11 @@ logger.info("Generated worker token: %s", WORKER_TOKEN)
 # Suppress urllib3 InsecureRequestWarning (we use verify=False for orchestrator)
 urllib3.disable_warnings()
 
-# Runtime mutable state for capacity/price
-_current_capacity = CAPABILITY_CAPACITY
-_current_price_per_unit = CAPABILITY_PRICE_PER_UNIT
+# Runtime mutable state for capacity/price (per capability)
+_live_capacity = LIVE_CAPABILITY_CAPACITY
+_live_price_per_unit = LIVE_CAPABILITY_PRICE_PER_UNIT
+_batch_capacity = BATCH_CAPABILITY_CAPACITY
+_batch_price_per_unit = BATCH_CAPABILITY_PRICE_PER_UNIT
 
 # ---------------------------------------------------------------------------
 # Component singletons
@@ -102,22 +108,22 @@ transcriptions_db: Dict[str, Dict[str, Any]] = {}
 # =============================================================================
 # Orchestrator Registration
 # =============================================================================
-def _build_registration_payload(name: str, description: str, capacity: int) -> Dict[str, Any]:
-    """Build the registration request payload for the given capability name and capacity."""
+def _build_registration_payload(name: str, description: str, capacity: int, price_per_unit: int, price_scaling: int) -> Dict[str, Any]:
+    """Build the registration request payload for the given capability."""
     return {
         "url": CAPABILITY_URL,
         "name": name,
         "description": description,
         "capacity": capacity,
-        "price_per_unit": _current_price_per_unit,
-        "price_scaling": CAPABILITY_PRICE_SCALING,
+        "price_per_unit": price_per_unit,
+        "price_scaling": price_scaling,
         "token": WORKER_TOKEN,
     }
 
 
-def _register_capability(name: str, description: str, capacity: int = 1) -> bool:
+def _register_capability(name: str, description: str, capacity: int, price_per_unit: int, price_scaling: int) -> bool:
     """Perform a single registration attempt for the given capability with retries."""
-    register_req = _build_registration_payload(name, description, capacity)
+    register_req = _build_registration_payload(name, description, capacity, price_per_unit, price_scaling)
     headers = {
         "Authorization": ORCH_SECRET,
         "Content-Type": "application/json",
@@ -153,8 +159,8 @@ def _register_capability(name: str, description: str, capacity: int = 1) -> bool
 
 def _register_to_orchestrator() -> None:
     """Register all capabilities with the orchestrator."""
-    _register_capability(CAPABILITY_NAME, CAPABILITY_DESCRIPTION, capacity=1)
-    _register_capability(CAPABILITY_NAME_2, CAPABILITY_DESCRIPTION_2, capacity=1)
+    _register_capability(CAPABILITY_NAME, CAPABILITY_DESCRIPTION, _live_capacity, _live_price_per_unit, LIVE_CAPABILITY_PRICE_SCALING)
+    _register_capability(CAPABILITY_NAME_2, CAPABILITY_DESCRIPTION_2, _batch_capacity, _batch_price_per_unit, BATCH_CAPABILITY_PRICE_SCALING)
 
 
 def _unregister_capability(name: str) -> None:
@@ -216,10 +222,11 @@ async def update_capacity_handler(request: aiohttp.web.Request) -> aiohttp.web.R
     Body:
       { "capacity": 5 }
     """
-    global _current_capacity
+    global _live_capacity, _batch_capacity
     try:
         body = await request.json()
         new_capacity = body.get("capacity")
+        capability = body.get("capability")  # optional: "live-transcription" or "transcribe-translate"
         if new_capacity is None:
             return aiohttp.web.json_response(
                 {"error": "Missing 'capacity' field"}, status=400
@@ -229,16 +236,23 @@ async def update_capacity_handler(request: aiohttp.web.Request) -> aiohttp.web.R
             return aiohttp.web.json_response(
                 {"error": "Capacity must be >= 0"}, status=400
             )
-        _current_capacity = new_capacity
-        logger.info("Capacity updated to %d", new_capacity)
+        if capability == CAPABILITY_NAME_2:
+            _batch_capacity = new_capacity
+        elif capability == CAPABILITY_NAME:
+            _live_capacity = new_capacity
+        else:
+            _live_capacity = new_capacity
+            _batch_capacity = new_capacity
+        logger.info("Capacity updated to %d (capability=%s)", new_capacity, capability or "both")
 
         # Re-register immediately if registration is enabled
         if REGISTRATION_ENABLED and ORCH_SERVICE_ADDR:
             _register_to_orchestrator()
 
         return aiohttp.web.json_response({
-            "capacity": _current_capacity,
-            "message": "Capacity updated successfully (both capabilities re-registered)",
+            "live_capacity": _live_capacity,
+            "batch_capacity": _batch_capacity,
+            "message": "Capacity updated successfully",
         })
     except Exception as exc:
         logger.exception("Error updating capacity")
@@ -254,10 +268,11 @@ async def update_price_handler(request: aiohttp.web.Request) -> aiohttp.web.Resp
     Body:
       { "price_per_unit": 1.5 }
     """
-    global _current_price_per_unit
+    global _live_price_per_unit, _batch_price_per_unit
     try:
         body = await request.json()
         new_price = body.get("price_per_unit")
+        capability = body.get("capability")  # optional: "live-transcription" or "transcribe-translate"
         if new_price is None:
             return aiohttp.web.json_response(
                 {"error": "Missing 'price_per_unit' field"}, status=400
@@ -267,16 +282,23 @@ async def update_price_handler(request: aiohttp.web.Request) -> aiohttp.web.Resp
             return aiohttp.web.json_response(
                 {"error": "price_per_unit must be >= 0"}, status=400
             )
-        _current_price_per_unit = new_price
-        logger.info("Price per unit updated to %d", new_price)
+        if capability == CAPABILITY_NAME_2:
+            _batch_price_per_unit = new_price
+        elif capability == CAPABILITY_NAME:
+            _live_price_per_unit = new_price
+        else:
+            _live_price_per_unit = new_price
+            _batch_price_per_unit = new_price
+        logger.info("Price per unit updated to %d (capability=%s)", new_price, capability or "both")
 
         # Re-register immediately if registration is enabled
         if REGISTRATION_ENABLED and ORCH_SERVICE_ADDR:
             _register_to_orchestrator()
 
         return aiohttp.web.json_response({
-            "price_per_unit": _current_price_per_unit,
-            "message": "Price updated successfully (both capabilities re-registered)",
+            "live_price_per_unit": _live_price_per_unit,
+            "batch_price_per_unit": _batch_price_per_unit,
+            "message": "Price updated successfully",
         })
     except Exception as exc:
         logger.exception("Error updating price")
@@ -291,13 +313,22 @@ async def capability_status_handler(request: aiohttp.web.Request) -> aiohttp.web
     """
     return aiohttp.web.json_response({
         "capabilities": [
-            {"name": CAPABILITY_NAME, "capacity": 1},
-            {"name": CAPABILITY_NAME_2, "capacity": 1},
+            {
+                "name": CAPABILITY_NAME,
+                "description": CAPABILITY_DESCRIPTION,
+                "capacity": _live_capacity,
+                "price_per_unit": _live_price_per_unit,
+                "price_scaling": LIVE_CAPABILITY_PRICE_SCALING,
+            },
+            {
+                "name": CAPABILITY_NAME_2,
+                "description": CAPABILITY_DESCRIPTION_2,
+                "capacity": _batch_capacity,
+                "price_per_unit": _batch_price_per_unit,
+                "price_scaling": BATCH_CAPABILITY_PRICE_SCALING,
+            },
         ],
         "capability_url": CAPABILITY_URL,
-        "description": CAPABILITY_DESCRIPTION,
-        "price_per_unit": _current_price_per_unit,
-        "price_scaling": CAPABILITY_PRICE_SCALING,
         "registration_enabled": REGISTRATION_ENABLED,
         "registration_interval_seconds": REGISTRATION_INTERVAL,
         "orchestrator_service_address": ORCH_SERVICE_ADDR,
