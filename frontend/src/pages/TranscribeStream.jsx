@@ -272,21 +272,40 @@ export default function TranscribeStream({ accessToken }) {
           if (event.data instanceof Blob) return;
           try {
             const message = JSON.parse(event.data);
-            if (message.type === 'transcription') {
-              const chunk = typeof message.text === 'string' ? message.text : '';
-              if (!chunk) return;
-              if (message.is_final) {
-                setTranscriptEntries((prev) => [...prev, chunk.trim()]);
-                setPartialTranscript('');
-              } else {
-                setPartialTranscript((prev) => `${prev}${chunk}`);
-              }
+            const msgType = typeof message.type === 'string' ? message.type : '';
+            if (
+              msgType === 'transcription.delta' ||
+              msgType === 'conversation.item.input_audio_transcription.delta' ||
+              msgType === 'response.output_text.delta' ||
+              msgType === 'response.output_audio_transcript.delta'
+            ) {
+              const delta = typeof message.delta === 'string' ? message.delta : '';
+              if (!delta) return;
+              setPartialTranscript((prev) => `${prev}${delta}`);
               setStatus('Receiving live transcript...');
-            } else if (message.type === 'status') {
+            } else if (
+              msgType === 'transcription.done' ||
+              msgType === 'conversation.item.input_audio_transcription.completed' ||
+              msgType === 'response.output_text.done' ||
+              msgType === 'response.output_audio_transcript.done'
+            ) {
+              const transcript =
+                (typeof message.transcript === 'string' && message.transcript) ||
+                (typeof message.text === 'string' && message.text) ||
+                '';
+              if (!transcript) return;
+              setTranscriptEntries((prev) => [...prev, transcript.trim()]);
+              setPartialTranscript('');
+              setStatus('Receiving live transcript...');
+            } else if (msgType === 'status') {
               setStatus(message.text);
-            } else if (message.type === 'error') {
-              setErrorMessage(message.text);
-              setStatus(`Error: ${message.text}`);
+            } else if (msgType === 'error') {
+              const errorText =
+                (typeof message.text === 'string' && message.text) ||
+                (message.error && typeof message.error.message === 'string' && message.error.message) ||
+                'Realtime error';
+              setErrorMessage(errorText);
+              setStatus(`Error: ${errorText}`);
             }
           } catch (parseErr) {}
         };

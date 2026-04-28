@@ -294,6 +294,73 @@ class TestSSERelayHandleEvent(unittest.IsolatedAsyncioTestCase):
 
         ws.send_json.assert_not_called()
 
+    async def test_handle_data_envelope_with_nested_json_string(self):
+        """Provider envelopes like {type:data, data:"{...}"} are unwrapped."""
+        from sse_relay import SSERelay
+        relay = SSERelay(data_url="http://localhost:9999/stream/data", stream_id="test-stream")
+
+        ws = AsyncMock()
+        ws.closed = False
+        relay.add_client(ws)
+
+        event = {
+            "event": "message",
+            "data": {
+                "type": "data",
+                "data": json.dumps({"type": "transcription", "text": "hello", "is_final": False}),
+            },
+            "id": None,
+        }
+
+        await relay._handle_event(event)
+
+        ws.send_json.assert_called_once_with({"type": "transcription", "text": "hello", "is_final": False})
+
+    async def test_handle_items_batch_payload(self):
+        """Batched item payloads are emitted as individual websocket messages."""
+        from sse_relay import SSERelay
+        relay = SSERelay(data_url="http://localhost:9999/stream/data", stream_id="test-stream")
+
+        ws = AsyncMock()
+        ws.closed = False
+        relay.add_client(ws)
+
+        event = {
+            "event": "message",
+            "data": {
+                "items": [
+                    {"type": "transcription", "text": "first", "is_final": False},
+                    {"type": "transcription", "text": "second", "is_final": True},
+                ]
+            },
+            "id": None,
+        }
+
+        await relay._handle_event(event)
+
+        self.assertEqual(ws.send_json.call_count, 2)
+        ws.send_json.assert_any_call({"type": "transcription", "text": "first", "is_final": False})
+        ws.send_json.assert_any_call({"type": "transcription", "text": "second", "is_final": True})
+
+    async def test_handle_transcription_delta_passthrough(self):
+        """transcription.delta events are forwarded unchanged."""
+        from sse_relay import SSERelay
+        relay = SSERelay(data_url="http://localhost:9999/stream/data", stream_id="test-stream")
+
+        ws = AsyncMock()
+        ws.closed = False
+        relay.add_client(ws)
+
+        event = {
+            "event": "message",
+            "data": {"type": "transcription.delta", "delta": "partial text", "extra": {"a": 1}},
+            "id": None,
+        }
+
+        await relay._handle_event(event)
+
+        ws.send_json.assert_called_once_with({"type": "transcription.delta", "delta": "partial text", "extra": {"a": 1}})
+
 
 class TestSSERelayRegistry(unittest.IsolatedAsyncioTestCase):
     """Test the global relay registry functions."""

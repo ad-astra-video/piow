@@ -247,10 +247,9 @@ class VLLMRealtimeClient:
         # VLLM uses OpenAI-compatible realtime API event types
         # Handle transcription events - log ALL delta events even if empty
         if msg_type == "transcription.delta":
-            delta = data.get("delta", "")
-            # logger.info(f"VLLM transcription.delta: '{delta}' (len={len(delta)})")
-            if delta and self.text_callback:
-                result = self.text_callback(delta)
+            # Forward raw vLLM event payload as-is to preserve provider schema.
+            if self.text_callback:
+                result = self.text_callback(data)
                 if inspect.isawaitable(result):
                     await result
                 

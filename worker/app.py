@@ -514,10 +514,25 @@ class LiveTranscriptionWorker:
             target_lang=VLLM_TARGET_LANG,
         )
 
-        async def _on_transcription(text: str, is_final: bool = False, **kw) -> None:
-            """Forward vLLM transcription results back through the pytrickle data channel."""
+        async def _on_transcription(message: Any, is_final: bool = False, **kw) -> None:
+            """Forward vLLM events to the pytrickle data channel.
+
+            For transcription.delta, vLLM payloads are forwarded verbatim so the
+            backend can relay the original provider schema unchanged.
+            """
             if processor is None:
                 return
+
+            if isinstance(message, dict):
+                payload = json.dumps(message)
+                logger.info(
+                    "Sending raw vLLM event on data channel: type=%s",
+                    message.get("type", "unknown"),
+                )
+                await processor.send_data(payload)
+                return
+
+            text = message if isinstance(message, str) else str(message)
             if not text or not text.strip():
                 return
             payload = json.dumps({"type": "transcription", "text": text, "is_final": is_final})

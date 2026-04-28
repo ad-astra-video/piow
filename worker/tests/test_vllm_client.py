@@ -291,5 +291,25 @@ class TestVLLMRealtimeClient(unittest.TestCase):
         client.set_text_callback(text_callback)
         self.assertEqual(client.text_callback, text_callback)
 
+    def test_transcription_delta_passthrough_to_callback(self):
+        """transcription.delta payload is forwarded to callback unchanged."""
+        client = VLLMRealtimeClient(
+            ws_url=self.ws_url,
+            source_lang=self.source_lang,
+            target_lang=self.target_lang,
+        )
+
+        text_callback = MagicMock()
+        client.set_text_callback(text_callback)
+
+        event = {
+            "type": "transcription.delta",
+            "delta": "hello",
+            "metadata": {"token": 1},
+        }
+        asyncio.run(client._handle_vllm_message(event))
+
+        text_callback.assert_called_once_with(event)
+
 if __name__ == '__main__':
     unittest.main()

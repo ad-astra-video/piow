@@ -14,7 +14,7 @@ Architecture:
 import asyncio
 import json
 import logging
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, List
 
 import aiohttp
 from aiohttp import web
@@ -291,35 +291,127 @@ class SSERelay:
 
     async def _handle_event(self, event: Dict[str, Any]):
         """Handle a parsed SSE event and relay to clients if appropriate."""
-        data = event.get("data")
-        if not data:
-            return
+        messages = self._normalize_messages(event)
+        for message in messages:
+            await self._broadcast(message)
 
-        if isinstance(data, dict) and "type" in data:
-            # Forward events with an explicit type field
-            msg_type = data["type"]
+    @staticmethod
+    def _decode_possible_json(value: Any) -> Any:
+        """Decode JSON-like string payloads commonly nested in SSE envelopes."""
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if trimmed and trimmed[0] in "[{\"":
+                try:
+                    return json.loads(trimmed)
+                except (json.JSONDecodeError, ValueError):
+                    return value
+        return value
+
+    def _to_transcription(self, payload: Dict[str, Any], is_final: Optional[bool] = None) -> Dict[str, Any]:
+        """Convert provider payload variants into canonical transcription messages."""
+        text = payload.get("text")
+        if text is None:
+            text = payload.get("transcript")
+        if text is None:
+            text = payload.get("delta")
+
+        final_flag = is_final
+        if final_flag is None:
+            final_flag = bool(payload.get("is_final") or payload.get("final") or payload.get("done"))
+
+        return {
+            "type": "transcription",
+            "text": text or "",
+            "is_final": final_flag,
+        }
+
+    def _extract_messages(self, payload: Any, event_type: str) -> List[Dict[str, Any]]:
+        """Extract one or more frontend-compatible messages from provider payloads."""
+        payload = self._decode_possible_json(payload)
+        messages: List[Dict[str, Any]] = []
+
+        if payload is None:
+            return messages
+
+        if isinstance(payload, list):
+            for item in payload:
+                messages.extend(self._extract_messages(item, event_type))
+            return messages
+
+        if isinstance(payload, str):
+            if payload.strip().upper() == "[DONE]":
+                return messages
+            return [{"type": "transcription", "text": payload, "is_final": False}]
+
+        if not isinstance(payload, dict):
+            return messages
+
+        msg_type = payload.get("type")
+        if isinstance(msg_type, str):
             if msg_type in ("transcription", "status", "error", "translation"):
-                await self._broadcast(data)
-            else:
-                # Forward other typed events for extensibility
-                logger.debug(
-                    f"Relaying SSE event type '{msg_type}' for stream {self.stream_id}"
-                )
-                await self._broadcast(data)
-        elif isinstance(data, dict):
-            # Dict without a "type" field — wrap as a transcription event
-            logger.debug(
-                f"Relaying untyped SSE event for stream {self.stream_id}: "
-                f"{list(data.keys())}"
-            )
-            await self._broadcast({"type": "transcription", **data})
-        elif isinstance(data, str):
-            # Plain text data — wrap as a partial transcription
-            await self._broadcast({
-                "type": "transcription",
-                "text": data,
-                "is_final": False
-            })
+                return [payload]
+
+            if msg_type == "transcription.delta":
+                return [payload]
+
+            # Normalize common realtime delta/done event variants.
+            if msg_type in (
+                "response.audio_transcript.delta",
+                "response.text.delta",
+            ):
+                text = payload.get("delta") or payload.get("text") or ""
+                if text:
+                    return [{"type": "transcription", "text": text, "is_final": False}]
+                return messages
+
+            if msg_type in (
+                "transcription.done",
+                "response.audio_transcript.done",
+                "response.text.done",
+            ):
+                msg = self._to_transcription(payload, is_final=True)
+                if msg.get("text"):
+                    return [msg]
+                return messages
+
+            # Unwrap provider envelopes that carry nested payloads/items.
+            if msg_type in ("data", "data_item", "data-item", "event", "stream_event", "message"):
+                for key in ("data", "payload", "message", "item", "items"):
+                    if key in payload:
+                        messages.extend(self._extract_messages(payload.get(key), event_type))
+                if messages:
+                    return messages
+
+        # Batch item envelopes are common in provider stream payloads.
+        if isinstance(payload.get("items"), list):
+            for item in payload["items"]:
+                messages.extend(self._extract_messages(item, event_type))
+            if messages:
+                return messages
+
+        # Dive into common nested objects before falling back to legacy behavior.
+        for key in ("data", "payload", "message", "item", "response"):
+            if key in payload and isinstance(payload[key], (dict, list, str)):
+                messages.extend(self._extract_messages(payload[key], event_type))
+        if messages:
+            return messages
+
+        # Legacy behavior: untyped dict payloads are treated as transcription data.
+        if any(k in payload for k in ("text", "transcript", "delta", "is_final", "final", "done")):
+            return [self._to_transcription(payload)]
+
+        return [{"type": "transcription", **payload}]
+
+    def _normalize_messages(self, event: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Normalize provider SSE events into frontend-consumable websocket messages."""
+        data = event.get("data")
+        if data is None:
+            return []
+
+        messages = self._extract_messages(data, event.get("event", "message"))
+        if not messages:
+            logger.debug(f"No relayable messages extracted for stream {self.stream_id}")
+        return messages
 
     async def _broadcast(self, message: Dict[str, Any]):
         """Broadcast a message to all connected WebSocket clients."""
