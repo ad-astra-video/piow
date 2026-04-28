@@ -381,6 +381,12 @@ async def auth_middleware(request, handler):
     if getattr(handler, '_no_auth', False):
         return await handler(request)
 
+    # Public frontend build assets (hashed Vite output). These are served
+    # via aiohttp's StaticResource, whose handler can't carry the
+    # ``_no_auth`` marker, so we whitelist the path prefix here.
+    if request.path.startswith('/assets/'):
+        return await handler(request)
+
     # Step 2: Determine auth type from marker decorator
     auth_type = getattr(handler, '_auth_type', 'any')
 
