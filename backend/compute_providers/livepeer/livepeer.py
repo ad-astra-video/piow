@@ -377,6 +377,8 @@ class LivepeerComputeProvider(BaseComputeProvider):
                         raise Exception(f"HTTP {response.status}: {error_text[:500]}")
                     
                     provider_data = await response.json(content_type=None)
+                    logger.info(
+                        "Livepeer stream start success: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s response_keys=%s whip_url=%s data_url=%s",
                         stream_request_id,
                         start_url,
                         session_id,
