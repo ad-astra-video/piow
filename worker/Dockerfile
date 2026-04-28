@@ -41,6 +41,8 @@ EXPOSE 9935
 ENV PYTHONUNBUFFERED=1
 ENV HOST_IP=0.0.0.0
 ENV WORKER_PORT=9935
+ENV HF_HOME=/models
+ENV HUGGINGFACE_HUB_CACHE=/models
 
 # Command to run the worker
 CMD ["python", "app.py"]
