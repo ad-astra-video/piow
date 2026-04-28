@@ -13,6 +13,9 @@ from typing import Any, Dict, Optional
 
 import librosa
 import numpy as np
+import torch
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+import av
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +74,6 @@ class Granite4Transcriber:
     def _load_model(self):
         """Load the Granite processor and model via transformers."""
         try:
-            import torch
-            from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
-
             logger.info("Loading Granite 4.0 speech model from %s", self.model_ref)
 
             self.processor = AutoProcessor.from_pretrained(self.model_ref)
@@ -120,7 +120,9 @@ class Granite4Transcriber:
             logger.info("Transcribing %s with Granite 4.0 (language: %s)", label, language)
 
             audio = self._decode_audio_to_array(audio_source)
+            logger.info("Audio converted to array with shape %s", audio.shape)
             output_text = self._run_transcription(audio)
+            logger.info("Transcription result: %s", output_text)
 
             processing_time = time.time() - start_time
             duration = len(audio) / self.sample_rate
@@ -167,8 +169,6 @@ class Granite4Transcriber:
         }
 
     def _run_transcription(self, audio: np.ndarray) -> str:
-        import torch
-
         prompt = self._build_prompt()
 
         with torch.inference_mode():
@@ -213,8 +213,6 @@ class Granite4Transcriber:
         Decode any audio format to a 16 kHz mono float32 numpy array in memory.
         Uses PyAV first and falls back to librosa when necessary.
         """
-        import av
-
         resampler = av.AudioResampler(
             format="fltp",
             layout="mono",
