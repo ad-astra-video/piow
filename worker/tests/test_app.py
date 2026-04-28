@@ -7,8 +7,10 @@ import os
 import sys
 import json
 import pytest
+import pytest_asyncio
 import aiohttp
 from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 from unittest.mock import patch, MagicMock
 
 # Add worker dir to path
@@ -22,8 +24,11 @@ sys.modules['pytrickle.decorators'] = MagicMock()
 import app as worker_app
 
 
-@pytest.fixture
-def cli(event_loop, aiohttp_client):
+pytestmark = pytest.mark.asyncio
+
+
+@pytest_asyncio.fixture
+async def cli():
     """Create an aiohttp test client with the worker routes."""
     application = web.Application()
     
@@ -34,8 +39,14 @@ def cli(event_loop, aiohttp_client):
     application.router.add_post("/process/request/transcribe", worker_app.transcribe_handler)
     application.router.add_post("/translate", worker_app.translate_handler)
     application.router.add_post("/process/request/translate", worker_app.translate_handler)
-    
-    return event_loop.run_until_complete(aiohttp_client(application))
+
+    server = TestServer(application)
+    client = TestClient(server)
+    await client.start_server()
+    try:
+        yield client
+    finally:
+        await client.close()
 
 
 async def test_root(cli):
