@@ -125,6 +125,7 @@ function App() {
   const location = useLocation();
   const [authUser, setAuthUser] = useState(null);
   const [authSession, setAuthSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [subscriptionTier, setSubscriptionTier] = useState('free');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -138,6 +139,7 @@ function App() {
         accessTokenRef.current = session.access_token;
         fetchSubscriptionTier(session.access_token);
       }
+      setAuthReady(true);
     });
 
     const unsubscribe = onAuthStateChange((_event, session) => {
@@ -146,6 +148,7 @@ function App() {
       accessTokenRef.current = session?.access_token ?? null;
       if (session) fetchSubscriptionTier(session.access_token);
       else setSubscriptionTier('free');
+      setAuthReady(true);
     });
 
     return () => { unsubscribe(); };
@@ -164,6 +167,8 @@ function App() {
       console.warn('Failed to fetch subscription tier:', err);
     }
   };
+
+  if (!authReady) return null;
 
   return (
     <div className="app-shell">
