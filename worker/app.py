@@ -525,10 +525,11 @@ class LiveTranscriptionWorker:
 
             if isinstance(message, dict):
                 payload = json.dumps(message)
-                logger.info(
-                    "Sending raw vLLM event on data channel: type=%s",
-                    message.get("type", "unknown"),
-                )
+                #logger.info(
+                #    "Sending raw vLLM event on data channel: type=%s payload=%s",
+                #    message.get("type", "unknown"),
+                #    payload,
+                #)
                 await processor.send_data(payload)
                 return
 
