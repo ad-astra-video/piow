@@ -6,6 +6,7 @@ import BillingPage from './components/BillingPage';
 import SubscriptionPlans from './components/SubscriptionPlans';
 import { CheckoutSuccess, CheckoutCancel } from './components/CheckoutResult';
 import { supabase, onAuthStateChange, getSession } from './lib/supabase';
+import useLiveTranscription from './hooks/useLiveTranscription';
 
 // Pages
 import LandingPage from './pages/LandingPage';
@@ -20,7 +21,7 @@ import UsagePage from './pages/UsagePage';
 
 import {
   LayoutDashboard, Mic, Upload, Link as LinkIcon, Languages,
-  History, BarChart3, CreditCard, Menu, X
+  History, BarChart3, CreditCard, Menu, X, Radio, MicOff, ArrowRight, AlertCircle
 } from 'lucide-react';
 
 const navItems = [
@@ -60,6 +61,63 @@ function Sidebar({ open, onClose, authUser }) {
       </aside>
       {open && <div className="sidebar-backdrop" onClick={onClose} />}
     </>
+  );
+}
+
+function LiveTranscriptSidebar({ onStop }) {
+  const {
+    isStarted,
+    status,
+    transcriptEntries,
+    partialTranscript,
+    errorMessage,
+    stop,
+  } = useLiveTranscription();
+
+  if (!isStarted) return null;
+
+  return (
+    <aside className="live-sidebar">
+      <div className="live-sidebar-header">
+        <div className="live-sidebar-title">
+          <span className="status-dot live" />
+          <span>Live Transcript</span>
+        </div>
+        <div className="live-sidebar-actions">
+          <Link to="/transcribe/stream" className="icon-btn" title="Open full view">
+            <ArrowRight size={16} />
+          </Link>
+          <button className="icon-btn danger" onClick={() => stop()} title="Stop session">
+            <MicOff size={16} />
+          </button>
+        </div>
+      </div>
+      <div className="live-sidebar-status">{status}</div>
+      <div className="live-sidebar-scroll">
+        {transcriptEntries.length === 0 && !partialTranscript ? (
+          <div className="empty-state compact">
+            <p>Listening…</p>
+          </div>
+        ) : null}
+        {transcriptEntries.map((entry, index) => (
+          <article className="live-sidebar-entry" key={`${entry}-${index}`}>
+            <span className="entry-badge">Final</span>
+            <p>{entry}</p>
+          </article>
+        ))}
+        {partialTranscript ? (
+          <article className="live-sidebar-entry partial-entry">
+            <span className="entry-badge">Live</span>
+            <p>{partialTranscript}</p>
+          </article>
+        ) : null}
+      </div>
+      {errorMessage && (
+        <div className="live-sidebar-error">
+          <AlertCircle size={14} /> {errorMessage}
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -164,7 +222,7 @@ function App() {
         onClose={() => setAuthModalOpen(false)}
       />
 
-      <main className={`main-content ${!authUser ? 'landing-main' : ''}`}>
+      <main className={`main-content ${!authUser ? 'landing-main' : ''} ${location.pathname !== '/transcribe/stream' && authUser ? 'has-live-sidebar' : ''}`}>
         <Routes>
           <Route path="/" element={authUser ? <Dashboard /> : <LandingPage onOpenAuth={() => setAuthModalOpen(true)} />} />
           <Route path="/pricing" element={<PricingPage currentTier={subscriptionTier} onOpenAuth={() => setAuthModalOpen(true)} authUser={authUser} />} />
@@ -180,6 +238,10 @@ function App() {
           <Route path="/billing/cancel" element={<CheckoutCancel />} />
         </Routes>
       </main>
+
+      {location.pathname !== '/transcribe/stream' && authUser && (
+        <LiveTranscriptSidebar />
+      )}
     </div>
   );
 }

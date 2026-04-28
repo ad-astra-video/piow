@@ -90,5 +90,6 @@ env/
 .npm
 .eslintcache
 .stylelintcache
+.vite
 
 models/

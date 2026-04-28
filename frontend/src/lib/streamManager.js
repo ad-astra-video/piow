@@ -1,0 +1,352 @@
+const API_BASE = `${window.location.origin}/api/v1`;
+const WS_ENDPOINT = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
+
+class WHIPClient {
+  constructor(streamId, accessToken) {
+    this.whipEndpoint = `${API_BASE}/transcribe/stream/${streamId}/whip`;
+    this.accessToken = accessToken || null;
+    this.pc = null;
+  }
+
+  async start(tracks) {
+    if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
+      throw new Error('Invalid tracks parameter');
+    }
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i];
+      if (!(track instanceof MediaStreamTrack)) {
+        throw new Error(`Invalid track at index ${i}`);
+      }
+      if (track.readyState === 'ended') {
+        throw new Error(`Track at index ${i} is already ended`);
+      }
+    }
+
+    this.pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    const mediaStream = new MediaStream(tracks);
+    mediaStream.getTracks().forEach(track => this.pc.addTrack(track, mediaStream));
+
+    const offer = await this.pc.createOffer();
+    await this.pc.setLocalDescription(offer);
+    await this._waitForIceGathering();
+
+    const headers = { 'Content-Type': 'application/sdp' };
+    if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
+
+    const response = await fetch(this.whipEndpoint, {
+      method: 'POST',
+      body: this.pc.localDescription.sdp,
+      headers
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      throw new Error(`WHIP proxy failed: ${response.status} ${errorBody}`);
+    }
+
+    const answerSdp = await response.text();
+    const answer = new RTCSessionDescription({ type: 'answer', sdp: answerSdp });
+    await this.pc.setRemoteDescription(answer);
+    return this.pc;
+  }
+
+  _waitForIceGathering(timeoutMs = 5000) {
+    return new Promise((resolve) => {
+      if (this.pc.iceGatheringState === 'complete') { resolve(); return; }
+      const onStateChange = () => {
+        if (this.pc.iceGatheringState === 'complete') {
+          this.pc.removeEventListener('icegatheringstatechange', onStateChange);
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+      this.pc.addEventListener('icegatheringstatechange', onStateChange);
+      const timer = setTimeout(() => {
+        this.pc.removeEventListener('icegatheringstatechange', onStateChange);
+        resolve();
+      }, timeoutMs);
+    });
+  }
+
+  stop() {
+    if (this.pc) {
+      this.pc.getSenders().forEach(sender => sender.track?.stop());
+      this.pc.close();
+      this.pc = null;
+    }
+  }
+}
+
+class StreamManager {
+  constructor() {
+    this.state = {
+      isStarted: false,
+      status: 'Ready for live transcription.',
+      transcriptEntries: [],
+      partialTranscript: '',
+      errorMessage: '',
+    };
+    this.listeners = new Set();
+    this.whipClient = null;
+    this.ws = null;
+    this.localStream = null;
+    this.blackVideoSource = null;
+    this.streamId = null;
+    this.accessToken = null;
+    this._beforeunloadHandler = null;
+  }
+
+  _setState(partial) {
+    this.state = { ...this.state, ...partial };
+    this.listeners.forEach((cb) => cb(this.state));
+  }
+
+  subscribe(callback) {
+    this.listeners.add(callback);
+    callback(this.state);
+    return () => this.listeners.delete(callback);
+  }
+
+  getState() {
+    return this.state;
+  }
+
+  async _createBlackVideoTrack() {
+    if (this.blackVideoSource?.intervalId) {
+      clearInterval(this.blackVideoSource.intervalId);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 240;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Failed to initialize canvas context for black video track');
+    }
+
+    const drawBlackFrame = () => {
+      ctx.fillStyle = 'black';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    };
+    drawBlackFrame();
+
+    const intervalId = setInterval(drawBlackFrame, 1000 / 15);
+
+    const stream = canvas.captureStream(15);
+    const videoTrack = stream.getVideoTracks()[0];
+
+    if (!videoTrack) {
+      throw new Error('Failed to create black video track');
+    }
+
+    try {
+      await videoTrack.applyConstraints({
+        width: { ideal: 320, max: 320 },
+        height: { ideal: 240, max: 240 },
+        frameRate: { ideal: 15, max: 15 },
+      });
+    } catch (e) {
+      // Some browsers may reject constraints for canvas tracks; continue with capture defaults.
+    }
+
+    this.blackVideoSource = { canvas, stream, intervalId };
+    return videoTrack;
+  }
+
+  async _createStreamSession() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
+    const response = await fetch(`${API_BASE}/transcribe/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'en' }),
+    });
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Stream session creation failed (${response.status}): ${errorBody}`);
+    }
+    const data = await response.json();
+    if (!data.stream_id) throw new Error('Stream session response missing stream_id');
+    return data;
+  }
+
+  async _requestStreamStop(streamId) {
+    if (!streamId) return;
+    const headers = {};
+    if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
+
+    const response = await fetch(`${API_BASE}/stream/${streamId}/stop`, {
+      method: 'POST',
+      headers,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      throw new Error(`Stop request failed (${response.status}): ${errorBody}`);
+    }
+  }
+
+  async start(accessToken) {
+    if (this.state.isStarted) return;
+    this.accessToken = accessToken || null;
+
+    try {
+      this._setState({ errorMessage: '', transcriptEntries: [], partialTranscript: '', status: 'Getting user media...' });
+
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioTrack = audioStream.getAudioTracks()[0];
+      const videoTrack = await this._createBlackVideoTrack();
+      this.localStream = new MediaStream([audioTrack, videoTrack]);
+
+      this._setState({ status: 'Creating stream session...' });
+      let sessionData;
+      try { sessionData = await this._createStreamSession(); }
+      catch (sessionError) {
+        this._setState({ status: `Session creation failed: ${sessionError.message}`, errorMessage: 'Could not create a streaming session.' });
+        throw sessionError;
+      }
+
+      const { stream_id } = sessionData;
+      this.streamId = stream_id;
+
+      this._setState({ status: 'Connecting to WHIP endpoint...' });
+      this.whipClient = new WHIPClient(stream_id, this.accessToken || undefined);
+
+      try {
+        const pc = await this.whipClient.start([audioTrack, videoTrack]);
+        pc.ontrack = (event) => { console.log('Received track from WHIP:', event.track.kind); };
+
+        this._setState({ status: 'Connected. Opening WebSocket...' });
+        const ws = new WebSocket(WS_ENDPOINT);
+        this.ws = ws;
+
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: 'start_stream', stream_id }));
+          this._setState({ status: 'Listening for speech...', isStarted: true });
+        };
+
+        ws.onmessage = (event) => {
+          if (event.data instanceof Blob) return;
+          try {
+            const message = JSON.parse(event.data);
+            const msgType = typeof message.type === 'string' ? message.type : '';
+            if (
+              msgType === 'transcription.delta' ||
+              msgType === 'conversation.item.input_audio_transcription.delta' ||
+              msgType === 'response.output_text.delta' ||
+              msgType === 'response.output_audio_transcript.delta'
+            ) {
+              const delta = typeof message.delta === 'string' ? message.delta : '';
+              if (!delta) return;
+              this._setState({ partialTranscript: this.state.partialTranscript + delta, status: 'Receiving live transcript...' });
+            } else if (
+              msgType === 'transcription.done' ||
+              msgType === 'conversation.item.input_audio_transcription.completed' ||
+              msgType === 'response.output_text.done' ||
+              msgType === 'response.output_audio_transcript.done'
+            ) {
+              const transcript =
+                (typeof message.transcript === 'string' && message.transcript) ||
+                (typeof message.text === 'string' && message.text) ||
+                '';
+              if (!transcript) return;
+              this._setState({
+                transcriptEntries: [...this.state.transcriptEntries, transcript.trim()],
+                partialTranscript: '',
+                status: 'Receiving live transcript...',
+              });
+            } else if (msgType === 'status') {
+              this._setState({ status: message.text });
+            } else if (msgType === 'error') {
+              const errorText =
+                (typeof message.text === 'string' && message.text) ||
+                (message.error && typeof message.error.message === 'string' && message.error.message) ||
+                'Realtime error';
+              this._setState({ errorMessage: errorText, status: `Error: ${errorText}` });
+            }
+          } catch (parseErr) {}
+        };
+
+        ws.onclose = () => {
+          if (this.state.isStarted) {
+            this.stop({ preserveStatus: true });
+            this._setState({ status: 'WebSocket disconnected.' });
+          }
+        };
+
+        ws.onerror = () => {
+          this._setState({ errorMessage: 'Realtime connection failed.', status: 'WebSocket error' });
+        };
+      } catch (whipError) {
+        this._setState({ status: `WHIP connection failed: ${whipError.message}`, errorMessage: 'Could not establish the WHIP session.' });
+        if (this.whipClient) { this.whipClient.stop(); this.whipClient = null; }
+        this.streamId = null;
+        throw whipError;
+      }
+
+      // Register beforeunload handler so we clean up server-side on page close
+      this._beforeunloadHandler = () => {
+        if (this.streamId) {
+          navigator.sendBeacon?.(`${API_BASE}/stream/${this.streamId}/stop`, new Blob([]));
+        }
+        this.stop({ preserveStatus: true });
+      };
+      window.addEventListener('beforeunload', this._beforeunloadHandler);
+    } catch (err) {
+      this._setState({ status: `Error: ${err.message}`, errorMessage: err.message });
+      this.stop({ preserveStatus: true });
+    }
+  }
+
+  async stop({ preserveStatus = false } = {}) {
+    const wasStarted = this.state.isStarted;
+    const activeStreamId = this.streamId;
+
+    if (activeStreamId) {
+      try {
+        await this._requestStreamStop(activeStreamId);
+      } catch (stopErr) {
+        this._setState({ errorMessage: this.state.errorMessage || `Failed to stop stream cleanly: ${stopErr.message}` });
+      }
+    }
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && activeStreamId) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'stop_stream', stream_id: activeStreamId }));
+      } catch (e) {}
+    }
+    this.streamId = null;
+
+    if (this.whipClient) {
+      this.whipClient.stop();
+      this.whipClient = null;
+    }
+    if (this.ws) { this.ws.close(); this.ws = null; }
+    if (this.localStream) {
+      this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream = null;
+    }
+    if (this.blackVideoSource?.intervalId) {
+      clearInterval(this.blackVideoSource.intervalId);
+    }
+    this.blackVideoSource = null;
+
+    if (this._beforeunloadHandler) {
+      window.removeEventListener('beforeunload', this._beforeunloadHandler);
+      this._beforeunloadHandler = null;
+    }
+
+    this._setState({
+      isStarted: false,
+      partialTranscript: '',
+      status: !preserveStatus && wasStarted ? 'Transcription stopped.' : this.state.status,
+    });
+  }
+}
+
+const streamManager = new StreamManager();
+export default streamManager;
