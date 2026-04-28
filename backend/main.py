@@ -248,9 +248,13 @@ async def index(request):
 
 @no_auth
 async def static_file(request):
-    """Serve static files (JS, CSS, etc.) from the dist directory."""
-    logger.info(f"Serving static file: {request.match_info.get('path', '')}")
+    """Serve static files (JS, CSS, etc.) from the dist directory.
+
+    Falls back to ``index.html`` for unknown paths so that client-side
+    routes (React Router deep links) resolve correctly on a hard refresh.
+    """
     path = request.match_info.get('path', '')
+    logger.info(f"Serving static file: {path}")
     if '..' in path or path.startswith('/'):
         raise web.HTTPNotFound()
     try:
@@ -265,7 +269,12 @@ async def static_file(request):
         else:
             return web.Response(text=content, content_type='text/plain')
     except FileNotFoundError:
-        raise web.HTTPNotFound()
+        # SPA fallback: only rewrite paths that look like client-side
+        # routes (no file extension), otherwise return 404 for missing
+        # assets so callers get a real error instead of HTML.
+        if '.' in os.path.basename(path):
+            raise web.HTTPNotFound()
+        return await index(request)
 
 @no_auth
 async def websocket_handler(request):
