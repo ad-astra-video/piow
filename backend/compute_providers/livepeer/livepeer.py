@@ -776,44 +776,16 @@ class LivepeerComputeProvider(BaseComputeProvider):
         The payload shape matches the documented format:
         {
             "request": "<json-string>",
+            "parameters": "<json-string>",
             "capability": "<capability-name>",
             "timeout_seconds": <seconds>
         }
         """
         livepeer_payload = {
             "request": json.dumps(request_body),
+            "parameters": "{}",
             "capability": capability,
             "timeout_seconds": timeout_seconds,
         }
 
         return base64.b64encode(json.dumps(livepeer_payload).encode()).decode()
-
-    # Keep the original utility methods for backward compatibility
-    def build_livepeer_header(self, request_body: Dict[str, Any], capability: str, timeout_seconds: int = 60) -> str:
-        """
-        Build a Livepeer header for BYOC AI Stream API requests.
-        
-        Encodes the request and capability into a Livepeer header according to the
-        BYOC API specification.
-
-        Args:
-            request_body: The request body to encode
-            capability: The capability being requested
-            timeout_seconds: Timeout for the request
-
-        Returns:
-            Base64-encoded Livepeer header
-        """
-        livepeer_payload = {
-            "request": json.dumps(request_body),
-            "parameters": "{}",
-            "capability": capability,
-            "timeout_seconds": timeout_seconds
-        }
-
-        # Base64 encode the Livepeer header
-        livepeer_header = base64.b64encode(
-            json.dumps(livepeer_payload).encode()
-        ).decode()
-
-        return livepeer_header
