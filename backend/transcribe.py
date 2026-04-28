@@ -100,6 +100,13 @@ def _get_user_id(request):
         return str(agent.get('id', ''))
     return None
 
+
+def _is_successful_transcription_result(job_result):
+    """Return True when provider result indicates a successful transcription."""
+    status = str(job_result.get('status', 'completed') or 'completed').strip().lower()
+    failure_statuses = {'failed', 'error', 'cancelled', 'canceled'}
+    return status not in failure_statuses
+
 # ============================================================================
 # HELPER: Store transcription result and record usage
 # ============================================================================
@@ -148,6 +155,10 @@ async def _store_transcription_result(request, job_result, audio_url, language, 
         transcription_id = transcription_record.data[0]['id'] if transcription_record.data else None
     except Exception as db_error:
         logger.warning(f"Failed to store transcription in database: {db_error}")
+
+    if not transcription_id:
+        logger.warning("Skipping transcription usage log: transcription record was not persisted")
+        return None
 
     # Record usage
     try:
@@ -372,6 +383,16 @@ async def transcribe_file(request):
                 "status": "error"
             }, status=503)
 
+        if not _is_successful_transcription_result(job_result):
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+            return web.json_response({
+                "error": "Provider transcription job did not complete successfully",
+                "status": job_result.get('status', 'error'),
+            }, status=502)
+
         if source_duration_seconds is not None:
             job_result['duration'] = source_duration_seconds
 
@@ -471,6 +492,12 @@ async def transcribe_url(request):
                 "error": f"All providers failed for transcription. Last error: {str(last_error)}",
                 "status": "error"
             }, status=503)
+
+        if not _is_successful_transcription_result(job_result):
+            return web.json_response({
+                "error": "Provider transcription job did not complete successfully",
+                "status": job_result.get('status', 'error'),
+            }, status=502)
 
         if source_duration_seconds is not None:
             job_result['duration'] = source_duration_seconds

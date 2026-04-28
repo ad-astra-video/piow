@@ -106,6 +106,15 @@ class TestUsageMetricHelpers(unittest.TestCase):
         )
         self.assertEqual(translate._get_total_text_sent_chars(None), 0)
 
+    def test_translation_success_result_helper(self):
+        translate = self._import_translate()
+
+        self.assertTrue(translate._is_successful_translation_result({"status": "completed"}))
+        self.assertTrue(translate._is_successful_translation_result({"status": "succeeded"}))
+        self.assertTrue(translate._is_successful_translation_result({}))
+        self.assertFalse(translate._is_successful_translation_result({"status": "failed"}))
+        self.assertFalse(translate._is_successful_translation_result({"status": "error"}))
+
     def test_audio_duration_seconds_uses_container_duration(self):
         transcribe = self._import_transcribe()
 
@@ -127,6 +136,14 @@ class TestUsageMetricHelpers(unittest.TestCase):
 
         with patch.object(transcribe, "av", fake_av):
             self.assertEqual(transcribe._get_audio_duration_seconds("dummy.wav"), 3)
+
+    def test_transcription_success_result_helper(self):
+        transcribe = self._import_transcribe()
+
+        self.assertTrue(transcribe._is_successful_transcription_result({"status": "completed"}))
+        self.assertTrue(transcribe._is_successful_transcription_result({}))
+        self.assertFalse(transcribe._is_successful_transcription_result({"status": "failed"}))
+        self.assertFalse(transcribe._is_successful_transcription_result({"status": "error"}))
 
 
 if __name__ == "__main__":

@@ -64,6 +64,13 @@ def _get_total_text_sent_chars(text):
     return len(str(text))
 
 
+def _is_successful_translation_result(job_result):
+    """Return True when provider result indicates a successful translation."""
+    status = str(job_result.get('status', 'completed') or 'completed').strip().lower()
+    failure_statuses = {'failed', 'error', 'cancelled', 'canceled'}
+    return status not in failure_statuses
+
+
 # ============================================================================
 # HELPER: Store translation result and record usage
 # ============================================================================
@@ -92,6 +99,10 @@ async def _store_translation_result(request, job_result, original_text, source_l
         translation_id = translation_record.data[0]['id'] if translation_record.data else None
     except Exception as db_error:
         logger.warning(f"Failed to store translation in database: {db_error}")
+
+    if not translation_id:
+        logger.warning("Skipping translation usage log: translation record was not persisted")
+        return None
 
     try:
         total_text_sent_chars = _get_total_text_sent_chars(original_text)
@@ -155,6 +166,12 @@ async def translate_text(request):
                 "error": f"All providers failed for translation. Last error: {str(last_error)}",
                 "status": "error"
             }, status=503)
+
+        if not _is_successful_translation_result(job_result):
+            return web.json_response({
+                "error": "Provider translation job did not complete successfully",
+                "status": job_result.get('status', 'error'),
+            }, status=502)
 
         translation_id = await _store_translation_result(
             request, job_result, text, source_lang, target_lang
@@ -234,6 +251,12 @@ async def translate_transcription(request):
                 "error": f"All providers failed for translation. Last error: {str(last_error)}",
                 "status": "error"
             }, status=503)
+
+        if not _is_successful_translation_result(job_result):
+            return web.json_response({
+                "error": "Provider translation job did not complete successfully",
+                "status": job_result.get('status', 'error'),
+            }, status=502)
 
         translation_id = await _store_translation_result(
             request, job_result, original_text, source_language, target_language
