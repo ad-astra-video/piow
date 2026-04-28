@@ -66,13 +66,11 @@ VLLM_TARGET_LANG = os.environ.get("VLLM_TARGET_LANG", "es")
 # ---------------------------------------------------------------------------
 ORCH_SERVICE_ADDR = os.environ.get("ORCH_SERVICE_ADDR", "")
 ORCH_SECRET = os.environ.get("ORCH_SECRET", "")
-CAPABILITY_NAME = os.environ.get("CAPABILITY_NAME", "")
-if not CAPABILITY_NAME:
-    raise RuntimeError("CAPABILITY_NAME environment variable is required")
+CAPABILITY_NAME = "live-transcribe"
+CAPABILITY_DESCRIPTION = "Transcribe audio to text"
+CAPABILITY_NAME_2 = "transcribe-translate"
+CAPABILITY_DESCRIPTION_2 = "Transcribe audio to text and translate to a target language"
 CAPABILITY_URL = os.environ.get("CAPABILITY_URL", f"https://localhost:{PORT}")
-CAPABILITY_DESCRIPTION = os.environ.get("CAPABILITY_DESCRIPTION", "")
-if not CAPABILITY_DESCRIPTION:
-    raise RuntimeError("CAPABILITY_DESCRIPTION environment variable is required")
 CAPABILITY_CAPACITY = int(os.environ.get("CAPABILITY_CAPACITY", "1"))
 CAPABILITY_PRICE_PER_UNIT = int(os.environ.get("CAPABILITY_PRICE_PER_UNIT", "0"))
 CAPABILITY_PRICE_SCALING = int(os.environ.get("CAPABILITY_PRICE_SCALING", "1"))
@@ -104,22 +102,22 @@ transcriptions_db: Dict[str, Dict[str, Any]] = {}
 # =============================================================================
 # Orchestrator Registration
 # =============================================================================
-def _build_registration_payload() -> Dict[str, Any]:
-    """Build the registration request payload with current capacity/price."""
+def _build_registration_payload(name: str, description: str, capacity: int) -> Dict[str, Any]:
+    """Build the registration request payload for the given capability name and capacity."""
     return {
         "url": CAPABILITY_URL,
-        "name": CAPABILITY_NAME,
-        "description": CAPABILITY_DESCRIPTION,
-        "capacity": _current_capacity,
+        "name": name,
+        "description": description,
+        "capacity": capacity,
         "price_per_unit": _current_price_per_unit,
         "price_scaling": CAPABILITY_PRICE_SCALING,
         "token": WORKER_TOKEN,
     }
 
 
-def _register_to_orchestrator() -> bool:
-    """Perform a single registration attempt with retries."""
-    register_req = _build_registration_payload()
+def _register_capability(name: str, description: str, capacity: int = 1) -> bool:
+    """Perform a single registration attempt for the given capability with retries."""
+    register_req = _build_registration_payload(name, description, capacity)
     headers = {
         "Authorization": ORCH_SECRET,
         "Content-Type": "application/json",
@@ -137,20 +135,57 @@ def _register_to_orchestrator() -> bool:
                 verify=False,
             )
             if response.status_code == 200:
-                logger.info("Capability registered successfully")
+                logger.info("Capability '%s' registered successfully", name)
                 return True
             elif response.status_code == 400:
-                logger.error("Orchestrator secret incorrect (HTTP 400)")
+                logger.error("Orchestrator secret incorrect (HTTP 400) for capability '%s'", name)
                 return False
             else:
-                logger.info("Attempt %d failed: HTTP %d - %s", attempt, response.status_code, response.text)
+                logger.info("Attempt %d failed for '%s': HTTP %d - %s", attempt, name, response.status_code, response.text)
         except requests.RequestException as e:
             if attempt == max_retries:
-                logger.error("All retries failed: %s", e)
+                logger.error("All retries failed for capability '%s': %s", name, e)
             else:
-                logger.info("Attempt %d failed: %s", attempt, e)
+                logger.info("Attempt %d failed for '%s': %s", attempt, name, e)
                 time.sleep(delay)
     return False
+
+
+def _register_to_orchestrator() -> None:
+    """Register all capabilities with the orchestrator."""
+    _register_capability(CAPABILITY_NAME, CAPABILITY_DESCRIPTION, capacity=1)
+    _register_capability(CAPABILITY_NAME_2, CAPABILITY_DESCRIPTION_2, capacity=1)
+
+
+def _unregister_capability(name: str) -> None:
+    """Unregister a capability from the orchestrator (best-effort, no retries)."""
+    if not ORCH_SERVICE_ADDR:
+        return
+    payload = {"name": name, "url": CAPABILITY_URL, "token": WORKER_TOKEN}
+    headers = {
+        "Authorization": ORCH_SECRET,
+        "Content-Type": "application/json",
+    }
+    try:
+        response = requests.post(
+            "https://" + ORCH_SERVICE_ADDR + "/capability/unregister",
+            json=payload,
+            headers=headers,
+            timeout=5,
+            verify=False,
+        )
+        if response.status_code == 200:
+            logger.info("Capability '%s' unregistered successfully", name)
+        else:
+            logger.warning("Unregister '%s' returned HTTP %d: %s", name, response.status_code, response.text)
+    except requests.RequestException as e:
+        logger.warning("Failed to unregister capability '%s': %s", name, e)
+
+
+def _unregister_from_orchestrator() -> None:
+    """Unregister all capabilities from the orchestrator."""
+    _unregister_capability(CAPABILITY_NAME)
+    _unregister_capability(CAPABILITY_NAME_2)
 
 
 async def registration_background_task():
@@ -203,7 +238,7 @@ async def update_capacity_handler(request: aiohttp.web.Request) -> aiohttp.web.R
 
         return aiohttp.web.json_response({
             "capacity": _current_capacity,
-            "message": "Capacity updated successfully",
+            "message": "Capacity updated successfully (both capabilities re-registered)",
         })
     except Exception as exc:
         logger.exception("Error updating capacity")
@@ -241,7 +276,7 @@ async def update_price_handler(request: aiohttp.web.Request) -> aiohttp.web.Resp
 
         return aiohttp.web.json_response({
             "price_per_unit": _current_price_per_unit,
-            "message": "Price updated successfully",
+            "message": "Price updated successfully (both capabilities re-registered)",
         })
     except Exception as exc:
         logger.exception("Error updating price")
@@ -255,10 +290,12 @@ async def capability_status_handler(request: aiohttp.web.Request) -> aiohttp.web
     Return the current registration state.
     """
     return aiohttp.web.json_response({
-        "capability_name": CAPABILITY_NAME,
+        "capabilities": [
+            {"name": CAPABILITY_NAME, "capacity": 1},
+            {"name": CAPABILITY_NAME_2, "capacity": 1},
+        ],
         "capability_url": CAPABILITY_URL,
         "description": CAPABILITY_DESCRIPTION,
-        "capacity": _current_capacity,
         "price_per_unit": _current_price_per_unit,
         "price_scaling": CAPABILITY_PRICE_SCALING,
         "registration_enabled": REGISTRATION_ENABLED,
@@ -619,12 +656,15 @@ class LiveTranscriptionWorker:
 # Startup / shutdown
 # =============================================================================
 async def on_shutdown(app: aiohttp.web.Application):
-    """Cleanup VLLM connection on server shutdown."""
+    """Cleanup VLLM connection on server shutdown and unregister capabilities."""
     global vllm_client
     logger.info("Worker shutting down")
     if vllm_client:
         await vllm_client.close()
         vllm_client = None
+    if REGISTRATION_ENABLED and ORCH_SERVICE_ADDR:
+        logger.info("Unregistering capabilities from orchestrator")
+        _unregister_from_orchestrator()
 
 
 # =============================================================================
