@@ -55,7 +55,7 @@ class Granite4Transcriber:
         self.model_path = _resolve_model_path(model_path)
         self.model_ref = str(self.model_path) if self.model_path.exists() else DEFAULT_MODEL_ID
         self.sample_rate = 16000
-        self.max_new_tokens = int(os.environ.get("GRANITE_MAX_NEW_TOKENS", "256"))
+        self.max_new_tokens = int(os.environ.get("GRANITE_MAX_NEW_TOKENS", "131072"))
         self.device = "cpu"
         self.processor: Any = None
         self.tokenizer: Any = None
