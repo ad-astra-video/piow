@@ -109,3 +109,16 @@ async def test_transcribe_alias(cli):
     assert resp.status == 400
     data = await resp.json()
     assert "error" in data
+
+
+async def test_transcribe_accepts_data_url(cli):
+    """Test POST /transcribe with base64 data URL payload."""
+    data_url = "data:audio/wav;base64,UklGRg=="
+
+    with patch.object(worker_app.granite_transcriber, "transcribe", return_value={"text": "ok", "language": "en"}):
+        resp = await cli.post("/transcribe", json={"audio_url": data_url, "language": "en"})
+
+    assert resp.status == 200
+    payload = await resp.json()
+    assert payload["status"] == "completed"
+    assert payload["text"] == "ok"

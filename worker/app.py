@@ -13,6 +13,8 @@ import os
 import sys
 import uuid
 import json
+import base64
+import binascii
 import secrets
 import time
 import asyncio
@@ -438,15 +440,35 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
 
             tmp_path = tempfile.mktemp(suffix=".wav")
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(audio_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
-                        if resp.status != 200:
-                            return aiohttp.web.json_response(
-                                {"error": f"Failed to download audio: HTTP {resp.status}"},
-                                status=502,
-                            )
-                        with open(tmp_path, "wb") as f:
-                            f.write(await resp.read())
+                if isinstance(audio_url, str) and audio_url.startswith("data:"):
+                    marker = ";base64,"
+                    if marker not in audio_url:
+                        return aiohttp.web.json_response(
+                            {"error": "Invalid data URL payload (expected base64)"},
+                            status=400,
+                        )
+
+                    try:
+                        payload = audio_url.split(marker, 1)[1]
+                        decoded = base64.b64decode(payload, validate=True)
+                    except (ValueError, binascii.Error):
+                        return aiohttp.web.json_response(
+                            {"error": "Invalid base64 audio payload"},
+                            status=400,
+                        )
+
+                    with open(tmp_path, "wb") as f:
+                        f.write(decoded)
+                else:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(audio_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                            if resp.status != 200:
+                                return aiohttp.web.json_response(
+                                    {"error": f"Failed to download audio: HTTP {resp.status}"},
+                                    status=502,
+                                )
+                            with open(tmp_path, "wb") as f:
+                                f.write(await resp.read())
 
                 result = granite_transcriber.transcribe(tmp_path, language)
             finally:

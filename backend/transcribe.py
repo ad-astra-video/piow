@@ -7,6 +7,7 @@ Handles all transcription and translation related API routes.
 import asyncio
 import aiohttp
 import aiohttp.web as web
+import base64
 import ipaddress
 import logging
 import math
@@ -44,6 +45,32 @@ compute_provider_manager = ComputeProviderManager()
 compute_provider_manager.register_providers_from_definitions(PROVIDER_DEFINITIONS)
 
 MAX_REMOTE_AUDIO_BYTES = 100 * 1024 * 1024
+
+
+def _infer_audio_mime_type(file_path):
+    """Infer audio MIME type from file extension for data URLs."""
+    ext = (os.path.splitext(file_path)[1] or "").lower()
+    mime_types = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".mp4": "audio/mp4",
+        ".flac": "audio/flac",
+        ".ogg": "audio/ogg",
+        ".webm": "audio/webm",
+        ".aac": "audio/aac",
+    }
+    return mime_types.get(ext, "application/octet-stream")
+
+
+def _build_data_url_from_file(file_path):
+    """Read local media file and encode it as a base64 data URL."""
+    with open(file_path, "rb") as f:
+        binary = f.read()
+
+    mime_type = _infer_audio_mime_type(file_path)
+    encoded = base64.b64encode(binary).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 def setup_routes(app):
     """Setup transcription-related routes."""
@@ -316,6 +343,7 @@ async def transcribe_file(request):
                 pass
             return web.json_response({"error": "No compute provider available"}, status=503)
 
+        provider_audio_url = _build_data_url_from_file(temp_path)
         audio_url = f"file://{temp_path}"
 
         job_result = None
@@ -323,7 +351,7 @@ async def transcribe_file(request):
         for provider in ranked_providers:
             try:
                 job_result = await provider.create_transcription_job(
-                    audio_url=audio_url, language=language, format="json"
+                    audio_url=provider_audio_url, language=language, format="json"
                 )
                 break
             except Exception as provider_error:
@@ -414,6 +442,7 @@ async def transcribe_url(request):
             return web.json_response({"error": str(e)}, status=400)
 
         source_duration_seconds = _get_audio_duration_seconds(temp_path)
+        provider_audio_url = _build_data_url_from_file(temp_path)
 
         ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_batch", requirements={"language": language}
@@ -426,7 +455,7 @@ async def transcribe_url(request):
         for provider in ranked_providers:
             try:
                 job_result = await provider.create_transcription_job(
-                    audio_url=audio_url, language=language, format=format
+                    audio_url=provider_audio_url, language=language, format=format
                 )
                 break
             except Exception as provider_error:
