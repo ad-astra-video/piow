@@ -309,6 +309,9 @@ class Granite4Transcriber:
             rate=self.sample_rate,
         )
 
+        file_size = os.path.getsize(input_path)
+        logger.debug("Decoding '%s' (%d bytes) with PyAV", input_path, file_size)
+
         chunks: list[np.ndarray] = []
         try:
             with av.open(input_path) as container:
@@ -318,10 +321,19 @@ class Granite4Transcriber:
             # Flush resampler
             for out_frame in resampler.resample(None):
                 chunks.append(out_frame.to_ndarray()[0])
-        except Exception as exc:
-            raise RuntimeError(
-                f"PyAV could not decode audio from '{input_path}': {exc}"
-            ) from exc
+        except Exception as av_exc:
+            logger.warning(
+                "PyAV failed on '%s' (%d bytes): %s — falling back to librosa",
+                input_path, file_size, av_exc,
+            )
+            try:
+                audio_data, _ = librosa.load(input_path, sr=self.sample_rate, mono=True)
+                return audio_data
+            except Exception as librosa_exc:
+                raise RuntimeError(
+                    f"All decoders failed for '{input_path}': "
+                    f"PyAV={av_exc!r}, librosa={librosa_exc!r}"
+                ) from librosa_exc
 
         if not chunks:
             raise RuntimeError(f"No audio frames decoded from '{input_path}'")

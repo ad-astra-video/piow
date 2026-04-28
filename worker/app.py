@@ -414,11 +414,13 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
             field = await reader.next()
 
             file_data = None
+            uploaded_name = "audio.wav"
             language = "en"
             fmt = "json"
 
             while field is not None:
                 if field.filename and not file_data:
+                    uploaded_name = field.filename or "audio.wav"
                     file_data = await field.read()
                 elif field.name == "language":
                     language = (await field.read()).decode("utf-8", "replace").strip() or "en"
@@ -431,7 +433,18 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                     {"error": "Missing file in multipart upload"}, status=400
                 )
 
-            suffix = ".wav"
+            if len(file_data) == 0:
+                return aiohttp.web.json_response(
+                    {"error": "Uploaded file is empty"}, status=400
+                )
+
+            # Preserve the original extension so libavformat can probe correctly.
+            suffix = os.path.splitext(uploaded_name)[1] or ".wav"
+            logger.info(
+                "Received upload: name=%s size=%d bytes suffix=%s",
+                uploaded_name, len(file_data), suffix,
+            )
+
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(file_data)
                 tmp_path = tmp.name
