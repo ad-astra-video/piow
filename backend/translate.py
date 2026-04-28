@@ -113,23 +113,34 @@ async def translate_text(request):
         if not text:
             return web.json_response({"error": "Missing text parameter"}, status=400)
 
-        provider = compute_provider_manager.select_provider(
+        ranked_providers = compute_provider_manager.select_providers(
             job_type="translate",
             requirements={"source_language": source_lang, "target_language": target_lang}
         )
-        if not provider:
+        if not ranked_providers:
             return web.json_response({"error": "No compute provider available"}, status=503)
 
-        try:
-            job_result = await provider.create_translation_job(
-                text=text, source_language=source_lang, target_language=target_lang
-            )
-        except Exception as provider_error:
-            logger.error(f"Compute provider error in translate_text: {provider_error}")
+        job_result = None
+        last_error = None
+        for provider in ranked_providers:
+            try:
+                job_result = await provider.create_translation_job(
+                    text=text, source_language=source_lang, target_language=target_lang
+                )
+                break
+            except Exception as provider_error:
+                logger.warning(
+                    "Compute provider error in translate_text: provider=%s error=%s",
+                    provider.provider_name,
+                    provider_error,
+                )
+                last_error = provider_error
+
+        if not job_result:
             return web.json_response({
-                "error": f"Translation failed: {str(provider_error)}",
+                "error": f"All providers failed for translation. Last error: {str(last_error)}",
                 "status": "error"
-            }, status=502)
+            }, status=503)
 
         translation_id = await _store_translation_result(
             request, job_result, text, source_lang, target_lang
@@ -179,25 +190,36 @@ async def translate_transcription(request):
         if not original_text:
             return web.json_response({"error": "Transcription has no text to translate"}, status=400)
 
-        provider = compute_provider_manager.select_provider(
+        ranked_providers = compute_provider_manager.select_providers(
             job_type="translate",
             requirements={"source_language": source_language, "target_language": target_language}
         )
-        if not provider:
+        if not ranked_providers:
             return web.json_response({"error": "No compute provider available"}, status=503)
 
-        try:
-            job_result = await provider.create_translation_job(
-                text=original_text,
-                source_language=source_language,
-                target_language=target_language
-            )
-        except Exception as provider_error:
-            logger.error(f"Compute provider error in translate_transcription: {provider_error}")
+        job_result = None
+        last_error = None
+        for provider in ranked_providers:
+            try:
+                job_result = await provider.create_translation_job(
+                    text=original_text,
+                    source_language=source_language,
+                    target_language=target_language
+                )
+                break
+            except Exception as provider_error:
+                logger.warning(
+                    "Compute provider error in translate_transcription: provider=%s error=%s",
+                    provider.provider_name,
+                    provider_error,
+                )
+                last_error = provider_error
+
+        if not job_result:
             return web.json_response({
-                "error": f"Translation failed: {str(provider_error)}",
+                "error": f"All providers failed for translation. Last error: {str(last_error)}",
                 "status": "error"
-            }, status=502)
+            }, status=503)
 
         translation_id = await _store_translation_result(
             request, job_result, original_text, source_language, target_language

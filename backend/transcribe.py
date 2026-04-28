@@ -171,11 +171,11 @@ async def transcribe_file(request):
                     break
                 tmp_file.write(chunk)
 
-        provider = compute_provider_manager.select_provider(
+        ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_batch",
             requirements={"streaming": False, "language": language}
         )
-        if not provider:
+        if not ranked_providers:
             try:
                 os.unlink(temp_path)
             except:
@@ -184,20 +184,31 @@ async def transcribe_file(request):
 
         audio_url = f"file://{temp_path}"
 
-        try:
-            job_result = await provider.create_transcription_job(
-                audio_url=audio_url, language=language, format="json"
-            )
-        except Exception as provider_error:
-            logger.error(f"Compute provider error in transcribe_file: {provider_error}")
+        job_result = None
+        last_error = None
+        for provider in ranked_providers:
+            try:
+                job_result = await provider.create_transcription_job(
+                    audio_url=audio_url, language=language, format="json"
+                )
+                break
+            except Exception as provider_error:
+                logger.warning(
+                    "Compute provider error in transcribe_file: provider=%s error=%s",
+                    provider.provider_name,
+                    provider_error,
+                )
+                last_error = provider_error
+
+        if not job_result:
             try:
                 os.unlink(temp_path)
             except:
                 pass
             return web.json_response({
-                "error": f"Transcription failed: {str(provider_error)}",
+                "error": f"All providers failed for transcription. Last error: {str(last_error)}",
                 "status": "error"
-            }, status=502)
+            }, status=503)
 
         try:
             os.unlink(temp_path)
@@ -254,22 +265,33 @@ async def transcribe_url(request):
         if not audio_url:
             return web.json_response({"error": "Missing audio_url parameter"}, status=400)
 
-        provider = compute_provider_manager.select_provider(
+        ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_batch", requirements={"language": language}
         )
-        if not provider:
+        if not ranked_providers:
             return web.json_response({"error": "No compute provider available"}, status=503)
 
-        try:
-            job_result = await provider.create_transcription_job(
-                audio_url=audio_url, language=language, format=format
-            )
-        except Exception as provider_error:
-            logger.error(f"Compute provider error in transcribe_url: {provider_error}")
+        job_result = None
+        last_error = None
+        for provider in ranked_providers:
+            try:
+                job_result = await provider.create_transcription_job(
+                    audio_url=audio_url, language=language, format=format
+                )
+                break
+            except Exception as provider_error:
+                logger.warning(
+                    "Compute provider error in transcribe_url: provider=%s error=%s",
+                    provider.provider_name,
+                    provider_error,
+                )
+                last_error = provider_error
+
+        if not job_result:
             return web.json_response({
-                "error": f"Transcription failed: {str(provider_error)}",
+                "error": f"All providers failed for transcription. Last error: {str(last_error)}",
                 "status": "error"
-            }, status=502)
+            }, status=503)
 
         transcription_id = await _store_transcription_result(
             request, job_result, audio_url, language, source_type='url'
