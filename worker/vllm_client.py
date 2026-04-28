@@ -226,7 +226,7 @@ class VLLMRealtimeClient:
             async for message in self.websocket:
                 try:
                     data = json.loads(message)
-                    logger.info(f"VLLM <<< {data.get('type', 'unknown')}: {json.dumps(data)[:300]}")
+                    #logger.info(f"VLLM <<< {data.get('type', 'unknown')}: {json.dumps(data)[:300]}")
                     await self._handle_vllm_message(data)
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse VLLM message: {e}, raw: {message[:200]}")
@@ -266,7 +266,7 @@ class VLLMRealtimeClient:
         
         elif msg_type == "response.audio_transcript.delta":
             delta = data.get("delta", "")
-            logger.info(f"VLLM response.audio_transcript.delta: '{delta}'")
+            #logger.info(f"VLLM response.audio_transcript.delta: '{delta}'")
             if delta and self.text_callback:
                 result = self.text_callback(delta)
                 if inspect.isawaitable(result):
@@ -274,7 +274,7 @@ class VLLMRealtimeClient:
 
         elif msg_type == "response.audio_transcript.done":
             transcript = data.get("transcript", "")
-            logger.info(f"RESULT response.audio_transcript.done: '{transcript}'")
+            #logger.info(f"RESULT response.audio_transcript.done: '{transcript}'")
             self._transcription_completed.set()
             if transcript and self.text_callback:
                 result = self.text_callback(transcript, is_final=True)
@@ -283,7 +283,7 @@ class VLLMRealtimeClient:
 
         elif msg_type == "response.text.delta":
             delta = data.get("delta", "")
-            logger.info(f"VLLM response.text.delta: '{delta}'")
+            #logger.info(f"VLLM response.text.delta: '{delta}'")
             if delta and self.text_callback:
                 result = self.text_callback(delta)
                 if inspect.isawaitable(result):
@@ -291,7 +291,7 @@ class VLLMRealtimeClient:
 
         elif msg_type == "response.text.done":
             text = data.get("text", "")
-            logger.info(f"RESULT response.text.done: '{text}'")
+            #logger.info(f"RESULT response.text.done: '{text}'")
             self._transcription_completed.set()
             if text and self.text_callback:
                 result = self.text_callback(text, is_final=True)
@@ -299,7 +299,7 @@ class VLLMRealtimeClient:
                     await result
 
         elif msg_type == "response.done":
-            logger.info(f"RESULT response.done: {data}")
+            #logger.info(f"RESULT response.done: {data}")
             self._transcription_completed.set()
             response = data.get("response", {})
             output = response.get("output", [])
