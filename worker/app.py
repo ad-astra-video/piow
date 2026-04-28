@@ -478,8 +478,8 @@ class LiveTranscriptionWorker:
 
     _audio_frame_count: int = 0
     _resampler: av.AudioResampler = av.AudioResampler(format='s16', layout='mono', rate=16000)
-    # 80ms @ 16kHz s16 mono = 16000 * 0.08 * 2 bytes = 2560 bytes
-    _SEND_CHUNK_BYTES: int = 2560
+    # 160ms @ 16kHz s16 mono = 16000 * 0.16 * 2 bytes = 5120 bytes
+    _SEND_CHUNK_BYTES: int = 5120
     _audio_buffer: bytes = b""
 
     @model_loader

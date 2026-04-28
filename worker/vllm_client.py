@@ -253,7 +253,6 @@ class VLLMRealtimeClient:
         msg_type = data.get("type")
         
         # VLLM uses OpenAI-compatible realtime API event types
-        # Handle transcription events - log ALL delta events even if empty
         if msg_type == "transcription.delta":
             # Forward raw vLLM event payload as-is to preserve provider schema.
             delta = data.get("delta", "")
