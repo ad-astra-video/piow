@@ -65,6 +65,7 @@ class SSERelay:
         # DB persistence
         self._session_store = session_store
         self._pending_segments: List[str] = []  # final segments not yet flushed
+        self._pending_timestamps: List[Dict[str, Any]] = []
 
     async def start(self):
         """Start the SSE relay task."""
@@ -325,6 +326,12 @@ class SSERelay:
                 text = (message.get("text") or "").strip()
                 if text:
                     self._pending_segments.append(text)
+            if (
+                self._session_store is not None
+                and message.get("type") == "text_timestamps"
+                and isinstance(message.get("words"), list)
+            ):
+                self._pending_timestamps.append(message)
 
     async def _flush_loop(self):
         """Periodically flush buffered transcription segments to the database."""
@@ -337,9 +344,12 @@ class SSERelay:
 
     async def _flush_pending_segments(self):
         """Write any buffered segments to the database and clear the buffer."""
-        if not self._pending_segments or self._session_store is None:
+        if self._session_store is None:
+            return
+        if not self._pending_segments and not self._pending_timestamps:
             return
         segments, self._pending_segments = self._pending_segments, []
+        timestamp_segments, self._pending_timestamps = self._pending_timestamps, []
         for text in segments:
             try:
                 await self._session_store.update_stream_session(
@@ -351,13 +361,26 @@ class SSERelay:
                     self.stream_id, exc
                 )
         # Incrementally build the transcriptions row for history/recents
-        try:
-            await self._session_store.upsert_stream_transcription(self.stream_id, segments)
-        except Exception as exc:
-            logger.warning(
-                "Failed to upsert live transcription for stream %s: %s",
-                self.stream_id, exc
-            )
+        if segments:
+            try:
+                await self._session_store.upsert_stream_transcription(self.stream_id, segments)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to upsert live transcription for stream %s: %s",
+                    self.stream_id, exc
+                )
+
+        for ts_payload in timestamp_segments:
+            try:
+                await self._session_store.update_stream_session(
+                    self.stream_id, {"timestamp_segment": ts_payload}
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist timestamp segment for stream %s: %s",
+                    self.stream_id,
+                    exc,
+                )
 
     @staticmethod
     def _decode_possible_json(value: Any) -> Any:
@@ -413,6 +436,9 @@ class SSERelay:
         msg_type = payload.get("type")
         if isinstance(msg_type, str):
             if msg_type in ("transcription", "status", "error", "translation"):
+                return [payload]
+
+            if msg_type in ("text_timestamps", "text_timestamps.error"):
                 return [payload]
 
             if msg_type == "transcription.delta":

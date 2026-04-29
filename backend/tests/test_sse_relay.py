@@ -361,6 +361,68 @@ class TestSSERelayHandleEvent(unittest.IsolatedAsyncioTestCase):
 
         ws.send_json.assert_called_once_with({"type": "transcription.delta", "delta": "partial text", "extra": {"a": 1}})
 
+    async def test_handle_text_timestamps_passthrough(self):
+        """text_timestamps events are forwarded unchanged."""
+        from sse_relay import SSERelay
+        relay = SSERelay(data_url="http://localhost:9999/stream/data", stream_id="test-stream")
+
+        ws = AsyncMock()
+        ws.closed = False
+        relay.add_client(ws)
+
+        event = {
+            "event": "message",
+            "data": {
+                "type": "text_timestamps",
+                "window_id": 3,
+                "transcript": "hello world",
+                "words": [{"word": "hello", "start": 0.1, "end": 0.5}],
+            },
+            "id": None,
+        }
+
+        await relay._handle_event(event)
+
+        ws.send_json.assert_called_once_with(event["data"])
+
+
+class TestSSERelayPersistence(unittest.IsolatedAsyncioTestCase):
+    """Test DB buffering behavior for transcription and timestamp segments."""
+
+    async def test_flush_persists_timestamp_segments(self):
+        from sse_relay import SSERelay
+
+        session_store = AsyncMock()
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=session_store,
+        )
+
+        relay._pending_timestamps.append(
+            {
+                "type": "text_timestamps",
+                "window_id": 1,
+                "transcript": "hello",
+                "words": [{"word": "hello", "start": 0.0, "end": 0.4}],
+            }
+        )
+
+        await relay._flush_pending_segments()
+
+        session_store.update_stream_session.assert_called_once_with(
+            "test-stream",
+            {
+                "timestamp_segment": {
+                    "type": "text_timestamps",
+                    "window_id": 1,
+                    "transcript": "hello",
+                    "words": [{"word": "hello", "start": 0.0, "end": 0.4}],
+                }
+            },
+        )
+        session_store.upsert_stream_transcription.assert_not_called()
+
 
 class TestSSERelayRegistry(unittest.IsolatedAsyncioTestCase):
     """Test the global relay registry functions."""

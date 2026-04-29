@@ -322,7 +322,8 @@ class SessionStore:
             "updated_at": now,
             "provider_session": provider_session_data,
             "total_audio_bytes": 0,
-            "transcription_segments": []
+            "transcription_segments": [],
+            "text_timestamps": [],
         }
 
         try:
@@ -346,6 +347,7 @@ class SessionStore:
                 "provider_session": provider_session_data,
                 "total_audio_bytes": 0,
                 "transcription_segments": [],
+                "text_timestamps": [],
             }).execute()
         except Exception as e:
             logger.warning(f"Failed to persist stream session to Supabase, using cache only: {e}")
@@ -406,6 +408,7 @@ class SessionStore:
         """Update stream session with new data."""
         now = time.time()
         segments_to_append = update_data.get("transcription_segment")
+        timestamp_segment = update_data.get("timestamp_segment")
         audio_bytes = update_data.get("audio_bytes", 0)
 
         # Update cache
@@ -414,6 +417,10 @@ class SessionStore:
             if segments_to_append:
                 self._stream_sessions_cache[stream_id]["transcription_segments"].append(
                     segments_to_append
+                )
+            if isinstance(timestamp_segment, dict):
+                self._stream_sessions_cache[stream_id].setdefault("text_timestamps", []).append(
+                    timestamp_segment
                 )
             if audio_bytes:
                 self._stream_sessions_cache[stream_id]["total_audio_bytes"] += audio_bytes
@@ -425,9 +432,25 @@ class SessionStore:
                 db_update["total_audio_bytes"] = self._stream_sessions_cache.get(stream_id, {}).get("total_audio_bytes", audio_bytes)
             if segments_to_append:
                 db_update["transcription_segments"] = self._stream_sessions_cache.get(stream_id, {}).get("transcription_segments", [])
+            if isinstance(timestamp_segment, dict):
+                db_update["text_timestamps"] = self._stream_sessions_cache.get(stream_id, {}).get("text_timestamps", [])
             supabase.table("stream_sessions").update(db_update).eq("id", stream_id).execute()
         except Exception as e:
             logger.warning(f"Failed to update stream session in Supabase: {e}")
+
+        if isinstance(timestamp_segment, dict):
+            transcription_id = self._stream_sessions_cache.get(stream_id, {}).get("transcription_id")
+            if transcription_id:
+                try:
+                    supabase.table("transcriptions").update({
+                        "segments": self._stream_sessions_cache.get(stream_id, {}).get("text_timestamps", []),
+                    }).eq("id", transcription_id).execute()
+                except Exception as e:
+                    logger.warning(
+                        "Failed to persist text_timestamps into transcriptions for stream %s: %s",
+                        stream_id,
+                        e,
+                    )
 
     async def close_stream_session(self, stream_id: str, final_text: str = ""):
         """Close a stream session."""
@@ -495,6 +518,7 @@ class SessionStore:
 
         new_text = "\n".join(seg for seg in new_segments if seg)
         existing_id: Optional[str] = stream_data.get("transcription_id")
+        existing_segments = stream_data.get("text_timestamps") or []
 
         if existing_id:
             # Append new text to the existing row
@@ -505,6 +529,7 @@ class SessionStore:
                 supabase.table("transcriptions").update({
                     "text": full_text,
                     "word_count": len(full_text.split()),
+                    "segments": existing_segments,
                 }).eq("id", existing_id).execute()
                 if stream_id in self._stream_sessions_cache:
                     self._stream_sessions_cache[stream_id]["_live_text"] = full_text
@@ -522,6 +547,7 @@ class SessionStore:
                 "language": language,
                 "duration": 0,
                 "word_count": word_count,
+                "segments": existing_segments,
                 "status": "processing",
                 "source_type": "stream",
             }
@@ -645,6 +671,7 @@ class SessionStore:
             "provider_session": row.get("provider_session", {}),
             "total_audio_bytes": row.get("total_audio_bytes", 0),
             "transcription_segments": row.get("transcription_segments", []),
+            "text_timestamps": row.get("text_timestamps", []),
             "final_text": row.get("final_text"),
         }
 

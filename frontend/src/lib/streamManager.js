@@ -87,6 +87,7 @@ class StreamManager {
       status: 'Ready.',
       transcriptEntries: [],
       partialTranscript: '',
+      textTimestamps: [],
       errorMessage: '',
     };
     this.listeners = new Set();
@@ -286,6 +287,7 @@ class StreamManager {
         errorMessage: '',
         transcriptEntries: [],
         partialTranscript: '',
+        textTimestamps: [],
         status: statusLabels[sourceType] || 'Getting user media...',
       });
 
@@ -355,6 +357,21 @@ class StreamManager {
                 partialTranscript: '',
                 status: 'Connected.',
               });
+            } else if (msgType === 'text_timestamps') {
+              const words = Array.isArray(message.words) ? message.words : [];
+              const transcript = typeof message.transcript === 'string' ? message.transcript : '';
+              const windowId = message.window_id;
+              const next = [...this.state.textTimestamps, { windowId, transcript, words }];
+              this._setState({
+                textTimestamps: next.slice(-50),
+                status: 'Connected.',
+              });
+            } else if (msgType === 'text_timestamps.error') {
+              const errorText =
+                (typeof message.error === 'string' && message.error) ||
+                (typeof message.text === 'string' && message.text) ||
+                'Timestamp alignment error';
+              this._setState({ errorMessage: errorText, status: 'Connected.' });
             } else if (msgType === 'status') {
               this._setState({ status: message.text });
             } else if (msgType === 'error') {

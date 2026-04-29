@@ -226,6 +226,58 @@ class TestSessionStoreStreamPersistence(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(sessions._stream_payload_indicates_running({"status": "stopped"}))
         self.assertFalse(sessions._stream_payload_indicates_running({"is_running": False}))
 
+    async def test_update_stream_session_persists_timestamp_segments(self):
+        sessions = self._import_sessions_with_stubbed_supabase()
+
+        store = sessions.SessionStore()
+        stream_id = "stream-3"
+        store._stream_sessions_cache[stream_id] = {
+            "id": stream_id,
+            "session_id": "session-1",
+            "language": "en",
+            "status": "active",
+            "created_at": 100.0,
+            "updated_at": 140.0,
+            "provider_session": {},
+            "total_audio_bytes": 0,
+            "transcription_segments": [],
+            "text_timestamps": [],
+            "transcription_id": "tx-1",
+        }
+
+        stream_sessions_table = MagicMock()
+        stream_sessions_table.update.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[])
+
+        transcriptions_table = MagicMock()
+        transcriptions_table.update.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[])
+
+        supabase_mock = MagicMock()
+
+        def table_side_effect(table_name):
+            if table_name == "stream_sessions":
+                return stream_sessions_table
+            if table_name == "transcriptions":
+                return transcriptions_table
+            raise AssertionError(f"Unexpected table: {table_name}")
+
+        supabase_mock.table.side_effect = table_side_effect
+
+        payload = {
+            "type": "text_timestamps",
+            "window_id": 2,
+            "transcript": "hello world",
+            "words": [{"word": "hello", "start": 0.0, "end": 0.4}],
+        }
+
+        with patch.object(sessions, "supabase", supabase_mock):
+            await store.update_stream_session(stream_id, {"timestamp_segment": payload})
+
+        self.assertEqual(store._stream_sessions_cache[stream_id]["text_timestamps"], [payload])
+        transcriptions_table.update.assert_called_once()
+        update_payload = transcriptions_table.update.call_args[0][0]
+        self.assertIn("segments", update_payload)
+        self.assertEqual(update_payload["segments"], [payload])
+
 
 if __name__ == "__main__":
     unittest.main()
