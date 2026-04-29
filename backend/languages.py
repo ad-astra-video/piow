@@ -32,7 +32,15 @@ async def get_languages(request):
         {"code": "ja", "name": "Japanese"}
     ]
 
+    # Translation pairs: English → any language, and any language → English
+    non_english = [lang for lang in languages if lang["code"] != "en"]
+    translation_pairs = (
+        [{"source": "en", "source_name": "English", "target": lang["code"], "target_name": lang["name"]} for lang in non_english] +
+        [{"source": lang["code"], "source_name": lang["name"], "target": "en", "target_name": "English"} for lang in non_english]
+    )
+
     return web.json_response({
         "languages": languages,
-        "count": len(languages)
+        "count": len(languages),
+        "translation_pairs": translation_pairs,
     })

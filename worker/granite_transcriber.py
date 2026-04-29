@@ -23,6 +23,15 @@ WORKER_DIR = Path(__file__).resolve().parent
 DEFAULT_MODEL_DIRNAME = "granite-4.0-1b-speech"
 DEFAULT_MODEL_ID = "ibm-granite/granite-4.0-1b-speech"
 DEFAULT_TRANSCRIBE_PROMPT = "can you transcribe the speech into a written format?"
+
+LANGUAGE_NAMES = {
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "pt": "Portuguese",
+    "ja": "Japanese",
+}
 PUBLIC_MODEL_NAME = "granite-4.0-1b"
 ENGLISH_PUNCT_MODEL_ID = os.environ.get("ENGLISH_PUNCT_MODEL_ID", "pcs_en")
 MULTILINGUAL_PUNCT_MODEL_ID = os.environ.get(
@@ -123,7 +132,7 @@ class Granite4Transcriber:
         """Check if the Granite backend is available and loaded."""
         return self.is_loaded
 
-    def transcribe(self, audio_source: "str | bytes", language: str = "en", punctuation_pass: bool = False) -> Dict[str, Any]:
+    def transcribe(self, audio_source: "str | bytes", language: str = "en", punctuation_pass: bool = False, source_language: Optional[str] = None, target_language: Optional[str] = None) -> Dict[str, Any]:
         """Transcribe audio using Granite 4.0 on CPU."""
         start_time = time.time()
 
@@ -145,7 +154,7 @@ class Granite4Transcriber:
 
             audio = self._decode_audio_to_array(audio_source)
             logger.info("Audio converted to array with shape %s", audio.shape)
-            output_text = self._run_transcription(audio)
+            output_text = self._run_transcription(audio, source_language=source_language, target_language=target_language)
             logger.info("Raw transcription result: %s", output_text)
             if punctuation_pass and output_text:
                 output_text = self._apply_punctuation(output_text, language)
@@ -256,8 +265,8 @@ class Granite4Transcriber:
                 "hardware": "cpu",
             }
 
-    def _run_transcription(self, audio: np.ndarray) -> str:
-        prompt = self._build_prompt()
+    def _run_transcription(self, audio: np.ndarray, source_language: Optional[str] = None, target_language: Optional[str] = None) -> str:
+        prompt = self._build_prompt(source_language=source_language, target_language=target_language)
 
         with torch.inference_mode():
             model_inputs = self.processor(
@@ -401,11 +410,17 @@ class Granite4Transcriber:
 
         return "".join(pieces).strip()
 
-    def _build_prompt(self) -> str:
+    def _build_prompt(self, source_language: Optional[str] = None, target_language: Optional[str] = None) -> str:
+        if source_language and target_language and source_language.lower() != target_language.lower():
+            src_name = LANGUAGE_NAMES.get(source_language.lower(), source_language)
+            tgt_name = LANGUAGE_NAMES.get(target_language.lower(), target_language)
+            content = f"<|audio|>translate from {src_name} to {tgt_name}"
+        else:
+            content = f"<|audio|>{DEFAULT_TRANSCRIBE_PROMPT}"
         chat = [
             {
                 "role": "user",
-                "content": f"<|audio|>{DEFAULT_TRANSCRIBE_PROMPT}",
+                "content": content,
             }
         ]
         return self.tokenizer.apply_chat_template(

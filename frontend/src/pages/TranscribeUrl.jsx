@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Link as LinkIcon, Loader2, CheckCircle, AlertCircle, Download, Copy } from 'lucide-react';
+import { Link as LinkIcon, Loader2, CheckCircle, AlertCircle, Download, Copy, HelpCircle } from 'lucide-react';
 import { api } from '../lib/api';
 
 export default function TranscribeUrl() {
   const [url, setUrl] = useState('');
-  const [language, setLanguage] = useState('en');
   const [languages, setLanguages] = useState([]);
   const [punctuationPass, setPunctuationPass] = useState(true);
+  const [translate, setTranslate] = useState(false);
+  const [fromLang, setFromLang] = useState('en');
+  const [toLang, setToLang] = useState('es');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -15,13 +17,34 @@ export default function TranscribeUrl() {
     api.getLanguages().then(res => setLanguages(res.languages || [])).catch(() => {});
   }, []);
 
+  const nonEnglishLangs = languages.filter(l => l.code !== 'en');
+  const toLangLocked = fromLang !== 'en';
+
+  const handleFromLangChange = (code) => {
+    setFromLang(code);
+    if (code !== 'en') {
+      setToLang('en');
+    } else if (toLang === 'en') {
+      setToLang(nonEnglishLangs[0]?.code || 'es');
+    }
+  };
+
   const handleSubmit = async () => {
     if (!url.trim()) return;
     setLoading(true);
     setError('');
     setResult(null);
     try {
-      const res = await api.transcribeUrl({ audio_url: url.trim(), language, punctuation_pass: punctuationPass });
+      const body = {
+        audio_url: url.trim(),
+        language: translate ? fromLang : 'en',
+        punctuation_pass: punctuationPass,
+      };
+      if (translate) {
+        body.source_language = fromLang;
+        body.target_language = toLangLocked ? 'en' : toLang;
+      }
+      const res = await api.transcribeUrl(body);
       setResult(res);
     } catch (err) {
       setError(err.message || 'Transcription failed');
@@ -64,15 +87,6 @@ export default function TranscribeUrl() {
             </div>
           </div>
 
-          <div className="form-row">
-            <label>Language</label>
-            <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-              {languages.map((lang) => (
-                <option key={lang.code} value={lang.code}>{lang.name}</option>
-              ))}
-            </select>
-          </div>
-
           <div className="form-row form-row-check">
             <label>
               <input
@@ -84,6 +98,53 @@ export default function TranscribeUrl() {
             </label>
           </div>
 
+          <div className="form-row form-row-check">
+            <label>
+              <input
+                type="checkbox"
+                checked={translate}
+                onChange={(e) => setTranslate(e.target.checked)}
+              />
+              Translate
+            </label>
+          </div>
+
+          {translate && (
+            <div className="translate-pair">
+              <div className="form-row">
+                <label>From</label>
+                <select value={fromLang} onChange={(e) => handleFromLangChange(e.target.value)}>
+                  {languages.map((lang) => (
+                    <option key={lang.code} value={lang.code}>{lang.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-row">
+                <label className="translate-to-label">
+                  To
+                  {toLangLocked && (
+                    <span className="help-icon" aria-label="Only translation to English is supported when the source language is not English">
+                      <HelpCircle size={13} />
+                      <span className="help-tooltip">Non-English audio can only be translated to English.</span>
+                    </span>
+                  )}
+                </label>
+                <select
+                  value={toLangLocked ? 'en' : toLang}
+                  onChange={(e) => setToLang(e.target.value)}
+                  disabled={toLangLocked}
+                >
+                  {toLangLocked
+                    ? <option value="en">English</option>
+                    : nonEnglishLangs.map((lang) => (
+                        <option key={lang.code} value={lang.code}>{lang.name}</option>
+                      ))
+                  }
+                </select>
+              </div>
+            </div>
+          )}
+
           <button
             className="primary-button full-width"
             onClick={handleSubmit}
@@ -93,6 +154,17 @@ export default function TranscribeUrl() {
           </button>
 
           {error && <p className="error-banner"><AlertCircle size={16} /> {error}</p>}
+
+          {languages.length > 0 && (
+            <div className="supported-langs">
+              <span className="supported-langs-label">Supported languages</span>
+              <div className="supported-langs-list">
+                {languages.map((lang) => (
+                  <span key={lang.code} className="lang-tag">{lang.name}</span>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         {result && (
@@ -106,6 +178,7 @@ export default function TranscribeUrl() {
             </div>
             <div className="result-meta">
               <span>Language: {result.language}</span>
+              {result.target_language && <span>→ {result.target_language.toUpperCase()}</span>}
               {result.duration ? <span>Duration: {result.duration}s</span> : null}
               {result.word_count ? <span>Words: {result.word_count}</span> : null}
             </div>

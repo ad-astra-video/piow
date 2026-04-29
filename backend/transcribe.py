@@ -346,6 +346,8 @@ async def transcribe_file(request):
         filename = "uploaded_audio"
         language = "en"
         punctuation_pass = False
+        source_language = None
+        target_language = None
 
         async for part in reader:
             if part.name == 'file':
@@ -356,6 +358,10 @@ async def transcribe_file(request):
             elif part.name == 'punctuation_pass':
                 val = (await part.text()).strip().lower()
                 punctuation_pass = val in ('1', 'true', 'yes')
+            elif part.name == 'source_language':
+                source_language = (await part.text()).strip() or None
+            elif part.name == 'target_language':
+                target_language = (await part.text()).strip() or None
 
         if not file_data:
             return web.json_response({"error": "No file provided"}, status=400)
@@ -388,7 +394,8 @@ async def transcribe_file(request):
             try:
                 job_result = await provider.create_transcription_job(
                     audio_url=provider_audio_url, language=language, format="json",
-                    punctuation_pass=punctuation_pass
+                    punctuation_pass=punctuation_pass,
+                    source_language=source_language, target_language=target_language
                 )
                 break
             except Exception as provider_error:
@@ -429,6 +436,8 @@ async def transcribe_file(request):
             'status': job_result.get('status', 'completed'),
             'text': job_result.get('text', ''),
             'language': job_result.get('language', language),
+            'source_language': source_language or job_result.get('language', language),
+            'target_language': target_language,
             'duration': job_result.get('duration'),
             'word_count': job_result.get('word_count'),
             'segments': job_result.get('segments'),
@@ -461,6 +470,8 @@ async def transcribe_url(request):
         language = data.get('language', 'en')
         format = data.get('format', 'json')
         punctuation_pass = bool(data.get('punctuation_pass', False))
+        source_language = data.get('source_language') or None
+        target_language = data.get('target_language') or None
 
         if not audio_url:
             return web.json_response({"error": "Missing audio_url parameter"}, status=400)
@@ -492,7 +503,8 @@ async def transcribe_url(request):
             try:
                 job_result = await provider.create_transcription_job(
                     audio_url=provider_audio_url, language=language, format=format,
-                    punctuation_pass=punctuation_pass
+                    punctuation_pass=punctuation_pass,
+                    source_language=source_language, target_language=target_language
                 )
                 break
             except Exception as provider_error:
@@ -533,6 +545,8 @@ async def transcribe_url(request):
             'status': job_result.get('status', 'completed'),
             'text': job_result.get('text', ''),
             'language': job_result.get('language', language),
+            'source_language': source_language or job_result.get('language', language),
+            'target_language': target_language,
             'duration': job_result.get('duration'),
             'word_count': job_result.get('word_count'),
             'segments': job_result.get('segments'),

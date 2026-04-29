@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileAudio, Loader2, CheckCircle, AlertCircle, Download, Copy } from 'lucide-react';
+import { Upload, FileAudio, Loader2, CheckCircle, AlertCircle, Download, Copy, HelpCircle } from 'lucide-react';
 import { api } from '../lib/api';
 
 export default function TranscribeFile() {
   const [file, setFile] = useState(null);
-  const [language, setLanguage] = useState('en');
   const [languages, setLanguages] = useState([]);
   const [punctuationPass, setPunctuationPass] = useState(true);
+  const [translate, setTranslate] = useState(false);
+  const [fromLang, setFromLang] = useState('en');
+  const [toLang, setToLang] = useState('es');
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -16,6 +18,18 @@ export default function TranscribeFile() {
   useEffect(() => {
     api.getLanguages().then(res => setLanguages(res.languages || [])).catch(() => {});
   }, []);
+
+  const nonEnglishLangs = languages.filter(l => l.code !== 'en');
+  const toLangLocked = fromLang !== 'en';
+
+  const handleFromLangChange = (code) => {
+    setFromLang(code);
+    if (code !== 'en') {
+      setToLang('en');
+    } else if (toLang === 'en') {
+      setToLang(nonEnglishLangs[0]?.code || 'es');
+    }
+  };
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -37,8 +51,12 @@ export default function TranscribeFile() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('language', language);
+      formData.append('language', translate ? fromLang : 'en');
       formData.append('punctuation_pass', punctuationPass ? 'true' : 'false');
+      if (translate) {
+        formData.append('source_language', fromLang);
+        formData.append('target_language', toLangLocked ? 'en' : toLang);
+      }
       const res = await api.transcribeFile(formData);
       setResult(res);
     } catch (err) {
@@ -92,15 +110,6 @@ export default function TranscribeFile() {
             )}
           </div>
 
-          <div className="form-row">
-            <label>Language</label>
-            <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-              {languages.map((lang) => (
-                <option key={lang.code} value={lang.code}>{lang.name}</option>
-              ))}
-            </select>
-          </div>
-
           <div className="form-row form-row-check">
             <label>
               <input
@@ -112,6 +121,53 @@ export default function TranscribeFile() {
             </label>
           </div>
 
+          <div className="form-row form-row-check">
+            <label>
+              <input
+                type="checkbox"
+                checked={translate}
+                onChange={(e) => setTranslate(e.target.checked)}
+              />
+              Translate
+            </label>
+          </div>
+
+          {translate && (
+            <div className="translate-pair">
+              <div className="form-row">
+                <label>From</label>
+                <select value={fromLang} onChange={(e) => handleFromLangChange(e.target.value)}>
+                  {languages.map((lang) => (
+                    <option key={lang.code} value={lang.code}>{lang.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-row">
+                <label className="translate-to-label">
+                  To
+                  {toLangLocked && (
+                    <span className="help-icon" aria-label="Only translation to English is supported when the source language is not English">
+                      <HelpCircle size={13} />
+                      <span className="help-tooltip">Non-English audio can only be translated to English.</span>
+                    </span>
+                  )}
+                </label>
+                <select
+                  value={toLangLocked ? 'en' : toLang}
+                  onChange={(e) => setToLang(e.target.value)}
+                  disabled={toLangLocked}
+                >
+                  {toLangLocked
+                    ? <option value="en">English</option>
+                    : nonEnglishLangs.map((lang) => (
+                        <option key={lang.code} value={lang.code}>{lang.name}</option>
+                      ))
+                  }
+                </select>
+              </div>
+            </div>
+          )}
+
           <button
             className="primary-button full-width"
             onClick={handleSubmit}
@@ -121,6 +177,17 @@ export default function TranscribeFile() {
           </button>
 
           {error && <p className="error-banner"><AlertCircle size={16} /> {error}</p>}
+
+          {languages.length > 0 && (
+            <div className="supported-langs">
+              <span className="supported-langs-label">Supported languages</span>
+              <div className="supported-langs-list">
+                {languages.map((lang) => (
+                  <span key={lang.code} className="lang-tag">{lang.name}</span>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         {result && (
@@ -132,8 +199,9 @@ export default function TranscribeFile() {
                 <button className="icon-btn" onClick={downloadJson} title="Download JSON"><Download size={16} /></button>
               </div>
             </div>
-            <div className="result-meta">
+          <div className="result-meta">
               <span>Language: {result.language}</span>
+              {result.target_language && <span>→ {result.target_language.toUpperCase()}</span>}
               {result.duration ? <span>Duration: {result.duration}s</span> : null}
               {result.word_count ? <span>Words: {result.word_count}</span> : null}
             </div>

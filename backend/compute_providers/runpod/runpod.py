@@ -44,6 +44,8 @@ class RunpodComputeProvider(BaseComputeProvider):
         language: str = "en",
         format: str = "json",
         punctuation_pass: bool = False,
+        source_language: Optional[str] = None,
+        target_language: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -77,6 +79,10 @@ class RunpodComputeProvider(BaseComputeProvider):
                 **kwargs
             }
         }
+        if source_language:
+            request_body["input"]["source_language"] = source_language
+        if target_language:
+            request_body["input"]["target_language"] = target_language
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",

@@ -75,6 +75,8 @@ class LivepeerComputeProvider(BaseComputeProvider):
         language: str = "en",
         format: str = "json",
         punctuation_pass: bool = False,
+        source_language: Optional[str] = None,
+        target_language: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -103,6 +105,10 @@ class LivepeerComputeProvider(BaseComputeProvider):
             "format": format,
             "punctuation_pass": punctuation_pass,
         }
+        if source_language:
+            request_body["source_language"] = source_language
+        if target_language:
+            request_body["target_language"] = target_language
 
         livepeer_header = self.build_livepeer_batch_header(
             request={"job": "transcribe"},
