@@ -12,7 +12,9 @@ export default function HistoryPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await api.getHistory({ type: filter === 'all' ? undefined : filter, limit: 100 });
+      const params = { limit: 100 };
+      if (filter !== 'all') params.type = filter;
+      const res = await api.getHistory(params);
       setItems(res.items || []);
     } catch (e) {
       console.error(e);
