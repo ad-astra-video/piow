@@ -1,6 +1,11 @@
-import React from 'react';
-import { Mic, MicOff, Radio, AlertCircle } from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react';
+import { Mic, MicOff, Radio, AlertCircle, ChevronsDown } from 'lucide-react';
 import useLiveTranscription from '../hooks/useLiveTranscription';
+
+function formatSentences(text) {
+  // Insert a newline after sentence-ending punctuation followed by whitespace
+  return text.replace(/([.!?]+)\s+/g, '$1\n');
+}
 
 export default function TranscribeStream({ accessToken }) {
   const {
@@ -12,6 +17,15 @@ export default function TranscribeStream({ accessToken }) {
     start,
     stop,
   } = useLiveTranscription();
+
+  const scrollRef = useRef(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [transcriptEntries, partialTranscript, autoScroll]);
 
   const transcriptCount = transcriptEntries.length + (partialTranscript ? 1 : 0);
   const isLive = isStarted && !errorMessage;
@@ -52,8 +66,16 @@ export default function TranscribeStream({ accessToken }) {
               <p className="eyebrow">Output</p>
               <h2>Transcript feed</h2>
             </div>
+            <button
+              className={`autoscroll-toggle ${autoScroll ? 'active' : ''}`}
+              onClick={() => setAutoScroll(v => !v)}
+              title={autoScroll ? 'Auto-scroll on' : 'Auto-scroll off'}
+            >
+              <ChevronsDown size={14} />
+              {autoScroll ? 'Auto-scroll on' : 'Auto-scroll off'}
+            </button>
           </div>
-          <div className="transcript-scroll">
+          <div className="transcript-scroll" ref={scrollRef}>
             {transcriptEntries.length === 0 && !partialTranscript ? (
               <div className="empty-state">
                 <p>No transcript yet.</p>
@@ -63,15 +85,16 @@ export default function TranscribeStream({ accessToken }) {
             {transcriptEntries.map((entry, index) => (
               <article className="transcript-entry" key={`${entry}-${index}`}>
                 <span className="entry-badge">Final</span>
-                <p>{entry}</p>
+                <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(entry)}</p>
               </article>
             ))}
             {partialTranscript ? (
               <article className="transcript-entry partial-entry">
                 <span className="entry-badge">Live</span>
-                <p>{partialTranscript}</p>
+                <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(partialTranscript)}</p>
               </article>
             ) : null}
+            <div className="transcript-scroll-spacer" />
           </div>
         </section>
       </div>

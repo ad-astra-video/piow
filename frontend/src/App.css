@@ -518,11 +518,21 @@ html, body {
 .compact-strip { margin-bottom: 0.75rem; }
 
 .transcript-panel { padding: 1.25rem; min-height: 320px; display: flex; flex-direction: column; }
-.transcript-heading { margin-bottom: 0.75rem; }
+.transcript-heading { margin-bottom: 0.75rem; justify-content: space-between; align-items: flex-start; }
+.autoscroll-toggle {
+  display: flex; align-items: center; gap: 0.3rem;
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 0.3rem 0.6rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05); color: var(--text-muted); cursor: pointer; transition: all 0.15s;
+}
+.autoscroll-toggle.active { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb, 99,102,241), 0.1); }
+.autoscroll-toggle:hover { background: rgba(255,255,255,0.1); }
 .eyebrow { font-size: 0.65rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; margin: 0; }
+.panel-heading { display: flex; }
 .panel-heading h2 { margin: 0.2rem 0 0; font-size: 1.05rem; font-weight: 700; }
 
-.transcript-scroll { flex: 1; overflow-y: auto; max-height: 420px; display: flex; flex-direction: column; gap: 0.5rem; }
+.transcript-scroll { flex: 1; overflow-y: auto; max-height: 420px; display: flex; flex-direction: column; gap: 0.5rem; scroll-behavior: smooth; }
+.transcript-scroll-spacer { min-height: 4.5rem; flex-shrink: 0; }
 .transcript-entry {
   padding: 0.6rem 0.8rem;
   border-radius: 8px;
