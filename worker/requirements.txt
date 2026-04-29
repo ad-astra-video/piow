@@ -22,7 +22,7 @@ huggingface-hub>=0.31.0
 torch>=2.6.0
 torchaudio>=2.6.0
 transformers>=4.44.0
-qwen-asr>=0.3.0
+qwen-asr>=0.0.6
 punctuators>=0.0.7
 sentencepiece>=0.2.0
 
