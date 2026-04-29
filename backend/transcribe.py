@@ -24,7 +24,7 @@ try:
 except ImportError:
     av = None
 
-from auth import no_auth, require_user_auth
+from auth import no_auth, require_user_auth, track_usage
 from payments.payment_strategy import x402_or_subscription
 from supabase_client import supabase
 from compute_providers.provider_manager import ComputeProviderManager
@@ -327,6 +327,7 @@ async def _safe_download_audio_bytes(audio_url: str) -> tuple[bytes, str]:
 # TRANSCRIPTION ENDPOINTS
 # ============================================================================
 
+@track_usage
 @x402_or_subscription(service_type='transcribe_cpu')
 async def transcribe_file(request):
     """
@@ -441,6 +442,7 @@ async def transcribe_file(request):
         return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
+@track_usage
 @x402_or_subscription(service_type='transcribe_cpu')
 async def transcribe_url(request):
     """
@@ -552,6 +554,7 @@ def _is_valid_streaming_session(session_result):
     return bool(whip_url and str(whip_url).strip())
 
 
+@track_usage
 @x402_or_subscription(service_type='transcribe_gpu')
 async def transcribe_stream(request):
     """Handle real-time transcription streaming."""

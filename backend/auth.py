@@ -71,6 +71,24 @@ def require_user_auth(handler):
     return handler
 
 
+def track_usage(handler):
+    """Marker decorator: opt a route into ``api_usage`` tracking.
+
+    Only routes decorated with ``@track_usage`` will insert a row into the
+    ``api_usage`` table on successful completion.  All other authenticated
+    routes are unaffected.
+
+    Usage::
+
+        @track_usage
+        @x402_or_subscription(service_type='transcribe_cpu')
+        async def transcribe_file(request):
+            ...
+    """
+    handler._track_usage = True
+    return handler
+
+
 def require_agent_auth(handler):
     """Marker decorator: require agent HMAC-SHA256 authentication for this endpoint.
 
@@ -300,6 +318,10 @@ def _record_usage(request, response, start_time: float) -> None:
         status_code = response.status
         success = 200 <= status_code < 300
 
+        # Only record usage for completed (successful) service calls
+        if not success:
+            return
+
         # Calculate processing time
         processing_time_ms = int((time.time() - start_time) * 1000)
 
@@ -352,7 +374,7 @@ def _record_usage(request, response, start_time: float) -> None:
             "user_id": user_id,
             "endpoint": endpoint,
             "method": method,
-            "success": success,
+            "success": True,
             "cost_usdc_cents": cost_usdc_cents,
             "metadata": metadata
         }
@@ -417,8 +439,9 @@ async def auth_middleware(request, handler):
     except Exception:
         raise
 
-    # Step 6: Usage tracking
-    _record_usage(request, response, start_time)
+    # Step 6: Usage tracking (only for routes decorated with @track_usage)
+    if getattr(handler, '_track_usage', False):
+        _record_usage(request, response, start_time)
 
     return response
 

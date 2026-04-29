@@ -8,7 +8,7 @@ import aiohttp.web as web
 import logging
 import json
 
-from auth import no_auth, require_user_auth
+from auth import no_auth, require_user_auth, track_usage
 from payments.payment_strategy import x402_or_subscription
 from supabase_client import supabase
 from compute_providers.provider_manager import ComputeProviderManager
@@ -124,6 +124,7 @@ async def _store_translation_result(request, job_result, original_text, source_l
 # TRANSLATION ENDPOINTS
 # ============================================================================
 
+@track_usage
 @x402_or_subscription(service_type='translate')
 async def translate_text(request):
     """Handle text translation."""
@@ -196,6 +197,7 @@ async def translate_text(request):
         return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
+@track_usage
 @x402_or_subscription(service_type='translate')
 async def translate_transcription(request):
     """Translate an existing transcription by ID."""
