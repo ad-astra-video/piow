@@ -578,7 +578,6 @@ html, body {
 .transcript-panel { padding: 0 1.25rem 1.25rem; min-height: 320px; display: flex; flex-direction: column; }
 .transcript-heading { margin-bottom: 0.75rem; justify-content: space-between; align-items: center; }
 
-/* Compact bar at top of transcript when session is active */
 .transcript-session-bar {
   display: flex;
   align-items: center;
@@ -589,17 +588,120 @@ html, body {
   border-bottom: 1px solid rgba(255,255,255,0.08);
   border-radius: 12px 12px 0 0;
 }
-.session-bar-source {
+.session-bar-left {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text);
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
+.session-bar-player-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.icon-btn-sm {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.icon-btn-sm:hover { background: rgba(255,255,255,0.09); color: var(--text); }
 .session-stop-btn {
   padding: 0.3rem 0.7rem !important;
   font-size: 0.75rem !important;
+}
+
+/* ── Persistent file video container — CSS class controls layout state ── */
+
+/* Setup: rendered inline inside the setup panel area */
+.file-video-container.fvc-setup {
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0,0,0,0.3);
+  max-width: 480px;
+  width: 100%;
+  justify-self: center;
+  margin-top: -0.5rem;
+}
+/* Inline: shown below the session bar inside the transcript panel */
+.file-video-container.fvc-inline {
+  margin: -1rem -1.25rem 1rem;
+  background: rgba(0,0,0,0.4);
+  overflow: hidden;
+}
+/* Hidden: remove from view but keep in DOM so AudioContext stays alive */
+.file-video-container.fvc-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+/* Fullscreen overlay */
+.file-video-container.fvc-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+}
+
+.fvc-video {
+  width: 100%;
+  display: block;
+}
+.fvc-setup .fvc-video   { max-height: 200px; border-radius: 8px; }
+.fvc-inline .fvc-video  { max-height: 240px; }
+.fvc-fullscreen .fvc-video {
+  flex: 1;
+  object-fit: contain;
+  min-height: 0;
+  max-height: none;
+}
+
+/* Fullscreen close button */
+.player-fullscreen-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.player-fullscreen-close:hover { background: rgba(255,255,255,0.15); }
+
+/* Transcript overlay inside fullscreen */
+.player-fullscreen-transcript {
+  flex-shrink: 0;
+  max-height: 30vh;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(255,255,255,0.1);
+  padding: 0.75rem 1rem;
+  overflow-y: auto;
+}
+.player-fullscreen-scroll {
+  max-height: none !important;
+  overflow: visible !important;
 }
 .autoscroll-toggle {
   display: flex; align-items: center; gap: 0.3rem;

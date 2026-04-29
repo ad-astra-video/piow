@@ -213,8 +213,7 @@ class StreamManager {
       this._fileSourceNode.connect(dest);
       this._fileSourceNode.connect(this._fileAudioCtx.destination);
 
-      mediaElement.currentTime = 0;
-      await mediaElement.play();
+      // Playback is intentionally deferred until after the WHIP connection is established.
 
       const audioTrack = dest.stream.getAudioTracks()[0];
       if (!audioTrack) throw new Error('Failed to capture audio track from media element.');
@@ -316,6 +315,11 @@ class StreamManager {
         ws.onopen = () => {
           ws.send(JSON.stringify({ type: 'start_stream', stream_id }));
           this._setState({ status: 'Connected.', isStarted: true });
+          // For file sources, start playback now that the pipeline is ready.
+          if (this._fileMediaElement) {
+            this._fileMediaElement.currentTime = 0;
+            this._fileMediaElement.play().catch(() => {});
+          }
         };
 
         ws.onmessage = (event) => {
