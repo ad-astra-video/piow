@@ -177,7 +177,7 @@ async def _handle_start_stream(ws: web.WebSocketResponse, stream_id: str):
         return
 
     try:
-        relay = await get_or_create_relay(stream_id, data_url)
+        relay = await get_or_create_relay(stream_id, data_url, session_store=session_store)
     except Exception as exc:
         logger.error(f"Failed to create SSE relay for stream {stream_id}: {exc}")
         await ws.send_json({

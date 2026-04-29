@@ -37,18 +37,24 @@ class SSERelay:
             await relay.stop()
     """
 
-    def __init__(self, data_url: str, stream_id: str):
+    # How often (seconds) to flush buffered transcription text to the DB
+    FLUSH_INTERVAL_SECONDS = 5
+
+    def __init__(self, data_url: str, stream_id: str, session_store=None):
         """
         Initialize the SSE relay.
 
         Args:
             data_url: The SSE endpoint URL from the compute provider
             stream_id: The stream session ID for logging and tracking
+            session_store: Optional SessionStore instance used to persist
+                           transcription segments every FLUSH_INTERVAL_SECONDS.
         """
         self.data_url = data_url
         self.stream_id = stream_id
         self.clients: Set[web.WebSocketResponse] = set()
         self._task: Optional[asyncio.Task] = None
+        self._flush_task: Optional[asyncio.Task] = None
         self._http_session: Optional[aiohttp.ClientSession] = None
         self._running = False
         self._reconnect_attempts = 0
@@ -56,6 +62,9 @@ class SSERelay:
         self._base_reconnect_delay = 1.0  # seconds
         self._retry_delay: Optional[float] = None  # Set by SSE retry: field
         self._last_event_id: Optional[str] = None
+        # DB persistence
+        self._session_store = session_store
+        self._pending_segments: List[str] = []  # final segments not yet flushed
 
     async def start(self):
         """Start the SSE relay task."""
@@ -67,6 +76,11 @@ class SSERelay:
             self._relay_loop(),
             name=f"sse-relay-{self.stream_id}"
         )
+        if self._session_store is not None:
+            self._flush_task = asyncio.create_task(
+                self._flush_loop(),
+                name=f"sse-flush-{self.stream_id}"
+            )
         logger.info(f"Started SSE relay for stream {self.stream_id} -> {self.data_url}")
 
     async def stop(self):
@@ -78,6 +92,14 @@ class SSERelay:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        if self._flush_task and not self._flush_task.done():
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+        # Final flush of any remaining buffered segments
+        await self._flush_pending_segments()
         if self._http_session and not self._http_session.closed:
             await self._http_session.close()
             self._http_session = None
@@ -294,6 +316,40 @@ class SSERelay:
         messages = self._normalize_messages(event)
         for message in messages:
             await self._broadcast(message)
+            # Buffer final transcription segments for periodic DB persistence
+            if (
+                self._session_store is not None
+                and message.get("type") == "transcription"
+                and message.get("is_final")
+            ):
+                text = (message.get("text") or "").strip()
+                if text:
+                    self._pending_segments.append(text)
+
+    async def _flush_loop(self):
+        """Periodically flush buffered transcription segments to the database."""
+        while self._running:
+            try:
+                await asyncio.sleep(self.FLUSH_INTERVAL_SECONDS)
+            except asyncio.CancelledError:
+                break
+            await self._flush_pending_segments()
+
+    async def _flush_pending_segments(self):
+        """Write any buffered segments to the database and clear the buffer."""
+        if not self._pending_segments or self._session_store is None:
+            return
+        segments, self._pending_segments = self._pending_segments, []
+        for text in segments:
+            try:
+                await self._session_store.update_stream_session(
+                    self.stream_id, {"transcription_segment": text}
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist transcription segment for stream %s: %s",
+                    self.stream_id, exc
+                )
 
     @staticmethod
     def _decode_possible_json(value: Any) -> Any:
@@ -443,7 +499,7 @@ class SSERelay:
 _active_relays: Dict[str, SSERelay] = {}
 
 
-async def get_or_create_relay(stream_id: str, data_url: str) -> SSERelay:
+async def get_or_create_relay(stream_id: str, data_url: str, session_store=None) -> SSERelay:
     """
     Get an existing SSE relay for a stream, or create and start a new one.
 
@@ -453,6 +509,7 @@ async def get_or_create_relay(stream_id: str, data_url: str) -> SSERelay:
     Args:
         stream_id: The stream session ID
         data_url: The SSE endpoint URL from the compute provider
+        session_store: Optional SessionStore used to persist transcription segments.
 
     Returns:
         The SSERelay instance for this stream
@@ -468,7 +525,7 @@ async def get_or_create_relay(stream_id: str, data_url: str) -> SSERelay:
         else:
             return relay
 
-    relay = SSERelay(data_url=data_url, stream_id=stream_id)
+    relay = SSERelay(data_url=data_url, stream_id=stream_id, session_store=session_store)
     _active_relays[stream_id] = relay
     await relay.start()
     return relay
