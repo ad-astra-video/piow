@@ -101,6 +101,8 @@ class StreamManager {
     this._fileAudioCtx = null;
     this._fileSourceNode = null;
     this._fileMediaElement = null;
+    // Screen share video tracks kept alive to prevent Chrome from killing the audio track
+    this._screenVideoTracks = [];
   }
 
   _setState(partial) {
@@ -171,8 +173,9 @@ class StreamManager {
 
     if (type === 'screen') {
       const stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
-      // Stop video track — we only need audio for transcription
-      stream.getVideoTracks().forEach(t => t.stop());
+      // Keep video tracks alive until stop() — stopping them immediately causes Chrome to
+      // end the entire capture session, which kills the audio track along with it.
+      this._screenVideoTracks = stream.getVideoTracks();
       const audioTrack = stream.getAudioTracks()[0];
       if (!audioTrack) {
         throw new Error(
@@ -422,13 +425,16 @@ class StreamManager {
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {
         // Don't stop file audio tracks — the AudioContext manages them.
-        // Don't stop screen share video (already stopped at capture time).
+        // Don't stop screen share video — handled separately in _screenVideoTracks.
         // Stop microphone and black-video tracks normally.
         if (this._fileSourceNode && track.kind === 'audio') return;
         track.stop();
       });
       this.localStream = null;
     }
+    // Stop deferred screen share video tracks now that the session is ending.
+    this._screenVideoTracks.forEach(t => t.stop());
+    this._screenVideoTracks = [];
     if (this._fileMediaElement) {
       this._fileMediaElement.pause();
     }
