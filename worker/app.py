@@ -53,6 +53,7 @@ from vllm_client import VLLMRealtimeClient, warmup_transcription
 # ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logging.getLogger("pytrickle").setLevel(logging.WARNING)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -841,6 +842,7 @@ class LiveTranscriptionWorker:
                     while len(LiveTranscriptionWorker._audio_buffer) >= LiveTranscriptionWorker._SEND_CHUNK_BYTES:
                         chunk = LiveTranscriptionWorker._audio_buffer[:LiveTranscriptionWorker._SEND_CHUNK_BYTES]
                         LiveTranscriptionWorker._audio_buffer = LiveTranscriptionWorker._audio_buffer[LiveTranscriptionWorker._SEND_CHUNK_BYTES:]
+                        LiveTranscriptionWorker._window_pcm.extend(chunk)
                         if LiveTranscriptionWorker._audio_frame_count % 100 == 1:
                             n_samples = len(chunk) // 2
                             pcm16 = np.frombuffer(chunk, dtype=np.int16)
