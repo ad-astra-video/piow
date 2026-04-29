@@ -463,14 +463,24 @@ async def warmup_transcription(
             await ws.send(json.dumps({"type": "input_audio_buffer.commit", "final": True}))
             logger.info("VLLM warmup: audio sent, waiting for result...")
 
-            # Drain responses until transcription completes or timeout
+            # Drain responses until transcription completes or timeout.
+            # vLLM may close the connection immediately after the final result,
+            # so ConnectionClosed is treated as end-of-stream, not an error.
             deadline = asyncio.get_event_loop().time() + timeout
             while True:
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
                     logger.warning("VLLM warmup: timed out waiting for transcription result")
                     break
-                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=remaining))
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    logger.warning("VLLM warmup: timed out waiting for transcription result")
+                    break
+                except websockets.exceptions.ConnectionClosed as cc:
+                    logger.info("VLLM warmup: server closed connection (%s) — warmup complete", cc)
+                    break
+                msg = json.loads(raw)
                 msg_type = msg.get("type", "")
                 if msg_type in ("transcription.done", "response.audio_transcript.done",
                                 "response.text.done", "response.done"):
@@ -485,6 +495,6 @@ async def warmup_transcription(
                     logger.warning("VLLM warmup: server error: %s", msg)
                     break
                 else:
-                    logger.debug("VLLM warmup: %s", msg_type)
+                    logger.info("VLLM warmup: received %s", msg_type)
     except Exception as exc:
         logger.warning("VLLM warmup: failed: %s", exc)
