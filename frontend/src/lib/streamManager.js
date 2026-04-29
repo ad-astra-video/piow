@@ -84,7 +84,7 @@ class StreamManager {
   constructor() {
     this.state = {
       isStarted: false,
-      status: 'Ready for live transcription.',
+      status: 'Ready.',
       transcriptEntries: [],
       partialTranscript: '',
       errorMessage: '',
@@ -274,9 +274,9 @@ class StreamManager {
 
     const sourceType = sourceConfig?.type || 'microphone';
     const statusLabels = {
-      microphone: 'Getting user media...',
-      screen: 'Requesting screen share...',
-      file: 'Capturing file audio...',
+      microphone: 'Starting...',
+      screen: 'Starting...',
+      file: 'Starting...',
     };
 
     try {
@@ -291,31 +291,31 @@ class StreamManager {
       const videoTrack = await this._createBlackVideoTrack();
       this.localStream = new MediaStream([audioTrack, videoTrack]);
 
-      this._setState({ status: 'Creating stream session...' });
+      this._setState({ status: 'Connecting...' });
       let sessionData;
       try { sessionData = await this._createStreamSession(); }
       catch (sessionError) {
-        this._setState({ status: `Session creation failed: ${sessionError.message}`, errorMessage: 'Could not create a streaming session.' });
+        this._setState({ status: 'Connection failed.', errorMessage: 'Could not create a streaming session.' });
         throw sessionError;
       }
 
       const { stream_id } = sessionData;
       this.streamId = stream_id;
 
-      this._setState({ status: 'Connecting to WHIP endpoint...' });
+      this._setState({ status: 'Connecting...' });
       this.whipClient = new WHIPClient(stream_id, this.accessToken || undefined);
 
       try {
         const pc = await this.whipClient.start([audioTrack, videoTrack]);
         pc.ontrack = (event) => { console.log('Received track from WHIP:', event.track.kind); };
 
-        this._setState({ status: 'Connected. Opening WebSocket...' });
+        this._setState({ status: 'Connecting...' });
         const ws = new WebSocket(WS_ENDPOINT);
         this.ws = ws;
 
         ws.onopen = () => {
           ws.send(JSON.stringify({ type: 'start_stream', stream_id }));
-          this._setState({ status: 'Listening for speech...', isStarted: true });
+          this._setState({ status: 'Connected.', isStarted: true });
         };
 
         ws.onmessage = (event) => {
@@ -331,7 +331,7 @@ class StreamManager {
             ) {
               const delta = typeof message.delta === 'string' ? message.delta : '';
               if (!delta) return;
-              this._setState({ partialTranscript: this.state.partialTranscript + delta, status: 'Receiving live transcript...' });
+              this._setState({ partialTranscript: this.state.partialTranscript + delta, status: 'Connected.' });
             } else if (
               msgType === 'transcription.done' ||
               msgType === 'conversation.item.input_audio_transcription.completed' ||
@@ -346,7 +346,7 @@ class StreamManager {
               this._setState({
                 transcriptEntries: [...this.state.transcriptEntries, transcript.trim()],
                 partialTranscript: '',
-                status: 'Receiving live transcript...',
+                status: 'Connected.',
               });
             } else if (msgType === 'status') {
               this._setState({ status: message.text });
@@ -355,7 +355,7 @@ class StreamManager {
                 (typeof message.text === 'string' && message.text) ||
                 (message.error && typeof message.error.message === 'string' && message.error.message) ||
                 'Realtime error';
-              this._setState({ errorMessage: errorText, status: `Error: ${errorText}` });
+              this._setState({ errorMessage: errorText, status: 'Error.' });
             }
           } catch (parseErr) {}
         };
@@ -363,15 +363,15 @@ class StreamManager {
         ws.onclose = () => {
           if (this.state.isStarted) {
             this.stop({ preserveStatus: true });
-            this._setState({ status: 'WebSocket disconnected.' });
+            this._setState({ status: 'Disconnected.' });
           }
         };
 
         ws.onerror = () => {
-          this._setState({ errorMessage: 'Realtime connection failed.', status: 'WebSocket error' });
+          this._setState({ errorMessage: 'Realtime connection failed.', status: 'Connection error.' });
         };
       } catch (whipError) {
-        this._setState({ status: `WHIP connection failed: ${whipError.message}`, errorMessage: 'Could not establish the WHIP session.' });
+        this._setState({ status: 'Connection failed.', errorMessage: 'Could not establish the WHIP session.' });
         if (this.whipClient) { this.whipClient.stop(); this.whipClient = null; }
         this.streamId = null;
         throw whipError;
