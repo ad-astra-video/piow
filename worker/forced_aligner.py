@@ -108,27 +108,116 @@ class ForcedAlignerService:
 
     def _normalize_alignment_results(self, results: Any) -> List[Dict[str, Any]]:
         words: List[Dict[str, Any]] = []
+        seen: set = set()
 
-        if isinstance(results, list):
-            for entry in results:
-                words.extend(self._normalize_alignment_results(entry))
-            return words
+        def _first_non_none(values: List[Any]) -> Any:
+            for value in values:
+                if value is not None:
+                    return value
+            return None
 
-        if isinstance(results, dict):
-            token = str(results.get("text") or results.get("word") or "").strip()
-            start = results.get("start")
-            if start is None:
-                start = results.get("start_time")
-            end = results.get("end")
-            if end is None:
-                end = results.get("end_time")
-            if token and start is not None and end is not None:
-                words.append({"word": token, "start": float(start), "end": float(end)})
-            return words
+        def _extract_token(obj: Any) -> str:
+            if isinstance(obj, dict):
+                value = obj.get("text") or obj.get("word") or obj.get("token")
+                return str(value or "").strip()
+            value = (
+                getattr(obj, "text", None)
+                or getattr(obj, "word", None)
+                or getattr(obj, "token", None)
+            )
+            return str(value or "").strip()
 
-        token = str(getattr(results, "text", "") or "").strip()
-        start = getattr(results, "start_time", None)
-        end = getattr(results, "end_time", None)
-        if token and start is not None and end is not None:
-            words.append({"word": token, "start": float(start), "end": float(end)})
+        def _extract_start(obj: Any) -> Any:
+            if isinstance(obj, dict):
+                return _first_non_none(
+                    [
+                        obj.get("start"),
+                        obj.get("start_time"),
+                        obj.get("startTime"),
+                        obj.get("start_ms"),
+                    ]
+                )
+            return _first_non_none(
+                [
+                    getattr(obj, "start", None),
+                    getattr(obj, "start_time", None),
+                    getattr(obj, "startTime", None),
+                    getattr(obj, "start_ms", None),
+                ]
+            )
+
+        def _extract_end(obj: Any) -> Any:
+            if isinstance(obj, dict):
+                return _first_non_none(
+                    [
+                        obj.get("end"),
+                        obj.get("end_time"),
+                        obj.get("endTime"),
+                        obj.get("end_ms"),
+                    ]
+                )
+            return _first_non_none(
+                [
+                    getattr(obj, "end", None),
+                    getattr(obj, "end_time", None),
+                    getattr(obj, "endTime", None),
+                    getattr(obj, "end_ms", None),
+                ]
+            )
+
+        def _append_if_word(obj: Any) -> None:
+            token = _extract_token(obj)
+            start = _extract_start(obj)
+            end = _extract_end(obj)
+            if not token or start is None or end is None:
+                return
+            try:
+                normalized = {"word": token, "start": float(start), "end": float(end)}
+                key = (normalized["word"], normalized["start"], normalized["end"])
+                if key in seen:
+                    return
+                seen.add(key)
+                words.append(normalized)
+            except (TypeError, ValueError):
+                return
+
+        def _collect(obj: Any) -> None:
+            if obj is None:
+                return
+
+            if isinstance(obj, (list, tuple, set)):
+                for item in obj:
+                    _collect(item)
+                return
+
+            if isinstance(obj, dict):
+                _append_if_word(obj)
+                for value in obj.values():
+                    if isinstance(value, (dict, list, tuple, set)) or hasattr(value, "__dict__"):
+                        _collect(value)
+                return
+
+            _append_if_word(obj)
+
+            for attr in (
+                "time_stamps",
+                "timestamps",
+                "words",
+                "items",
+                "alignment",
+                "alignments",
+                "results",
+                "segments",
+            ):
+                child = getattr(obj, attr, None)
+                if child is not None:
+                    _collect(child)
+
+            payload = getattr(obj, "__dict__", None)
+            if isinstance(payload, dict):
+                for value in payload.values():
+                    if isinstance(value, (dict, list, tuple, set)) or hasattr(value, "__dict__"):
+                        _collect(value)
+
+        _collect(results)
         return words

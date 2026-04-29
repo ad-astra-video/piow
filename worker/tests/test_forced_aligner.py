@@ -17,6 +17,11 @@ class _WordObj:
         self.end_time = end_time
 
 
+class _NestedResultObj:
+    def __init__(self, entries):
+        self.time_stamps = entries
+
+
 class TestForcedAlignerService(unittest.TestCase):
     def test_normalize_alignment_results_from_dicts(self):
         svc = ForcedAlignerService(model_path="dummy")
@@ -42,6 +47,35 @@ class TestForcedAlignerService(unittest.TestCase):
         svc = ForcedAlignerService(model_path="dummy")
         self.assertEqual(svc.align(b"", 16000, "hello", "en"), [])
         self.assertEqual(svc.align(b"\x00\x00", 16000, "", "en"), [])
+
+    def test_normalize_alignment_results_from_nested_dict(self):
+        svc = ForcedAlignerService(model_path="dummy")
+        raw = {
+            "time_stamps": [
+                {"text": "foo", "start_time": 0.1, "end_time": 0.2},
+                {"text": "bar", "startTime": 0.25, "endTime": 0.5},
+            ]
+        }
+        words = svc._normalize_alignment_results(raw)
+        self.assertEqual(
+            words,
+            [
+                {"word": "foo", "start": 0.1, "end": 0.2},
+                {"word": "bar", "start": 0.25, "end": 0.5},
+            ],
+        )
+
+    def test_normalize_alignment_results_from_nested_object(self):
+        svc = ForcedAlignerService(model_path="dummy")
+        raw = [_NestedResultObj([_WordObj("alpha", 1.0, 1.2), _WordObj("beta", 1.3, 1.7)])]
+        words = svc._normalize_alignment_results(raw)
+        self.assertEqual(
+            words,
+            [
+                {"word": "alpha", "start": 1.0, "end": 1.2},
+                {"word": "beta", "start": 1.3, "end": 1.7},
+            ],
+        )
 
 
 if __name__ == "__main__":
