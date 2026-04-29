@@ -74,13 +74,14 @@ export default function TranscribeStream({ accessToken }) {
         {/* ── Session setup — hidden once session starts ── */}
         {!isStarted && (
           <section className="panel-glass stream-controls">
-            <div className="stream-status">
-              <span className="status-dot" />
-              <div>
-                <p className="status-label">Session status</p>
-                <p className="status-text">{status}</p>
+            {status !== 'Ready.' && (
+              <div className="stream-status">
+                <span className="status-dot" />
+                <div>
+                  <p className="status-text">{status}</p>
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="source-selector">
               <button
