@@ -412,7 +412,7 @@ async def warmup_transcription(
     ws_url: str,
     audio_path: str,
     chunk_size: int = 4096,
-    timeout: float = 30.0,
+    timeout: float = 90.0,
 ) -> None:
     """Send a single audio file through the VLLM realtime API as a warmup run.
 
