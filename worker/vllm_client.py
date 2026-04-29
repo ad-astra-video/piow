@@ -495,6 +495,7 @@ async def warmup_transcription(
                     logger.warning("VLLM warmup: server error: %s", msg)
                     break
                 else:
-                    logger.info("VLLM warmup: received %s", msg_type)
+                    #logger.info("VLLM warmup: received %s", msg_type)
+                    pass
     except Exception as exc:
         logger.warning("VLLM warmup: failed: %s", exc)
