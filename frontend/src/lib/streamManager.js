@@ -1,3 +1,5 @@
+import { getSession } from './supabase';
+
 const API_BASE = `${window.location.origin}/api/v1`;
 const WS_ENDPOINT = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
 
@@ -258,6 +260,15 @@ class StreamManager {
   async _requestStreamStop(streamId) {
     if (!streamId) return;
     const headers = {};
+
+    // Refresh token at stop time so long-running streams can stop after token rotation.
+    try {
+      const session = await getSession();
+      if (session?.access_token) {
+        this.accessToken = session.access_token;
+      }
+    } catch (_err) {}
+
     if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
 
     const response = await fetch(`${API_BASE}/stream/${streamId}/stop`, {
