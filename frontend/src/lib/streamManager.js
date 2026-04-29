@@ -97,6 +97,10 @@ class StreamManager {
     this.streamId = null;
     this.accessToken = null;
     this._beforeunloadHandler = null;
+    // File audio capture state
+    this._fileAudioCtx = null;
+    this._fileSourceNode = null;
+    this._fileMediaElement = null;
   }
 
   _setState(partial) {
@@ -157,6 +161,80 @@ class StreamManager {
     return videoTrack;
   }
 
+  async _getAudioTrack(sourceConfig) {
+    const type = sourceConfig?.type || 'microphone';
+
+    if (type === 'microphone') {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      return stream.getAudioTracks()[0];
+    }
+
+    if (type === 'screen') {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+      // Stop video track — we only need audio for transcription
+      stream.getVideoTracks().forEach(t => t.stop());
+      const audioTrack = stream.getAudioTracks()[0];
+      if (!audioTrack) {
+        throw new Error(
+          'Screen share did not include audio. Share a browser tab and enable the "Share tab audio" option.'
+        );
+      }
+      return audioTrack;
+    }
+
+    if (type === 'file') {
+      const { mediaElement } = sourceConfig;
+      if (!mediaElement) throw new Error('No media element provided for file audio capture.');
+
+      // If the AudioContext was created for a different element (e.g. user navigated away
+      // and back), close it so we start fresh.
+      if (this._fileAudioCtx && this._fileMediaElement !== mediaElement) {
+        this._fileAudioCtx.close().catch(() => {});
+        this._fileAudioCtx = null;
+        this._fileSourceNode = null;
+        this._fileMediaElement = null;
+      }
+
+      if (!this._fileAudioCtx || this._fileAudioCtx.state === 'closed') {
+        this._fileAudioCtx = new AudioContext();
+        this._fileSourceNode = this._fileAudioCtx.createMediaElementSource(mediaElement);
+        this._fileMediaElement = mediaElement;
+      }
+
+      if (this._fileAudioCtx.state === 'suspended') {
+        await this._fileAudioCtx.resume();
+      }
+
+      // Disconnect any previous routing before reconnecting
+      try { this._fileSourceNode.disconnect(); } catch (_) {}
+
+      const dest = this._fileAudioCtx.createMediaStreamDestination();
+      // Route audio to both the capture stream and the speakers so the user can hear it
+      this._fileSourceNode.connect(dest);
+      this._fileSourceNode.connect(this._fileAudioCtx.destination);
+
+      mediaElement.currentTime = 0;
+      await mediaElement.play();
+
+      const audioTrack = dest.stream.getAudioTracks()[0];
+      if (!audioTrack) throw new Error('Failed to capture audio track from media element.');
+      return audioTrack;
+    }
+
+    throw new Error(`Unknown audio source type: ${type}`);
+  }
+
+  // Call when the file media element is being replaced (e.g. user picks a new file)
+  // so the cached AudioContext/SourceNode is recreated on the next start.
+  resetFileAudio() {
+    if (this._fileAudioCtx) {
+      this._fileAudioCtx.close().catch(() => {});
+    }
+    this._fileAudioCtx = null;
+    this._fileSourceNode = null;
+    this._fileMediaElement = null;
+  }
+
   async _createStreamSession() {
     const headers = { 'Content-Type': 'application/json' };
     if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
@@ -190,15 +268,26 @@ class StreamManager {
     }
   }
 
-  async start(accessToken) {
+  async start(accessToken, sourceConfig) {
     if (this.state.isStarted) return;
     this.accessToken = accessToken || null;
 
-    try {
-      this._setState({ errorMessage: '', transcriptEntries: [], partialTranscript: '', status: 'Getting user media...' });
+    const sourceType = sourceConfig?.type || 'microphone';
+    const statusLabels = {
+      microphone: 'Getting user media...',
+      screen: 'Requesting screen share...',
+      file: 'Capturing file audio...',
+    };
 
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioTrack = audioStream.getAudioTracks()[0];
+    try {
+      this._setState({
+        errorMessage: '',
+        transcriptEntries: [],
+        partialTranscript: '',
+        status: statusLabels[sourceType] || 'Getting user media...',
+      });
+
+      const audioTrack = await this._getAudioTrack(sourceConfig);
       const videoTrack = await this._createBlackVideoTrack();
       this.localStream = new MediaStream([audioTrack, videoTrack]);
 
@@ -327,8 +416,17 @@ class StreamManager {
     }
     if (this.ws) { this.ws.close(); this.ws = null; }
     if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream.getTracks().forEach((track) => {
+        // Don't stop file audio tracks — the AudioContext manages them.
+        // Don't stop screen share video (already stopped at capture time).
+        // Stop microphone and black-video tracks normally.
+        if (this._fileSourceNode && track.kind === 'audio') return;
+        track.stop();
+      });
       this.localStream = null;
+    }
+    if (this._fileMediaElement) {
+      this._fileMediaElement.pause();
     }
     if (this.blackVideoSource?.intervalId) {
       clearInterval(this.blackVideoSource.intervalId);

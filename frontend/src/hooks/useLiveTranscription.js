@@ -10,7 +10,7 @@ export default function useLiveTranscription() {
 
   return {
     ...state,
-    start: (accessToken) => streamManager.start(accessToken),
+    start: (accessToken, sourceConfig) => streamManager.start(accessToken, sourceConfig),
     stop: (opts) => streamManager.stop(opts),
   };
 }

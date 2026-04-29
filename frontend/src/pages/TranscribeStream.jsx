@@ -1,6 +1,7 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { Mic, MicOff, Radio, AlertCircle, ChevronsDown } from 'lucide-react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { Mic, MicOff, Radio, AlertCircle, ChevronsDown, Monitor, Upload } from 'lucide-react';
 import useLiveTranscription from '../hooks/useLiveTranscription';
+import streamManager from '../lib/streamManager';
 
 function formatSentences(text) {
   // Insert a newline after sentence-ending punctuation followed by whitespace
@@ -20,6 +21,41 @@ export default function TranscribeStream({ accessToken }) {
 
   const scrollRef = useRef(null);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  // Audio source state
+  const [audioSource, setAudioSource] = useState('microphone'); // 'microphone' | 'screen' | 'file'
+  const [fileObjectUrl, setFileObjectUrl] = useState(null);
+  const fileInputRef = useRef(null);
+  const mediaRef = useRef(null);
+
+  const handleFileSelect = useCallback((e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    // Revoke previous URL and reset the AudioContext so a fresh one is created
+    if (fileObjectUrl) URL.revokeObjectURL(fileObjectUrl);
+    streamManager.resetFileAudio();
+    setFileObjectUrl(URL.createObjectURL(file));
+    // Reset the input so selecting the same file again triggers onChange
+    e.target.value = '';
+  }, [fileObjectUrl]);
+
+  // Clean up object URL and file AudioContext on unmount
+  useEffect(() => {
+    return () => {
+      if (fileObjectUrl) URL.revokeObjectURL(fileObjectUrl);
+      streamManager.resetFileAudio();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleStart = useCallback(() => {
+    if (audioSource === 'file') {
+      start(accessToken, { type: 'file', mediaElement: mediaRef.current });
+    } else if (audioSource === 'screen') {
+      start(accessToken, { type: 'screen' });
+    } else {
+      start(accessToken, { type: 'microphone' });
+    }
+  }, [audioSource, accessToken, start]);
 
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
@@ -48,8 +84,82 @@ export default function TranscribeStream({ accessToken }) {
             <article><span>Engine</span><strong>Voxtral Realtime</strong></article>
           </div>
 
+          {/* Audio source selector */}
+          <div className="source-selector">
+            <button
+              className={`source-btn ${audioSource === 'microphone' ? 'active' : ''}`}
+              onClick={() => setAudioSource('microphone')}
+              disabled={isStarted}
+              title="Capture from microphone"
+            >
+              <Mic size={13} /> Microphone
+            </button>
+            <button
+              className={`source-btn ${audioSource === 'screen' ? 'active' : ''}`}
+              onClick={() => setAudioSource('screen')}
+              disabled={isStarted}
+              title="Capture audio from a browser tab or window"
+            >
+              <Monitor size={13} /> Screen Share
+            </button>
+            <button
+              className={`source-btn ${audioSource === 'file' ? 'active' : ''}`}
+              onClick={() => setAudioSource('file')}
+              disabled={isStarted}
+              title="Upload an audio or video file"
+            >
+              <Upload size={13} /> File
+            </button>
+          </div>
+
+          {/* File picker (shown when source = file) */}
+          {audioSource === 'file' && (
+            <div className="file-source-area">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="audio/*,video/*"
+                onChange={handleFileSelect}
+                style={{ display: 'none' }}
+              />
+              <button
+                className="secondary-button file-choose-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isStarted}
+              >
+                <Upload size={14} />
+                {fileObjectUrl ? 'Change file' : 'Choose audio / video file'}
+              </button>
+              {fileObjectUrl && (
+                <div className="file-player-wrap">
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <video
+                    ref={mediaRef}
+                    src={fileObjectUrl}
+                    controls
+                    className="file-preview-player"
+                    onEnded={() => !isStarted && undefined}
+                  />
+                </div>
+              )}
+              {audioSource === 'file' && !fileObjectUrl && (
+                <p className="source-hint">Select a file to enable the Start button.</p>
+              )}
+            </div>
+          )}
+
+          {audioSource === 'screen' && (
+            <p className="source-hint">
+              You will be prompted to choose a tab or window. Enable &quot;Share tab audio&quot; in the picker.
+            </p>
+          )}
+
           <div className="hero-actions">
-            <button className="primary-button" onClick={() => start(accessToken)} disabled={isStarted}>
+            <button
+              className="primary-button"
+              onClick={handleStart}
+              disabled={isStarted || (audioSource === 'file' && !fileObjectUrl)}
+            >
               {isStarted ? <><Radio size={16} /> Listening…</> : <><Mic size={16} /> Start Session</>}
             </button>
             <button className="secondary-button" onClick={() => stop()} disabled={!isStarted}>
