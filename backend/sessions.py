@@ -454,6 +454,100 @@ class SessionStore:
         logger.info(f"Stream session {stream_id} closed")
 
     # ------------------------------------------------------------------
+    # Live-stream transcription upsert
+    # ------------------------------------------------------------------
+
+    async def upsert_stream_transcription(self, stream_id: str, new_segments: List[str]) -> Optional[str]:
+        """Create or incrementally update the transcriptions row for a live stream.
+
+        Called by the SSE relay flush loop each time a batch of final segments
+        is ready.  On the first call an in-progress row is inserted; subsequent
+        calls append the new text and update word_count.
+
+        The transcription_id is cached on the stream session so
+        stop_stream_session can finalize the row without a DB lookup.
+
+        Returns the transcription_id on success, None on failure.
+        """
+        if not new_segments:
+            return (self._stream_sessions_cache.get(stream_id) or {}).get("transcription_id")
+
+        # Load stream data (cache-first)
+        stream_data = self._stream_sessions_cache.get(stream_id) or await self.get_stream_session(stream_id)
+        if not stream_data:
+            logger.warning("upsert_stream_transcription: stream %s not found", stream_id)
+            return None
+
+        # Resolve user_id via parent session (same pattern as _record_stream_usage)
+        session_id = stream_data.get("session_id")
+        user_id: Optional[str] = None
+        if session_id:
+            parent = await self.get_session(session_id)
+            user_id = str(parent.get("user_id")) if parent and parent.get("user_id") else None
+        if not user_id:
+            logger.warning("upsert_stream_transcription: missing user_id for stream %s", stream_id)
+            return None
+
+        language = stream_data.get("language", "en")
+        provider_session = stream_data.get("provider_session") or {}
+        model = provider_session.get("model")
+        hardware = provider_session.get("hardware")
+
+        new_text = "\n".join(seg for seg in new_segments if seg)
+        existing_id: Optional[str] = stream_data.get("transcription_id")
+
+        if existing_id:
+            # Append new text to the existing row
+            try:
+                rows = supabase.table("transcriptions").select("text").eq("id", existing_id).execute()
+                prev_text = rows.data[0].get("text", "") if rows.data else ""
+                full_text = (prev_text + "\n" + new_text).strip()
+                supabase.table("transcriptions").update({
+                    "text": full_text,
+                    "word_count": len(full_text.split()),
+                }).eq("id", existing_id).execute()
+                if stream_id in self._stream_sessions_cache:
+                    self._stream_sessions_cache[stream_id]["_live_text"] = full_text
+            except Exception as e:
+                logger.warning("Failed to append to stream transcription %s: %s", existing_id, e)
+            return existing_id
+
+        # First flush — create the initial row
+        try:
+            word_count = len(new_text.split())
+            insert_payload: Dict[str, Any] = {
+                "user_id": user_id,
+                "audio_url": f"stream://{stream_id}",
+                "text": new_text,
+                "language": language,
+                "duration": 0,
+                "word_count": word_count,
+                "status": "processing",
+                "source_type": "stream",
+            }
+            # Only include constrained columns when we have DB-valid values
+            if model in ("granite-4.0-1b", "voxtral-realtime"):
+                insert_payload["model_used"] = model
+            if hardware in ("cpu", "gpu"):
+                insert_payload["hardware"] = hardware
+
+            rec = supabase.table("transcriptions").insert(insert_payload).execute()
+            transcription_id = rec.data[0]["id"] if rec.data else None
+            if transcription_id:
+                if stream_id in self._stream_sessions_cache:
+                    self._stream_sessions_cache[stream_id]["transcription_id"] = transcription_id
+                    self._stream_sessions_cache[stream_id]["_live_text"] = new_text
+                logger.info(
+                    "Created live transcription record: stream_id=%s transcription_id=%s",
+                    stream_id,
+                    transcription_id,
+                )
+            return transcription_id
+        except Exception as e:
+            logger.warning("Failed to create stream transcription for stream %s: %s", stream_id, e)
+            return None
+
+    # ------------------------------------------------------------------
     # Transcription Sessions
     # ------------------------------------------------------------------
 
@@ -1214,6 +1308,9 @@ async def stop_stream_session(request):
 
     This is an alternative endpoint specifically for stopping streams
     through the provider's API. Only the stream owner can stop it.
+
+    The transcription text is built incrementally by the SSE relay flush loop
+    and only needs to be marked 'completed' here.
     """
     try:
         # Get stream_id from path parameter
@@ -1279,11 +1376,29 @@ async def stop_stream_session(request):
         # Update local session
         await session_store.close_stream_session(stream_id)
 
+        # Finalize the transcriptions row built incrementally by the SSE relay flush loop.
+        transcription_id = None
+        try:
+            stream_session = await session_store.get_stream_session(stream_id)
+            transcription_id = (stream_session or {}).get("transcription_id")
+            if transcription_id:
+                supabase.table("transcriptions").update({"status": "completed"}).eq("id", transcription_id).execute()
+                logger.info(
+                    "Finalized live transcription record: stream_id=%s transcription_id=%s",
+                    stream_id,
+                    transcription_id,
+                )
+            else:
+                logger.info("Stop stream: no incremental transcription row to finalize for stream %s", stream_id)
+        except Exception as save_err:
+            logger.warning("Failed to finalize transcription record for stream %s: %s", stream_id, save_err)
+
         logger.info("Stop stream request completed: stream_id=%s", stream_id)
 
         return web.json_response({
             "stream_id": stream_id,
             "status": "stopped",
+            "transcription_id": transcription_id,
             "provider_response": provider_response,
             "message": "Stream session stopped via provider"
         })

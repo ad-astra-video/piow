@@ -350,6 +350,14 @@ class SSERelay:
                     "Failed to persist transcription segment for stream %s: %s",
                     self.stream_id, exc
                 )
+        # Incrementally build the transcriptions row for history/recents
+        try:
+            await self._session_store.upsert_stream_transcription(self.stream_id, segments)
+        except Exception as exc:
+            logger.warning(
+                "Failed to upsert live transcription for stream %s: %s",
+                self.stream_id, exc
+            )
 
     @staticmethod
     def _decode_possible_json(value: Any) -> Any:
