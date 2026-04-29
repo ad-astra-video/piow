@@ -45,7 +45,7 @@ if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
 from granite_transcriber import Granite4Transcriber
-from vllm_client import VLLMRealtimeClient
+from vllm_client import VLLMRealtimeClient, warmup_transcription
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -602,6 +602,11 @@ class LiveTranscriptionWorker:
         established per-stream in ``on_start`` so each stream gets a fresh
         realtime session."""
         logger.info("Initializing Live Translation handlers")
+        warmup_audio = Path(__file__).parent / "test.wav"
+        if warmup_audio.exists():
+            await warmup_transcription(ws_url=WS_URL, audio_path=str(warmup_audio))
+        else:
+            logger.warning("VLLM warmup skipped: test.wav not found at %s", warmup_audio)
 
     @on_stream_start
     async def on_start(self, params: Dict[str, Any]) -> None:

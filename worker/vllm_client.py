@@ -12,6 +12,7 @@ import base64
 from typing import Optional, Callable, Any, Dict, Union, Awaitable
 
 import numpy as np
+import librosa
 import websockets
 
 logger = logging.getLogger(__name__)
@@ -399,3 +400,91 @@ class VLLMRealtimeClient:
             self.websocket = None
 
         self.is_connected = False
+
+
+def _audio_file_to_pcm16_bytes(audio_path: str) -> bytes:
+    """Load an audio file and return raw PCM16 bytes at 16 kHz mono."""
+    audio, _ = librosa.load(audio_path, sr=16000, mono=True)
+    return (audio * 32767).astype(np.int16).tobytes()
+
+
+async def warmup_transcription(
+    ws_url: str,
+    audio_path: str,
+    chunk_size: int = 4096,
+    timeout: float = 30.0,
+) -> None:
+    """Send a single audio file through the VLLM realtime API as a warmup run.
+
+    This primes the model on the server side so the first real request is not
+    penalised by cold-start latency.  Errors are logged but never raised so
+    they cannot block worker startup.
+    """
+    logger.info("VLLM warmup: loading audio from '%s'", audio_path)
+    try:
+        pcm16_bytes = _audio_file_to_pcm16_bytes(audio_path)
+    except Exception as exc:
+        logger.warning("VLLM warmup: failed to load audio file '%s': %s", audio_path, exc)
+        return
+
+    logger.info(
+        "VLLM warmup: %d PCM16 bytes (~%.1fs) loaded, connecting to %s",
+        len(pcm16_bytes),
+        len(pcm16_bytes) / (16000 * 2),
+        ws_url,
+    )
+    try:
+        async with websockets.connect(ws_url, additional_headers={}) as ws:
+            # Wait for session.created
+            response = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+            if response.get("type") == "session.created":
+                logger.info("VLLM warmup: session created: %s", response.get("id", "unknown"))
+            else:
+                logger.warning("VLLM warmup: unexpected first message: %s", response)
+
+            # Session update + initial handshake commit
+            await ws.send(json.dumps({
+                "type": "session.update",
+                "model": "mistralai/Voxtral-Mini-4B-Realtime-2602",
+            }))
+            await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
+
+            # Send audio in chunks
+            total_chunks = (len(pcm16_bytes) + chunk_size - 1) // chunk_size
+            logger.info("VLLM warmup: sending %d audio chunks", total_chunks)
+            for i in range(0, len(pcm16_bytes), chunk_size):
+                chunk = pcm16_bytes[i: i + chunk_size]
+                await ws.send(json.dumps({
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(chunk).decode("utf-8"),
+                }))
+
+            # Final commit to trigger transcription
+            await ws.send(json.dumps({"type": "input_audio_buffer.commit", "final": True}))
+            logger.info("VLLM warmup: audio sent, waiting for result...")
+
+            # Drain responses until transcription completes or timeout
+            deadline = asyncio.get_event_loop().time() + timeout
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    logger.warning("VLLM warmup: timed out waiting for transcription result")
+                    break
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=remaining))
+                msg_type = msg.get("type", "")
+                if msg_type in ("transcription.done", "response.audio_transcript.done",
+                                "response.text.done", "response.done"):
+                    text = (
+                        msg.get("transcript")
+                        or msg.get("text")
+                        or ""
+                    )
+                    logger.info("VLLM warmup: complete. result='%s'", text[:200])
+                    break
+                elif msg_type == "error":
+                    logger.warning("VLLM warmup: server error: %s", msg)
+                    break
+                else:
+                    logger.debug("VLLM warmup: %s", msg_type)
+    except Exception as exc:
+        logger.warning("VLLM warmup: failed: %s", exc)
