@@ -429,12 +429,25 @@ class Granite4Transcriber:
                 return_tensors="pt",
             )
             model_inputs = {name: tensor.to(self.device) for name, tensor in model_inputs.items()}
-            model_outputs = self.model.generate(
-                **model_inputs,
-                max_new_tokens=self.max_new_tokens,
-                do_sample=False,
-                num_beams=1,
-            )
+            #retry generation if OOM using offloaded kv cache
+            try:
+                model_outputs = self.model.generate(
+                    **model_inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,
+                    num_beams=1,
+                    cache_implementation="offloaded",
+                )
+            except torch.OutOfMemoryError as e:
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
+                model_outputs = self.model.generate(
+                    **model_inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,
+                    num_beams=1,
+                    cache_implementation="offloaded",
+                )
 
         num_input_tokens = model_inputs["input_ids"].shape[-1]
         new_tokens = model_outputs[:, num_input_tokens:]
