@@ -166,6 +166,86 @@ class TestGranite4Transcriber(unittest.TestCase):
         ast = transcriber._build_prompt(source_language='en', target_language='fr')
         self.assertIn('translate from English to French', ast)
 
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_build_prompt_with_prefix_text(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+        transcriber.tokenizer = MagicMock()
+        transcriber.tokenizer.apply_chat_template.return_value = 'PROMPT'
+
+        prompt = transcriber._build_prompt(mode='asr', prefix_text='existing transcript')
+
+        self.assertEqual(prompt, 'PROMPT')
+        self.assertEqual(
+            transcriber.tokenizer.apply_chat_template.call_args.kwargs['prefix_text'],
+            'existing transcript',
+        )
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_incremental_mode_selected_for_long_audio(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+        transcriber.sample_rate = 10
+        transcriber.incremental_min_duration_seconds = 2.0
+
+        short_audio = np.zeros(15, dtype=np.float32)
+        long_audio = np.zeros(25, dtype=np.float32)
+
+        self.assertFalse(transcriber._should_use_incremental_decoding('asr', short_audio))
+        self.assertTrue(transcriber._should_use_incremental_decoding('asr', long_audio))
+        self.assertFalse(
+            transcriber._should_use_incremental_decoding(
+                'asr', long_audio, source_language='en', target_language='fr'
+            )
+        )
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_iter_incremental_windows_accumulates_audio(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+        transcriber.sample_rate = 4
+        transcriber.incremental_window_seconds = 2.0
+
+        audio = np.arange(13, dtype=np.float32)
+
+        windows = list(transcriber._iter_incremental_windows(audio))
+
+        self.assertEqual([window.end_sample for window in windows], [8, 13])
+        np.testing.assert_array_equal(windows[0].audio, audio[:8])
+        np.testing.assert_array_equal(windows[1].audio, audio)
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_run_incremental_generation_carries_prefix_text(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+        transcriber.sample_rate = 4
+        transcriber.incremental_window_seconds = 1.0
+
+        prompts = []
+
+        def build_prompt_side_effect(**kwargs):
+            prompts.append(kwargs.get('prefix_text'))
+            return f"PROMPT:{kwargs.get('prefix_text', '')}"
+
+        with patch.object(transcriber, '_build_prompt', side_effect=build_prompt_side_effect), \
+             patch.object(transcriber, '_run_generation', side_effect=['hello', 'there', 'friend']):
+            result = transcriber._run_incremental_generation(
+                mode='asr',
+                audio=np.arange(10, dtype=np.float32),
+            )
+
+        self.assertEqual(result, 'hello there friend')
+        self.assertEqual(prompts, [None, 'hello', 'hello there'])
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_generate_mode_text_uses_incremental_path(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+
+        with patch.object(transcriber, '_should_use_incremental_decoding', return_value=True), \
+             patch.object(transcriber, '_run_incremental_generation', return_value='incremental') as mock_incremental, \
+             patch.object(transcriber, '_run_generation') as mock_single:
+            result = transcriber._generate_mode_text('asr', np.zeros(16000, dtype=np.float32))
+
+        self.assertEqual(result, 'incremental')
+        mock_incremental.assert_called_once()
+        mock_single.assert_not_called()
+
     def test_create_granite_transcriber(self):
         transcriber = create_granite_transcriber()
         self.assertIsInstance(transcriber, Granite4Transcriber)
@@ -238,6 +318,26 @@ class TestSpeakerSegmentParser(unittest.TestCase):
 
     def test_no_tags_returns_empty(self):
         self.assertEqual(_segments_from_speakers("just plain text"), [])
+
+
+class TestIncrementalTextMerge(unittest.TestCase):
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_merge_incremental_text_handles_overlap(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+        merged = transcriber._merge_incremental_text('hello there', 'there friend')
+        self.assertEqual(merged, 'hello there friend')
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_merge_incremental_text_handles_full_transcript_output(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+        merged = transcriber._merge_incremental_text('hello there', 'hello there friend')
+        self.assertEqual(merged, 'hello there friend')
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_merge_incremental_text_deduplicates_repeated_suffix(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+        merged = transcriber._merge_incremental_text('hello there', 'there')
+        self.assertEqual(merged, 'hello there')
 
 
 if __name__ == '__main__':

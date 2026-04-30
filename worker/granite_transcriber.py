@@ -15,8 +15,9 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import librosa
 import numpy as np
@@ -58,6 +59,12 @@ LANGUAGE_NAMES = {
 _TIMESTAMP_TAG_RE = re.compile(r"\[T:(\d+)\]")
 _SPEAKER_TAG_RE = re.compile(r"\[Speaker \d+\]:")
 _SPEAKER_SPLIT_RE = re.compile(r"(\[Speaker (\d+)\]:)")
+
+
+@dataclass(frozen=True)
+class _IncrementalWindow:
+    end_sample: int
+    audio: np.ndarray
 
 
 def _normalise_language_code(language: Optional[str]) -> str:
@@ -183,6 +190,14 @@ class Granite4Transcriber:
         self.model_ref = str(self.model_path) if self.model_path.exists() else DEFAULT_MODEL_ID
         self.sample_rate = 16000
         self.max_new_tokens = int(os.environ.get("GRANITE_MAX_NEW_TOKENS", "10000"))
+        self.incremental_window_seconds = max(
+            5.0,
+            float(os.environ.get("GRANITE_INCREMENTAL_WINDOW_SECONDS", "30")),
+        )
+        self.incremental_min_duration_seconds = max(
+            0.0,
+            float(os.environ.get("GRANITE_INCREMENTAL_MIN_DURATION_SECONDS", "45")),
+        )
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.processor: Any = None
         self.tokenizer: Any = None
@@ -274,21 +289,19 @@ class Granite4Transcriber:
             )
 
             if with_word_timestamps and not translation_requested:
-                ts_prompt = self._build_prompt(mode="timestamps")
-                ts_raw = self._run_generation(ts_prompt, audio)
+                ts_raw = self._generate_mode_text(mode="timestamps", audio=audio)
                 words = _parse_word_timestamps(ts_raw)
                 asr_text = " ".join(w["word"] for w in words)
             else:
-                asr_prompt = self._build_prompt(
+                asr_text = self._generate_mode_text(
                     mode="asr",
+                    audio=audio,
                     source_language=source_language,
                     target_language=target_language,
                 )
-                asr_text = self._run_generation(asr_prompt, audio)
 
             if with_speakers and not translation_requested:
-                saa_prompt = self._build_prompt(mode="speakers")
-                speaker_text = self._run_generation(saa_prompt, audio)
+                speaker_text = self._generate_mode_text(mode="speakers", audio=audio)
                 speakers = _segments_from_speakers(speaker_text, words if with_word_timestamps else None)
 
             # Build transcript: prefer speaker-tagged text when available.
@@ -457,11 +470,146 @@ class Granite4Transcriber:
         )
         return decoded[0].strip() if decoded else ""
 
+    def _generate_mode_text(
+        self,
+        mode: str,
+        audio: np.ndarray,
+        source_language: Optional[str] = None,
+        target_language: Optional[str] = None,
+    ) -> str:
+        if self._should_use_incremental_decoding(mode, audio, source_language, target_language):
+            return self._run_incremental_generation(
+                mode=mode,
+                audio=audio,
+                source_language=source_language,
+                target_language=target_language,
+            )
+
+        prompt = self._build_prompt(
+            mode=mode,
+            source_language=source_language,
+            target_language=target_language,
+        )
+        return self._run_generation(prompt, audio)
+
+    def _should_use_incremental_decoding(
+        self,
+        mode: str,
+        audio: np.ndarray,
+        source_language: Optional[str] = None,
+        target_language: Optional[str] = None,
+    ) -> bool:
+        if mode not in {"asr", "speakers", "timestamps"}:
+            return False
+        if (
+            source_language
+            and target_language
+            and source_language.lower() != target_language.lower()
+        ):
+            return False
+        duration = len(audio) / self.sample_rate if self.sample_rate > 0 else 0.0
+        return duration >= self.incremental_min_duration_seconds
+
+    def _run_incremental_generation(
+        self,
+        mode: str,
+        audio: np.ndarray,
+        source_language: Optional[str] = None,
+        target_language: Optional[str] = None,
+    ) -> str:
+        merged_text = ""
+        used_incremental = False
+
+        for window in self._iter_incremental_windows(audio):
+            used_incremental = True
+            prompt = self._build_prompt(
+                mode=mode,
+                source_language=source_language,
+                target_language=target_language,
+                prefix_text=merged_text or None,
+            )
+            try:
+                new_text = self._run_generation(prompt, window.audio)
+            except Exception:
+                if not merged_text:
+                    raise
+                logger.warning(
+                    "Incremental Granite decode failed for mode=%s at %.2fs; falling back to single pass",
+                    mode,
+                    window.end_sample / self.sample_rate,
+                    exc_info=True,
+                )
+                return self._run_generation(
+                    self._build_prompt(
+                        mode=mode,
+                        source_language=source_language,
+                        target_language=target_language,
+                    ),
+                    audio,
+                )
+            merged_text = self._merge_incremental_text(merged_text, new_text)
+
+        if used_incremental and merged_text:
+            return merged_text
+
+        prompt = self._build_prompt(
+            mode=mode,
+            source_language=source_language,
+            target_language=target_language,
+        )
+        return self._run_generation(prompt, audio)
+
+    def _iter_incremental_windows(self, audio: np.ndarray) -> Iterator[_IncrementalWindow]:
+        total_samples = len(audio)
+        if total_samples <= 0:
+            return
+
+        window_samples = max(1, int(self.incremental_window_seconds * self.sample_rate))
+        for end_sample in range(window_samples, total_samples, window_samples):
+            yield _IncrementalWindow(end_sample=end_sample, audio=audio[:end_sample])
+        yield _IncrementalWindow(end_sample=total_samples, audio=audio)
+
+    def _merge_incremental_text(self, previous_text: str, current_text: str) -> str:
+        previous = previous_text.strip()
+        current = current_text.strip()
+
+        if not previous:
+            return current
+        if not current:
+            return previous
+        if current == previous:
+            return previous
+        if current.startswith(previous):
+            suffix = current[len(previous):].strip()
+            return previous if not suffix else f"{previous} {suffix}".strip()
+        if previous.endswith(current):
+            return previous
+
+        overlap = self._find_text_overlap(previous, current)
+        if overlap > 0:
+            suffix = current[overlap:].strip()
+            return previous if not suffix else f"{previous} {suffix}".strip()
+
+        return f"{previous} {current}".strip()
+
+    def _find_text_overlap(self, previous_text: str, current_text: str) -> int:
+        previous = previous_text.strip()
+        current = current_text.strip()
+        if not previous or not current:
+            return 0
+
+        max_overlap = min(len(previous), len(current))
+        for overlap in range(max_overlap, 0, -1):
+            if previous[-overlap:] == current[:overlap]:
+                return overlap
+        return 0
+
     def _build_prompt(
         self,
         mode: str = "asr",
         source_language: Optional[str] = None,
         target_language: Optional[str] = None,
+        prefix_text: Optional[str] = None,
     ) -> str:
         if mode == "speakers":
             content = SAA_PROMPT
@@ -478,10 +626,12 @@ class Granite4Transcriber:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ]
+        extra = {"prefix_text": prefix_text} if prefix_text is not None else {}
         return self.tokenizer.apply_chat_template(
             chat,
             tokenize=False,
             add_generation_prompt=True,
+            **extra,
         )
 
     def _decode_audio_to_array(self, source: "str | bytes | io.IOBase") -> np.ndarray:
