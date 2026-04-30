@@ -436,7 +436,6 @@ class Granite4Transcriber:
                     max_new_tokens=self.max_new_tokens,
                     do_sample=False,
                     num_beams=1,
-                    cache_implementation="offloaded",
                 )
             except torch.OutOfMemoryError as e:
                 if self.device == "cuda":
