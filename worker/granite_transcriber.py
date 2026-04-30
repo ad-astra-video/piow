@@ -212,7 +212,6 @@ class Granite4Transcriber:
             self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 self.model_ref,
                 dtype=self._select_torch_dtype(torch),
-                attn_implementation="flash_attention_2",
             )
             self.model.to(self.device)
             self.model.eval()
