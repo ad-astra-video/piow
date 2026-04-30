@@ -47,6 +47,15 @@ class _MockSession:
 
 
 class TestLivepeerTranslationProvider(unittest.IsolatedAsyncioTestCase):
+    async def test_create_transcription_job_raises_on_none_payload(self):
+        provider = LivepeerComputeProvider({"name": "livepeer", "gpu_runner_url": "http://worker:9935", "enabled": True})
+
+        with patch("compute_providers.livepeer.livepeer.aiohttp.ClientSession", return_value=_MockSession(_MockResponse(200, None))):
+            with self.assertRaises(Exception) as cm:
+                await provider.create_transcription_job("data:audio/wav;base64,AAAA", "en")
+
+        self.assertIn("invalid response type", str(cm.exception))
+
     async def test_create_translation_job_returns_provider_payload(self):
         provider = LivepeerComputeProvider({"name": "livepeer", "gpu_runner_url": "http://worker:9935", "enabled": True})
         response_payload = {

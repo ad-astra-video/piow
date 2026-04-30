@@ -135,9 +135,24 @@ def _get_user_id(request):
 
 def _is_successful_transcription_result(job_result):
     """Return True when provider result indicates a successful transcription."""
+    if not isinstance(job_result, dict):
+        return False
     status = str(job_result.get('status', 'completed') or 'completed').strip().lower()
     failure_statuses = {'failed', 'error', 'cancelled', 'canceled'}
     return status not in failure_statuses
+
+
+def _validate_provider_transcription_result(result, provider_name):
+    """Raise when a provider returns an unusable transcription payload."""
+    if result is None:
+        raise ValueError(f"Provider '{provider_name}' returned no response payload")
+    if not isinstance(result, dict):
+        raise ValueError(
+            f"Provider '{provider_name}' returned invalid response type: {type(result).__name__}"
+        )
+    if not result:
+        raise ValueError(f"Provider '{provider_name}' returned an empty response payload")
+    return result
 
 # ============================================================================
 # HELPER: Store transcription result and record usage
@@ -392,10 +407,14 @@ async def transcribe_file(request):
         last_error = None
         for provider in ranked_providers:
             try:
-                job_result = await provider.create_transcription_job(
+                candidate_result = await provider.create_transcription_job(
                     audio_url=provider_audio_url, language=language, format="json",
                     punctuation_pass=punctuation_pass,
                     source_language=source_language, target_language=target_language
+                )
+                job_result = _validate_provider_transcription_result(
+                    candidate_result,
+                    provider.provider_name,
                 )
                 break
             except Exception as provider_error:
@@ -501,10 +520,14 @@ async def transcribe_url(request):
         last_error = None
         for provider in ranked_providers:
             try:
-                job_result = await provider.create_transcription_job(
+                candidate_result = await provider.create_transcription_job(
                     audio_url=provider_audio_url, language=language, format=format,
                     punctuation_pass=punctuation_pass,
                     source_language=source_language, target_language=target_language
+                )
+                job_result = _validate_provider_transcription_result(
+                    candidate_result,
+                    provider.provider_name,
                 )
                 break
             except Exception as provider_error:
@@ -625,12 +648,13 @@ async def transcribe_stream(request):
                     )
                     break
                 else:
+                    response_keys = sorted(list(session_result.keys())) if isinstance(session_result, dict) else []
                     logger.warning(
                         "Provider stream session missing whip_url: request_id=%s provider=%s session_id=%s response_keys=%s",
                         stream_request_id,
                         provider.provider_name,
                         session_id,
-                        sorted(list(session_result.keys())),
+                        response_keys,
                     )
                     session_result = None
             except Exception as e:

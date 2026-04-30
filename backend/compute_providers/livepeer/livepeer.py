@@ -137,6 +137,12 @@ class LivepeerComputeProvider(BaseComputeProvider):
                     )
 
                 result = await response.json(content_type=None)
+                if not isinstance(result, dict):
+                    raise Exception(
+                        f"Livepeer transcription returned invalid response type: {type(result).__name__}"
+                    )
+                if not result:
+                    raise Exception("Livepeer transcription returned an empty response payload")
                 logger.info(f"Livepeer transcription completed: job_id={result.get('job_id', 'unknown')}")
 
         # Normalize the response to a consistent format
@@ -214,6 +220,12 @@ class LivepeerComputeProvider(BaseComputeProvider):
                     )
 
                 result = await response.json(content_type=None)
+                if not isinstance(result, dict):
+                    raise Exception(
+                        f"Livepeer translation returned invalid response type: {type(result).__name__}"
+                    )
+                if not result:
+                    raise Exception("Livepeer translation returned an empty response payload")
                 logger.info(f"Livepeer translation completed: job_id={result.get('job_id', 'unknown')}")
 
         # Normalize the response to a consistent format
@@ -383,6 +395,12 @@ class LivepeerComputeProvider(BaseComputeProvider):
                         raise Exception(f"HTTP {response.status}: {error_text[:500]}")
                     
                     provider_data = await response.json(content_type=None)
+                    if not isinstance(provider_data, dict):
+                        raise Exception(
+                            f"Livepeer stream start returned invalid response type: {type(provider_data).__name__}"
+                        )
+                    if not provider_data:
+                        raise Exception("Livepeer stream start returned an empty response payload")
                     logger.info(
                         "Livepeer stream start success: request_id=%s url=%s session_id=%s http_status=%s elapsed_ms=%s response_keys=%s whip_url=%s data_url=%s",
                         stream_request_id,
