@@ -45,7 +45,6 @@ if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
 from granite_transcriber import Granite4Transcriber
-from forced_aligner import ForcedAlignerService
 from vllm_client import VLLMRealtimeClient, warmup_transcription
 
 # ---------------------------------------------------------------------------
@@ -63,9 +62,6 @@ PORT = int(os.environ.get("WORKER_PORT", "9935"))
 WS_URL = os.environ.get("VLLM_WS_URL", "ws://localhost:8080/v1/realtime")
 VLLM_SOURCE_LANG = os.environ.get("VLLM_SOURCE_LANG", "en")
 VLLM_TARGET_LANG = os.environ.get("VLLM_TARGET_LANG", "es")
-ALIGNER_WINDOW_SECONDS = float(os.environ.get("ALIGNER_WINDOW_SECONDS", "10"))
-ALIGNER_MIN_AUDIO_SECONDS = float(os.environ.get("ALIGNER_MIN_AUDIO_SECONDS", "0.5"))
-ALIGNER_MAX_INFLIGHT_TASKS = int(os.environ.get("ALIGNER_MAX_INFLIGHT_TASKS", "2"))
 
 # ---------------------------------------------------------------------------
 # Orchestrator Registration Configuration
@@ -104,7 +100,6 @@ _batch_price_per_unit = BATCH_CAPABILITY_PRICE_PER_UNIT
 # Component singletons
 # ---------------------------------------------------------------------------
 granite_transcriber = Granite4Transcriber()
-forced_aligner_service = ForcedAlignerService()
 vllm_client: Optional[VLLMRealtimeClient] = None
 processor: Optional[StreamProcessor] = None
 
@@ -356,8 +351,10 @@ def _normalize_transcription_result(result: Dict[str, Any], job_id: str, languag
             "language": result.get("language", language),
             "duration": result.get("duration"),
             "segments": result.get("segments"),
+            "words": result.get("words"),
+            "speakers": result.get("speakers"),
             "word_count": result.get("word_count"),
-            "model": result.get("model", "granite-4.0-1b"),
+            "model": result.get("model", "granite-speech-4.1-2b-plus"),
             "hardware": result.get("hardware", "cpu"),
             "provider": "worker",
             "raw_response": result,
@@ -370,8 +367,10 @@ def _normalize_transcription_result(result: Dict[str, Any], job_id: str, languag
         "language": result.get("language", language),
         "duration": result.get("duration"),
         "segments": result.get("segments"),
+        "words": result.get("words"),
+        "speakers": result.get("speakers"),
         "word_count": result.get("word_count"),
-        "model": result.get("model", "granite-4.0-1b"),
+        "model": result.get("model", "granite-speech-4.1-2b-plus"),
         "hardware": result.get("hardware", "cpu"),
         "provider": "worker",
         "raw_response": result,
@@ -390,7 +389,7 @@ def _normalize_translation_result(
         "source_language": result.get("source_language", source_lang),
         "target_language": result.get("target_language", target_lang),
         "token_count": result.get("token_count"),
-        "model": result.get("model", "granite-4.0-1b"),
+        "model": result.get("model", "granite-speech-4.1-2b-plus"),
         "hardware": result.get("hardware", "cpu"),
         "provider": "worker",
         "raw_response": result,
@@ -422,7 +421,8 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
             uploaded_name = "audio.wav"
             language = "en"
             fmt = "json"
-            punctuation_pass = False
+            with_speakers = False
+            with_word_timestamps = False
             source_language = None
             target_language = None
 
@@ -434,9 +434,12 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                     language = (await field.read()).decode("utf-8", "replace").strip() or "en"
                 elif field.name == "format":
                     fmt = (await field.read()).decode("utf-8", "replace").strip() or "json"
-                elif field.name == "punctuation_pass":
+                elif field.name == "with_speakers":
                     val = (await field.read()).decode("utf-8", "replace").strip().lower()
-                    punctuation_pass = val in ("1", "true", "yes")
+                    with_speakers = val in ("1", "true", "yes")
+                elif field.name == "with_word_timestamps":
+                    val = (await field.read()).decode("utf-8", "replace").strip().lower()
+                    with_word_timestamps = val in ("1", "true", "yes")
                 elif field.name == "source_language":
                     source_language = (await field.read()).decode("utf-8", "replace").strip() or None
                 elif field.name == "target_language":
@@ -460,13 +463,14 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                 uploaded_name, len(file_data), suffix,
             )
 
-            result = granite_transcriber.transcribe(file_data, language, punctuation_pass=punctuation_pass, source_language=source_language, target_language=target_language)
+            result = granite_transcriber.transcribe(file_data, language, with_speakers=with_speakers, with_word_timestamps=with_word_timestamps, source_language=source_language, target_language=target_language)
 
         else:
             body = await request.json()
             audio_url = body.get("audio_url")
             language = body.get("language", "en")
-            punctuation_pass = bool(body.get("punctuation_pass", False))
+            with_speakers = bool(body.get("with_speakers", False))
+            with_word_timestamps = bool(body.get("with_word_timestamps", False))
             source_language = body.get("source_language")
             target_language = body.get("target_language")
 
@@ -492,7 +496,7 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                         status=400,
                     )
 
-                result = granite_transcriber.transcribe(audio_bytes, language, punctuation_pass=punctuation_pass, source_language=source_language, target_language=target_language)
+                result = granite_transcriber.transcribe(audio_bytes, language, with_speakers=with_speakers, with_word_timestamps=with_word_timestamps, source_language=source_language, target_language=target_language)
             else:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(audio_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
@@ -503,7 +507,7 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
                             )
                         audio_bytes = await resp.read()
 
-                result = granite_transcriber.transcribe(audio_bytes, language, punctuation_pass=punctuation_pass, source_language=source_language, target_language=target_language)
+                result = granite_transcriber.transcribe(audio_bytes, language, with_speakers=with_speakers, with_word_timestamps=with_word_timestamps, source_language=source_language, target_language=target_language)
 
         normalized = _normalize_transcription_result(result, job_id, language)
         transcriptions_db[job_id] = normalized
@@ -601,100 +605,6 @@ class LiveTranscriptionWorker:
     # 160ms @ 16kHz s16 mono = 16000 * 0.16 * 2 bytes = 5120 bytes
     _SEND_CHUNK_BYTES: int = 5120
     _audio_buffer: bytes = b""
-    _window_pcm: bytearray = bytearray()
-    _window_text_parts: List[str] = []
-    _window_id: int = 0
-    _window_lock: Optional[asyncio.Lock] = None
-    _aligner_loop_task: Optional[asyncio.Task] = None
-    _alignment_tasks: set = set()
-    _MIN_WINDOW_AUDIO_BYTES: int = int(16000 * 2 * ALIGNER_MIN_AUDIO_SECONDS)
-
-    @classmethod
-    async def _append_window_text(cls, text: str) -> None:
-        if not text or not text.strip():
-            return
-        if cls._window_lock is None:
-            cls._window_lock = asyncio.Lock()
-        async with cls._window_lock:
-            cls._window_text_parts.append(text.strip())
-
-    @classmethod
-    async def _snapshot_window(cls) -> Dict[str, Any]:
-        if cls._window_lock is None:
-            cls._window_lock = asyncio.Lock()
-        async with cls._window_lock:
-            cls._window_id += 1
-            window_id = cls._window_id
-            audio = bytes(cls._window_pcm)
-            text = " ".join(cls._window_text_parts).strip()
-            cls._window_pcm = bytearray()
-            cls._window_text_parts = []
-        return {
-            "window_id": window_id,
-            "audio": audio,
-            "text": text,
-        }
-
-    @classmethod
-    async def _emit_text_timestamps(cls, payload: Dict[str, Any]) -> None:
-        if processor is None:
-            return
-        await processor.send_data(json.dumps(payload))
-
-    @classmethod
-    async def _run_alignment(cls, window_id: int, audio: bytes, text: str, language: str) -> None:
-        try:
-            words = await asyncio.to_thread(
-                forced_aligner_service.align,
-                audio,
-                16000,
-                text,
-                language,
-            )
-            payload = {
-                "type": "text_timestamps",
-                "window_id": window_id,
-                "transcript": text,
-                "language": language,
-                "words": words,
-            }
-            await cls._emit_text_timestamps(payload)
-        except Exception as exc:
-            logger.warning("Alignment failed for window %s: %s", window_id, exc)
-            await cls._emit_text_timestamps(
-                {
-                    "type": "text_timestamps.error",
-                    "window_id": window_id,
-                    "error": str(exc),
-                }
-            )
-
-    @classmethod
-    async def _aligner_loop(cls, language: str) -> None:
-        while True:
-            await asyncio.sleep(ALIGNER_WINDOW_SECONDS)
-            snapshot = await cls._snapshot_window()
-            window_id = snapshot["window_id"]
-            audio = snapshot["audio"]
-            text = snapshot["text"]
-
-            if len(audio) < cls._MIN_WINDOW_AUDIO_BYTES or not text:
-                continue
-
-            if len(cls._alignment_tasks) >= ALIGNER_MAX_INFLIGHT_TASKS:
-                logger.warning(
-                    "Skipping alignment window %s: too many inflight tasks (%s)",
-                    window_id,
-                    len(cls._alignment_tasks),
-                )
-                continue
-
-            task = asyncio.create_task(
-                cls._run_alignment(window_id=window_id, audio=audio, text=text, language=language),
-                name=f"align-window-{window_id}",
-            )
-            cls._alignment_tasks.add(task)
-            task.add_done_callback(lambda t: cls._alignment_tasks.discard(t))
 
     @model_loader
     async def load(self, **kwargs: dict) -> None:
@@ -707,10 +617,6 @@ class LiveTranscriptionWorker:
             await warmup_transcription(ws_url=WS_URL, audio_path=str(warmup_audio))
         else:
             logger.warning("VLLM warmup skipped: test.wav not found at %s", warmup_audio)
-        try:
-            await asyncio.to_thread(forced_aligner_service.load)
-        except Exception as exc:
-            logger.warning("Forced aligner warmup skipped: %s", exc)
 
     @on_stream_start
     async def on_start(self, params: Dict[str, Any]) -> None:
@@ -722,10 +628,6 @@ class LiveTranscriptionWorker:
         # Reset per-stream audio buffering state
         LiveTranscriptionWorker._audio_frame_count = 0
         LiveTranscriptionWorker._audio_buffer = b""
-        LiveTranscriptionWorker._window_pcm = bytearray()
-        LiveTranscriptionWorker._window_text_parts = []
-        LiveTranscriptionWorker._window_lock = asyncio.Lock()
-        LiveTranscriptionWorker._alignment_tasks = set()
 
         # Close any stale client from a previous stream just in case
         if vllm_client is not None:
@@ -751,44 +653,13 @@ class LiveTranscriptionWorker:
                 return
 
             if isinstance(message, dict):
-                msg_type = str(message.get("type") or "")
-                text_chunk = ""
-                if msg_type in (
-                    "transcription.delta",
-                    "conversation.item.input_audio_transcription.delta",
-                    "response.output_text.delta",
-                    "response.output_audio_transcript.delta",
-                    "response.audio_transcript.delta",
-                    "response.text.delta",
-                ):
-                    text_chunk = str(message.get("delta") or message.get("text") or "")
-                elif msg_type in (
-                    "transcription.done",
-                    "conversation.item.input_audio_transcription.completed",
-                    "response.output_text.done",
-                    "response.output_audio_transcript.done",
-                    "response.audio_transcript.done",
-                    "response.text.done",
-                ):
-                    text_chunk = str(
-                        message.get("transcript") or message.get("text") or message.get("delta") or ""
-                    )
-                if text_chunk:
-                    await LiveTranscriptionWorker._append_window_text(text_chunk)
-
                 payload = json.dumps(message)
-                #logger.info(
-                #    "Sending raw vLLM event on data channel: type=%s payload=%s",
-                #    message.get("type", "unknown"),
-                #    payload,
-                #)
                 await processor.send_data(payload)
                 return
 
             text = message if isinstance(message, str) else str(message)
             if not text or not text.strip():
                 return
-            await LiveTranscriptionWorker._append_window_text(text)
             payload = json.dumps({"type": "transcription", "text": text, "is_final": is_final})
             logger.info(
                 f"Sending transcription on data channel: is_final={is_final}, len={len(text)}"
@@ -800,10 +671,6 @@ class LiveTranscriptionWorker:
         try:
             await vllm_client.connect()
             logger.info("VLLM client connected successfully")
-            LiveTranscriptionWorker._aligner_loop_task = asyncio.create_task(
-                LiveTranscriptionWorker._aligner_loop(language=vllm_client.source_lang),
-                name="forced-aligner-window-loop",
-            )
         except Exception as exc:
             logger.warning(f"Could not connect to VLLM on stream start: {exc}")
 
@@ -842,7 +709,6 @@ class LiveTranscriptionWorker:
                     while len(LiveTranscriptionWorker._audio_buffer) >= LiveTranscriptionWorker._SEND_CHUNK_BYTES:
                         chunk = LiveTranscriptionWorker._audio_buffer[:LiveTranscriptionWorker._SEND_CHUNK_BYTES]
                         LiveTranscriptionWorker._audio_buffer = LiveTranscriptionWorker._audio_buffer[LiveTranscriptionWorker._SEND_CHUNK_BYTES:]
-                        LiveTranscriptionWorker._window_pcm.extend(chunk)
                         if LiveTranscriptionWorker._audio_frame_count % 100 == 1:
                             n_samples = len(chunk) // 2
                             pcm16 = np.frombuffer(chunk, dtype=np.int16)
@@ -865,31 +731,6 @@ class LiveTranscriptionWorker:
         realtime websocket so the next stream gets a fresh session."""
         global vllm_client
         logger.info("Stream stopped")
-
-        if LiveTranscriptionWorker._aligner_loop_task and not LiveTranscriptionWorker._aligner_loop_task.done():
-            LiveTranscriptionWorker._aligner_loop_task.cancel()
-            try:
-                await LiveTranscriptionWorker._aligner_loop_task
-            except asyncio.CancelledError:
-                pass
-        LiveTranscriptionWorker._aligner_loop_task = None
-
-        trailing = await LiveTranscriptionWorker._snapshot_window()
-        trailing_audio = trailing.get("audio") or b""
-        trailing_text = trailing.get("text") or ""
-        if len(trailing_audio) >= LiveTranscriptionWorker._MIN_WINDOW_AUDIO_BYTES and trailing_text:
-            await LiveTranscriptionWorker._run_alignment(
-                window_id=trailing.get("window_id", 0),
-                audio=trailing_audio,
-                text=trailing_text,
-                language=(vllm_client.source_lang if vllm_client else VLLM_SOURCE_LANG),
-            )
-
-        if LiveTranscriptionWorker._alignment_tasks:
-            for task in list(LiveTranscriptionWorker._alignment_tasks):
-                task.cancel()
-            await asyncio.gather(*list(LiveTranscriptionWorker._alignment_tasks), return_exceptions=True)
-            LiveTranscriptionWorker._alignment_tasks.clear()
 
         if vllm_client is not None:
             try:

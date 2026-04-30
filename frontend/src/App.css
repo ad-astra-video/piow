@@ -436,6 +436,41 @@ html, body {
 .url-input-wrap svg { color: var(--text-muted); flex-shrink: 0; }
 .url-input-wrap input { border: none; background: transparent; padding: 0; }
 
+.mode-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+}
+.mode-option input { margin-top: 0.15rem; }
+.mode-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+.mode-option strong {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.mode-option small {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.mode-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .result-panel { padding: 1.25rem; }
 .result-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
 .result-header h2 { display: flex; align-items: center; gap: 0.4rem; margin: 0; font-size: 1rem; }

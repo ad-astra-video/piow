@@ -38,7 +38,7 @@ class TestWorkerIntegration(unittest.TestCase):
         result = transcriber.transcribe("/fake/path.wav")
         self.assertIn('text', result)
         self.assertIn('error', result)
-        self.assertEqual(result['model'], 'granite-4.0-1b')
+        self.assertEqual(result['model'], 'granite-speech-4.1-2b-plus')
     
     @patch('vllm_client.websockets.connect')
     def test_vllm_client_integration(self, mock_connect):
