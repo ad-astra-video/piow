@@ -63,6 +63,7 @@ _SPEAKER_SPLIT_RE = re.compile(r"(\[Speaker (\d+)\]:)")
 
 @dataclass(frozen=True)
 class _IncrementalWindow:
+    start_sample: int
     end_sample: int
     audio: np.ndarray
 
@@ -193,6 +194,14 @@ class Granite4Transcriber:
         self.incremental_window_seconds = max(
             5.0,
             float(os.environ.get("GRANITE_INCREMENTAL_WINDOW_SECONDS", "30")),
+        )
+        self.long_file_chunk_seconds = max(
+            60.0,
+            float(os.environ.get("GRANITE_LONG_FILE_CHUNK_SECONDS", "600")),
+        )
+        self.long_file_overlap_seconds = max(
+            0.0,
+            float(os.environ.get("GRANITE_LONG_FILE_OVERLAP_SECONDS", "1")),
         )
         self.incremental_min_duration_seconds = max(
             0.0,
@@ -534,8 +543,9 @@ class Granite4Transcriber:
                 if not merged_text:
                     raise
                 logger.warning(
-                    "Incremental Granite decode failed for mode=%s at %.2fs; falling back to single pass",
+                    "Incremental Granite decode failed for mode=%s at %.2f-%.2fs; falling back to single pass",
                     mode,
+                    window.start_sample / self.sample_rate,
                     window.end_sample / self.sample_rate,
                     exc_info=True,
                 )
@@ -564,10 +574,27 @@ class Granite4Transcriber:
         if total_samples <= 0:
             return
 
+        long_chunk_samples = max(1, int(self.long_file_chunk_seconds * self.sample_rate))
+        overlap_samples = max(0, int(self.long_file_overlap_seconds * self.sample_rate))
+        if total_samples > long_chunk_samples:
+            step_samples = max(1, long_chunk_samples - overlap_samples)
+            start_sample = 0
+            while start_sample < total_samples:
+                end_sample = min(start_sample + long_chunk_samples, total_samples)
+                yield _IncrementalWindow(
+                    start_sample=start_sample,
+                    end_sample=end_sample,
+                    audio=audio[start_sample:end_sample],
+                )
+                if end_sample >= total_samples:
+                    break
+                start_sample += step_samples
+            return
+
         window_samples = max(1, int(self.incremental_window_seconds * self.sample_rate))
         for end_sample in range(window_samples, total_samples, window_samples):
-            yield _IncrementalWindow(end_sample=end_sample, audio=audio[:end_sample])
-        yield _IncrementalWindow(end_sample=total_samples, audio=audio)
+            yield _IncrementalWindow(start_sample=0, end_sample=end_sample, audio=audio[:end_sample])
+        yield _IncrementalWindow(start_sample=0, end_sample=total_samples, audio=audio)
 
     def _merge_incremental_text(self, previous_text: str, current_text: str) -> str:
         previous = previous_text.strip()
@@ -584,6 +611,14 @@ class Granite4Transcriber:
             return previous if not suffix else f"{previous} {suffix}".strip()
         if previous.endswith(current):
             return previous
+
+        token_overlap = self._find_token_overlap(previous, current)
+        if token_overlap > 0:
+            current_tokens = current.split()
+            suffix_tokens = current_tokens[token_overlap:]
+            if not suffix_tokens:
+                return previous
+            return f"{previous} {' '.join(suffix_tokens)}".strip()
 
         overlap = self._find_text_overlap(previous, current)
         if overlap > 0:
@@ -603,6 +638,29 @@ class Granite4Transcriber:
             if previous[-overlap:] == current[:overlap]:
                 return overlap
         return 0
+
+    def _find_token_overlap(self, previous_text: str, current_text: str) -> int:
+        previous_tokens = previous_text.split()
+        current_tokens = current_text.split()
+        if not previous_tokens or not current_tokens:
+            return 0
+
+        max_overlap = min(len(previous_tokens), len(current_tokens))
+        min_overlap = 2
+        for overlap in range(max_overlap, min_overlap - 1, -1):
+            if self._tokens_match(previous_tokens[-overlap:], current_tokens[:overlap]):
+                return overlap
+        return 0
+
+    def _tokens_match(self, left: List[str], right: List[str]) -> bool:
+        if len(left) != len(right):
+            return False
+        return all(self._normalize_token(a) == self._normalize_token(b) for a, b in zip(left, right))
+
+    def _normalize_token(self, token: str) -> str:
+        # Keep letters/numbers/apostrophes to align small punctuation differences in chunk overlaps.
+        normalized = re.sub(r"[^\w']+", "", token.lower())
+        return normalized
 
     def _build_prompt(
         self,

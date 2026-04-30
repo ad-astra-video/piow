@@ -202,14 +202,35 @@ class TestGranite4Transcriber(unittest.TestCase):
         transcriber = Granite4Transcriber()
         transcriber.sample_rate = 4
         transcriber.incremental_window_seconds = 2.0
+        transcriber.long_file_chunk_seconds = 100.0
 
         audio = np.arange(13, dtype=np.float32)
 
         windows = list(transcriber._iter_incremental_windows(audio))
 
+        self.assertEqual([window.start_sample for window in windows], [0, 0])
         self.assertEqual([window.end_sample for window in windows], [8, 13])
         np.testing.assert_array_equal(windows[0].audio, audio[:8])
         np.testing.assert_array_equal(windows[1].audio, audio)
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_iter_incremental_windows_long_file_uses_10m_chunks_with_overlap(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+        transcriber.sample_rate = 1
+        transcriber.long_file_chunk_seconds = 600.0
+        transcriber.long_file_overlap_seconds = 1.0
+
+        audio = np.arange(1300, dtype=np.float32)
+
+        windows = list(transcriber._iter_incremental_windows(audio))
+
+        self.assertEqual(
+            [(window.start_sample, window.end_sample) for window in windows],
+            [(0, 600), (599, 1199), (1198, 1300)],
+        )
+        np.testing.assert_array_equal(windows[0].audio, audio[0:600])
+        np.testing.assert_array_equal(windows[1].audio, audio[599:1199])
+        np.testing.assert_array_equal(windows[2].audio, audio[1198:1300])
 
     @patch('granite_transcriber.Granite4Transcriber._load_model')
     def test_run_incremental_generation_carries_prefix_text(self, _mock_load_model):
@@ -338,6 +359,15 @@ class TestIncrementalTextMerge(unittest.TestCase):
         transcriber = Granite4Transcriber()
         merged = transcriber._merge_incremental_text('hello there', 'there')
         self.assertEqual(merged, 'hello there')
+
+    @patch('granite_transcriber.Granite4Transcriber._load_model')
+    def test_merge_incremental_text_deduplicates_punctuation_mismatch_overlap(self, _mock_load_model):
+        transcriber = Granite4Transcriber()
+        merged = transcriber._merge_incremental_text(
+            'hello there friend, this is good',
+            'friend this is good and new',
+        )
+        self.assertEqual(merged, 'hello there friend, this is good and new')
 
 
 if __name__ == '__main__':
