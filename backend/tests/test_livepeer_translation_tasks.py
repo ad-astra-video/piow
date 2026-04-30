@@ -35,6 +35,7 @@ class _MockResponse:
 class _MockSession:
     def __init__(self, response):
         self._response = response
+        self.posts = []
 
     async def __aenter__(self):
         return self
@@ -43,6 +44,7 @@ class _MockSession:
         return False
 
     def post(self, url, json=None, headers=None, timeout=None):
+        self.posts.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
         return self._response
 
 
@@ -88,3 +90,28 @@ class TestLivepeerTranslationProvider(unittest.IsolatedAsyncioTestCase):
                 await provider.create_translation_job("Hello", "en", "es")
 
         self.assertIn("HTTP 502", str(cm.exception))
+
+    async def test_create_transcription_job_forwards_worker_options(self):
+        provider = LivepeerComputeProvider({"name": "livepeer", "gpu_runner_url": "http://worker:9935", "enabled": True})
+        response_payload = {
+            "job_id": "job-opts",
+            "status": "completed",
+            "text": "hello there",
+            "language": "en",
+            "words": [{"word": "hello", "start": 0.0, "end": 0.4}],
+            "speakers": [{"speaker": 1, "text": "hello there"}],
+        }
+        session = _MockSession(_MockResponse(200, response_payload))
+
+        with patch("compute_providers.livepeer.livepeer.aiohttp.ClientSession", return_value=session):
+            result = await provider.create_transcription_job(
+                "data:audio/wav;base64,AAAA",
+                "en",
+                with_speakers=True,
+                with_word_timestamps=True,
+            )
+
+        self.assertEqual(session.posts[0]["json"]["with_speakers"], True)
+        self.assertEqual(session.posts[0]["json"]["with_word_timestamps"], True)
+        self.assertEqual(result["words"], response_payload["words"])
+        self.assertEqual(result["speakers"], response_payload["speakers"])

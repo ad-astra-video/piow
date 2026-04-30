@@ -17,6 +17,7 @@ import re
 import time
 import uuid
 import json
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 try:
@@ -45,6 +46,19 @@ compute_provider_manager = ComputeProviderManager()
 compute_provider_manager.register_providers_from_definitions(PROVIDER_DEFINITIONS)
 
 MAX_REMOTE_AUDIO_BYTES = 225 * 1024 * 1024  # ~2 hours of 16 kHz mono 16-bit audio
+
+
+def _coerce_bool(value: Any) -> bool:
+    """Normalize booleans from multipart or JSON request values."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
 
 
 def _infer_audio_mime_type(file_path):
@@ -80,7 +94,7 @@ def _build_data_url_from_bytes(data: bytes, filename: str) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def _probe_duration_from_bytes(data: bytes, filename: str = "") -> "Optional[int]":
+def _probe_duration_from_bytes(data: bytes, filename: str = "") -> Optional[int]:
     """Extract audio duration from in-memory bytes using PyAV (no disk I/O)."""
     if not av:
         return None
@@ -361,6 +375,8 @@ async def transcribe_file(request):
         filename = "uploaded_audio"
         language = "en"
         punctuation_pass = False
+        with_speakers = False
+        with_word_timestamps = False
         source_language = None
         target_language = None
 
@@ -371,8 +387,11 @@ async def transcribe_file(request):
             elif part.name == 'language':
                 language = await part.text()
             elif part.name == 'punctuation_pass':
-                val = (await part.text()).strip().lower()
-                punctuation_pass = val in ('1', 'true', 'yes')
+                punctuation_pass = _coerce_bool(await part.text())
+            elif part.name == 'with_speakers':
+                with_speakers = _coerce_bool(await part.text())
+            elif part.name == 'with_word_timestamps':
+                with_word_timestamps = _coerce_bool(await part.text())
             elif part.name == 'source_language':
                 source_language = (await part.text()).strip() or None
             elif part.name == 'target_language':
@@ -410,6 +429,8 @@ async def transcribe_file(request):
                 candidate_result = await provider.create_transcription_job(
                     audio_url=provider_audio_url, language=language, format="json",
                     punctuation_pass=punctuation_pass,
+                    with_speakers=with_speakers,
+                    with_word_timestamps=with_word_timestamps,
                     source_language=source_language, target_language=target_language
                 )
                 job_result = _validate_provider_transcription_result(
@@ -460,6 +481,8 @@ async def transcribe_file(request):
             'duration': job_result.get('duration'),
             'word_count': job_result.get('word_count'),
             'segments': job_result.get('segments'),
+            'words': job_result.get('words'),
+            'speakers': job_result.get('speakers'),
             'model': job_result.get('model', 'unknown'),
             'hardware': job_result.get('hardware', 'unknown'),
             'provider': job_result.get('provider', 'unknown'),
@@ -488,7 +511,9 @@ async def transcribe_url(request):
         audio_url = data.get('audio_url')
         language = data.get('language', 'en')
         format = data.get('format', 'json')
-        punctuation_pass = bool(data.get('punctuation_pass', False))
+        punctuation_pass = _coerce_bool(data.get('punctuation_pass', False))
+        with_speakers = _coerce_bool(data.get('with_speakers', False))
+        with_word_timestamps = _coerce_bool(data.get('with_word_timestamps', False))
         source_language = data.get('source_language') or None
         target_language = data.get('target_language') or None
 
@@ -523,6 +548,8 @@ async def transcribe_url(request):
                 candidate_result = await provider.create_transcription_job(
                     audio_url=provider_audio_url, language=language, format=format,
                     punctuation_pass=punctuation_pass,
+                    with_speakers=with_speakers,
+                    with_word_timestamps=with_word_timestamps,
                     source_language=source_language, target_language=target_language
                 )
                 job_result = _validate_provider_transcription_result(
@@ -573,6 +600,8 @@ async def transcribe_url(request):
             'duration': job_result.get('duration'),
             'word_count': job_result.get('word_count'),
             'segments': job_result.get('segments'),
+            'words': job_result.get('words'),
+            'speakers': job_result.get('speakers'),
             'model': job_result.get('model', 'unknown'),
             'hardware': job_result.get('hardware', 'unknown'),
             'provider': job_result.get('provider', 'unknown'),

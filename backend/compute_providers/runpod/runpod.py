@@ -130,6 +130,8 @@ class RunpodComputeProvider(BaseComputeProvider):
             "language": output.get("language", language),
             "duration": output.get("duration"),
             "segments": output.get("segments"),
+            "words": output.get("words"),
+            "speakers": output.get("speakers"),
             "word_count": output.get("word_count"),
             "model": output.get("model", "granite-4.0-1b"),
             "hardware": output.get("hardware", "gpu"),

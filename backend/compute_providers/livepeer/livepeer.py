@@ -104,6 +104,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
             "language": language,
             "format": format,
             "punctuation_pass": punctuation_pass,
+            **kwargs,
         }
         if source_language:
             request_body["source_language"] = source_language
@@ -153,6 +154,8 @@ class LivepeerComputeProvider(BaseComputeProvider):
             "language": result.get("language", language),
             "duration": result.get("duration"),
             "segments": result.get("segments"),
+            "words": result.get("words"),
+            "speakers": result.get("speakers"),
             "word_count": result.get("word_count"),
             "model": result.get("model", "granite-4.0-1b"),
             "hardware": result.get("hardware", "cpu"),
