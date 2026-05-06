@@ -4,6 +4,7 @@ VLLM WebSocket client for real-time translation.
 Connects to VLLM's OpenAI-compatible realtime API.
 """
 import os
+import time
 import asyncio
 import inspect
 import json
@@ -83,6 +84,7 @@ class VLLMRealtimeClient:
         self._closing = False
         self._audio_frame_count: int = 0
         self._transcription_completed = asyncio.Event()
+        self._connect_time: float = 0.0
 
     async def connect(self, max_retries=30, retry_delay=5):
         """Connect to VLLM WebSocket endpoint with retry logic."""
@@ -95,6 +97,7 @@ class VLLMRealtimeClient:
             try:
                 self.websocket = await websockets.connect(self.ws_url, additional_headers={})
                 self.is_connected = True
+                self._connect_time = time.monotonic()
                 logger.info(f"Connected to VLLM at {self.ws_url}")
                 
                 # Wait for session.created event
@@ -400,6 +403,41 @@ class VLLMRealtimeClient:
             self.websocket = None
 
         self.is_connected = False
+
+    def connection_age(self) -> float:
+        """Return the age of the current WebSocket connection in seconds,
+        or 0.0 if not connected."""
+        if not self.is_connected or self._connect_time == 0.0:
+            return 0.0
+        return time.monotonic() - self._connect_time
+
+    async def async_reconnect(self, max_retries: int = 5, retry_delay: float = 3.0) -> bool:
+        """Close the current WebSocket and establish a fresh connection.
+
+        This is the full handshake sequence: close, wait for the listener to
+        drain, connect, session.update, initial commit, and restart the
+        listener.
+
+        Returns True if the new connection is ready, False otherwise.
+        """
+        logger.info(
+            "VLLMClient: reconnecting (connection age=%.0fs)",
+            self.connection_age(),
+        )
+
+        # Tear down the old connection
+        await self.close()
+
+        # Wait a moment for the server side to fully clean up
+        await asyncio.sleep(0.5)
+
+        try:
+            await self.connect(max_retries=max_retries, retry_delay=retry_delay)
+            logger.info("VLLMClient: reconnection successful")
+            return True
+        except Exception as exc:
+            logger.error("VLLMClient: reconnection failed: %s", exc)
+            return False
 
 
 def _audio_file_to_pcm16_bytes(audio_path: str) -> bytes:

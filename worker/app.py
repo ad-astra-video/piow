@@ -605,6 +605,9 @@ class LiveTranscriptionWorker:
     # 320ms @ 16kHz s16 mono = 16000 * 0.32 * 2 bytes = 10240 bytes
     _SEND_CHUNK_BYTES: int = 10240
     _audio_buffer: bytes = b""
+    # Cycle the VLLM WebSocket connection every 15 minutes to avoid
+    # long-lived connection issues (stale state, memory growth, etc.).
+    _CONNECTION_MAX_AGE_SECONDS: int = 15 * 60
 
     @model_loader
     async def load(self, **kwargs: dict) -> None:
@@ -721,9 +724,56 @@ class LiveTranscriptionWorker:
                                 f"rms={rms:.1f}, peak={peak}"
                             )
                         await vllm_client.send_audio(chunk)
+
+                        # Cycle VLLM WebSocket connection every 15 minutes.
+                        # Flush remaining buffered audio before reconnecting so the
+                        # next buffer is sent on the new connection.
+                        if vllm_client.connection_age() >= LiveTranscriptionWorker._CONNECTION_MAX_AGE_SECONDS:
+                            remaining = LiveTranscriptionWorker._audio_buffer
+                            LiveTranscriptionWorker._audio_buffer = b""
+                            await self._cycle_vllm_connection(remaining)
             except Exception as exc:
                 logger.warning(f"VLLM send_audio error: {exc}")
         return [frame]
+
+    async def _cycle_vllm_connection(self, remaining_audio: bytes) -> None:
+        """Close the current VLLM WebSocket, reconnect, and flush any
+        remaining buffered audio on the new connection.
+
+        Called from ``handle_audio`` when the connection age exceeds
+        ``_CONNECTION_MAX_AGE_SECONDS``.
+        """
+        global vllm_client
+
+        # Commit any audio buffered on the old connection before closing
+        if vllm_client and vllm_client.is_connected:
+            try:
+                await vllm_client.commit_audio()
+            except Exception as exc:
+                logger.warning(f"VLLM commit before reconnect failed: {exc}")
+
+        # Reconnect
+        if not vllm_client:
+            logger.warning("No VLLM client to reconnect")
+            # Just put the remaining audio back
+            LiveTranscriptionWorker._audio_buffer = remaining_audio
+            return
+
+        ok = await vllm_client.async_reconnect()
+        if not ok:
+            logger.error("VLLM reconnection failed; remaining audio will be dropped")
+            return
+
+        logger.info(
+            "VLLM connection cycled successfully (age reset to 0s)"
+        )
+
+        # Send any remaining buffered audio on the new connection
+        if remaining_audio:
+            try:
+                await vllm_client.send_audio(remaining_audio)
+            except Exception as exc:
+                logger.warning(f"VLLM send remaining audio after reconnect: {exc}")
 
     @on_stream_stop
     async def on_stop(self) -> None:
