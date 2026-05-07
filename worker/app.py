@@ -646,16 +646,26 @@ class LiveTranscriptionWorker:
             target_lang=VLLM_TARGET_LANG,
         )
 
+        # Voxtral generates one token every 80ms.  Count each
+        # transcription.delta to derive elapsed generation time.
+        _delta_count = 0
+
         async def _on_transcription(message: Any, is_final: bool = False, **kw) -> None:
             """Forward vLLM events to the pytrickle data channel.
 
-            For transcription.delta, vLLM payloads are forwarded verbatim so the
-            backend can relay the original provider schema unchanged.
+            For transcription.delta, inject timestamp_ms (80ms per delta) on
+            the worker side — the vLLM server no longer patches this.
             """
+            nonlocal _delta_count
             if processor is None:
                 return
 
             if isinstance(message, dict):
+                msg_type = message.get("type")
+                if msg_type == "transcription.delta":
+                    _delta_count += 1
+                    # Each Voxtral frame is 80ms; derive elapsed ms from count.
+                    message["timestamp_ms"] = _delta_count * 80
                 payload = json.dumps(message)
                 await processor.send_data(payload)
                 return
@@ -663,7 +673,13 @@ class LiveTranscriptionWorker:
             text = message if isinstance(message, str) else str(message)
             if not text or not text.strip():
                 return
-            payload = json.dumps({"type": "transcription", "text": text, "is_final": is_final})
+            _delta_count += 1
+            payload = json.dumps({
+                "type": "transcription",
+                "text": text,
+                "is_final": is_final,
+                "timestamp_ms": _delta_count * 80,
+            })
             logger.info(
                 f"Sending transcription on data channel: is_final={is_final}, len={len(text)}"
             )

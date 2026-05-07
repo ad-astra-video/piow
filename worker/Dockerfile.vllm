@@ -12,8 +12,3 @@ RUN uv pip install --system soxr librosa soundfile
 # VoxtralRealtimeGeneration requires mistral-common[audio]
 # (per https://docs.vllm.ai/en/latest/models/supported_models/)
 RUN uv pip install --system 'mistral-common[audio]'
-
-# Patch vLLM realtime endpoint: add timestamp_ms to TranscriptionDelta
-# and emit "SIL" markers for silence/delay tokens (Voxtral @ 80ms/frame)
-COPY patch_vllm_realtime.py /patch_vllm_realtime.py
-RUN python3 /patch_vllm_realtime.py && rm /patch_vllm_realtime.py

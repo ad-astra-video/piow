@@ -321,14 +321,13 @@ class SSERelay:
             # Buffer ALL transcription messages (delta and final) because the
             # worker cycles the VLLM WebSocket every 15 minutes, so
             # transcription.done events may never arrive before the connection
-            # is torn down.  The "SIL" silence marker from the vLLM patch is
-            # excluded.
+            # is torn down.
             if self._session_store is not None and message.get("type") in (
                 "transcription",
                 "transcription.delta",
             ):
                 text = (message.get("text") or message.get("delta") or "").strip()
-                if text and text.upper() != "SIL":
+                if text:
                     self._pending_segments.append(text)
             if (
                 self._session_store is not None
