@@ -840,6 +840,7 @@ async def main() -> None:
         host=HOST,
         enable_default_routes=True,
         ssl=True,
+        send_data_interval=0.1,  # 100ms — smoother transcript streaming
     )
     # Register custom batch routes directly on the aiohttp app router
     # (avoids pytrickle custom_routes API incompatibility with tuples)
