@@ -45,6 +45,10 @@ def patch_connection():
     with open(CONN_PATH, "r") as f:
         src = f.read()
 
+    # 0. Add 'import time' if missing
+    if "import time" not in src:
+        src = src.replace("import asyncio\n", "import asyncio\nimport time\n", 1)
+
     # 1. Insert start_ns after generate() call
     old_gen = '''            )
 
