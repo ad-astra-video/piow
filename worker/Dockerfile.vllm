@@ -12,3 +12,8 @@ RUN uv pip install --system soxr librosa soundfile
 # VoxtralRealtimeGeneration requires mistral-common[audio]
 # (per https://docs.vllm.ai/en/latest/models/supported_models/)
 RUN uv pip install --system 'mistral-common[audio]'
+
+# Patch vLLM WebSocket scope bug: scope["method"] raises KeyError on
+# WebSocket connections (vLLM v0.20.1).  Fixes scope.get("method") instead.
+COPY patch_vllm.py /patch_vllm.py
+RUN python3 /patch_vllm.py && rm /patch_vllm.py
