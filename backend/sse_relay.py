@@ -38,7 +38,7 @@ class SSERelay:
     """
 
     # How often (seconds) to flush buffered transcription text to the DB
-    FLUSH_INTERVAL_SECONDS = 5
+    FLUSH_INTERVAL_SECONDS = 10
 
     def __init__(self, data_url: str, stream_id: str, session_store=None):
         """
@@ -317,14 +317,18 @@ class SSERelay:
         messages = self._normalize_messages(event)
         for message in messages:
             await self._broadcast(message)
-            # Buffer final transcription segments for periodic DB persistence
-            if (
-                self._session_store is not None
-                and message.get("type") == "transcription"
-                and message.get("is_final")
+            # Buffer transcription text for periodic DB persistence.
+            # Buffer ALL transcription messages (delta and final) because the
+            # worker cycles the VLLM WebSocket every 15 minutes, so
+            # transcription.done events may never arrive before the connection
+            # is torn down.  The "SIL" silence marker from the vLLM patch is
+            # excluded.
+            if self._session_store is not None and message.get("type") in (
+                "transcription",
+                "transcription.delta",
             ):
-                text = (message.get("text") or "").strip()
-                if text:
+                text = (message.get("text") or message.get("delta") or "").strip()
+                if text and text.upper() != "SIL":
                     self._pending_segments.append(text)
             if (
                 self._session_store is not None
