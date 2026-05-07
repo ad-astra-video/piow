@@ -20,7 +20,7 @@ from typing import Dict, Any, Optional, List
 import time
 from typing import Any as TypingAny
 
-from supabase_client import supabase
+from supabase_client import async_supabase as supabase
 from payments.payment_strategy import x402_or_subscription
 
 logger = logging.getLogger(__name__)
@@ -226,7 +226,7 @@ class SessionStore:
 
         # Cache miss — try Supabase
         try:
-            result = supabase.table("user_sessions").select("*").eq("id", session_id).execute()
+            result = await supabase.table("user_sessions").select("*").eq("id", session_id).execute()
             if result.data:
                 row = result.data[0]
                 session_data = self._row_to_session(row)
@@ -262,7 +262,7 @@ class SessionStore:
             if session_id in self._sessions_cache:
                 transcription_ids = list(self._sessions_cache[session_id]["transcriptions"])
             else:
-                result = supabase.table("user_sessions").select("transcription_ids").eq("id", session_id).execute()
+                result = await supabase.table("user_sessions").select("transcription_ids").eq("id", session_id).execute()
                 if result.data:
                     transcription_ids = list(result.data[0].get("transcription_ids") or [])
                 transcription_ids.append(transcription_id)
@@ -285,7 +285,7 @@ class SessionStore:
             if session_id in self._sessions_cache:
                 stream_session_ids = list(self._sessions_cache[session_id]["stream_sessions"])
             else:
-                result = supabase.table("user_sessions").select("stream_session_ids").eq("id", session_id).execute()
+                result = await supabase.table("user_sessions").select("stream_session_ids").eq("id", session_id).execute()
                 if result.data:
                     stream_session_ids = list(result.data[0].get("stream_session_ids") or [])
                 stream_session_ids.append(stream_id)
@@ -365,7 +365,7 @@ class SessionStore:
 
         # Cache miss — try Supabase
         try:
-            result = supabase.table("stream_sessions").select("*").eq("id", stream_id).execute()
+            result = await supabase.table("stream_sessions").select("*").eq("id", stream_id).execute()
             if result.data:
                 row = result.data[0]
                 stream_data = self._row_to_stream_session(row)
@@ -382,7 +382,7 @@ class SessionStore:
             return True
         # Try Supabase
         try:
-            result = supabase.table("stream_sessions").select("id").eq("id", stream_id).execute()
+            result = await supabase.table("stream_sessions").select("id").eq("id", stream_id).execute()
             return len(result.data) > 0
         except Exception as e:
             logger.warning(f"Failed to check stream session in Supabase: {e}")
@@ -434,7 +434,7 @@ class SessionStore:
                 db_update["transcription_segments"] = self._stream_sessions_cache.get(stream_id, {}).get("transcription_segments", [])
             if isinstance(timestamp_segment, dict):
                 db_update["text_timestamps"] = self._stream_sessions_cache.get(stream_id, {}).get("text_timestamps", [])
-            supabase.table("stream_sessions").update(db_update).eq("id", stream_id).execute()
+            await supabase.table("stream_sessions").update(db_update).eq("id", stream_id).execute()
         except Exception as e:
             logger.warning(f"Failed to update stream session in Supabase: {e}")
 
@@ -470,7 +470,7 @@ class SessionStore:
             }
             if final_text:
                 db_update["final_text"] = final_text
-            supabase.table("stream_sessions").update(db_update).eq("id", stream_id).execute()
+            await supabase.table("stream_sessions").update(db_update).eq("id", stream_id).execute()
         except Exception as e:
             logger.warning(f"Failed to close stream session in Supabase: {e}")
 
@@ -523,7 +523,7 @@ class SessionStore:
         if existing_id:
             # Append new text to the existing row
             try:
-                rows = supabase.table("transcriptions").select("text").eq("id", existing_id).execute()
+                rows = await supabase.table("transcriptions").select("text").eq("id", existing_id).execute()
                 prev_text = rows.data[0].get("text", "") if rows.data else ""
                 full_text = (prev_text + new_text).strip()
                 supabase.table("transcriptions").update({
@@ -557,7 +557,7 @@ class SessionStore:
             if hardware in ("cpu", "gpu"):
                 insert_payload["hardware"] = hardware
 
-            rec = supabase.table("transcriptions").insert(insert_payload).execute()
+            rec = await supabase.table("transcriptions").insert(insert_payload).execute()
             transcription_id = rec.data[0]["id"] if rec.data else None
             if transcription_id:
                 if stream_id in self._stream_sessions_cache:
@@ -604,7 +604,7 @@ class SessionStore:
 
         # Cache miss — try Supabase
         try:
-            result = supabase.table("transcription_sessions").select("*").eq("id", transcription_id).execute()
+            result = await supabase.table("transcription_sessions").select("*").eq("id", transcription_id).execute()
             if result.data:
                 row = result.data[0]
                 data = self._row_to_transcription(row)
@@ -620,7 +620,7 @@ class SessionStore:
         if transcription_id in self._transcriptions_cache:
             return True
         try:
-            result = supabase.table("transcription_sessions").select("id").eq("id", transcription_id).execute()
+            result = await supabase.table("transcription_sessions").select("id").eq("id", transcription_id).execute()
             return len(result.data) > 0
         except Exception as e:
             logger.warning(f"Failed to check transcription in Supabase: {e}")
@@ -639,7 +639,7 @@ class SessionStore:
         try:
             db_update = {k: v for k, v in updates.items() if k in ("result", "status")}
             db_update["updated_at"] = "now()"
-            supabase.table("transcription_sessions").update(db_update).eq("id", transcription_id).execute()
+            await supabase.table("transcription_sessions").update(db_update).eq("id", transcription_id).execute()
         except Exception as e:
             logger.warning(f"Failed to update transcription in Supabase: {e}")
 
@@ -1409,7 +1409,7 @@ async def stop_stream_session(request):
             stream_session = await session_store.get_stream_session(stream_id)
             transcription_id = (stream_session or {}).get("transcription_id")
             if transcription_id:
-                supabase.table("transcriptions").update({"status": "completed"}).eq("id", transcription_id).execute()
+                await supabase.table("transcriptions").update({"status": "completed"}).eq("id", transcription_id).execute()
                 logger.info(
                     "Finalized live transcription record: stream_id=%s transcription_id=%s",
                     stream_id,

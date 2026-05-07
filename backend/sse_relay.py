@@ -353,16 +353,20 @@ class SSERelay:
             return
         segments, self._pending_segments = self._pending_segments, []
         timestamp_segments, self._pending_timestamps = self._pending_timestamps, []
-        for text in segments:
+
+        # Combine all segment text into a single string and do one DB update
+        combined_text = " ".join(seg for seg in segments if seg)
+        if combined_text:
             try:
                 await self._session_store.update_stream_session(
-                    self.stream_id, {"transcription_segment": text}
+                    self.stream_id, {"transcription_segment": combined_text}
                 )
             except Exception as exc:
                 logger.warning(
                     "Failed to persist transcription segment for stream %s: %s",
                     self.stream_id, exc
                 )
+
         # Incrementally build the transcriptions row for history/recents
         if segments:
             try:
