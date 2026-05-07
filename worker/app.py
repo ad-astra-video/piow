@@ -664,7 +664,12 @@ class LiveTranscriptionWorker:
                 msg_type = message.get("type")
                 if msg_type == "transcription.delta":
                     _delta_count += 1
-                    # Each Voxtral frame is 80ms; derive elapsed ms from count.
+                    # Use the delta count for timestamp tracking, but only
+                    # forward to the data channel when there's actual text.
+                    # Empty deltas are heartbeat signals from vLLM for timing.
+                    delta = message.get("delta", "")
+                    if not delta:
+                        return
                     message["timestamp_ms"] = _delta_count * 80
                 payload = json.dumps(message)
                 await processor.send_data(payload)
