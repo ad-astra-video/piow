@@ -516,7 +516,7 @@ class SessionStore:
         model = provider_session.get("model")
         hardware = provider_session.get("hardware")
 
-        new_text = "\n".join(seg for seg in new_segments if seg)
+        new_text = "".join(seg for seg in new_segments if seg)
         existing_id: Optional[str] = stream_data.get("transcription_id")
         existing_segments = stream_data.get("text_timestamps") or []
 
@@ -525,7 +525,7 @@ class SessionStore:
             try:
                 rows = supabase.table("transcriptions").select("text").eq("id", existing_id).execute()
                 prev_text = rows.data[0].get("text", "") if rows.data else ""
-                full_text = (prev_text + "\n" + new_text).strip()
+                full_text = (prev_text + new_text).strip()
                 supabase.table("transcriptions").update({
                     "text": full_text,
                     "word_count": len(full_text.split()),
