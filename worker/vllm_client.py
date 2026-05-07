@@ -264,7 +264,8 @@ class VLLMRealtimeClient:
                 await self._call_text_callback(data)
                 
         elif msg_type == "transcription.done":
-            transcript = data.get("transcript", "")
+            # vLLM's TranscriptionDone schema uses "text" not "transcript"
+            transcript = data.get("text") or data.get("transcript", "")
             logger.info(f"RESULT transcription.done: '{transcript}'")
             self._transcription_completed.set()
             if transcript:
