@@ -259,9 +259,9 @@ class VLLMRealtimeClient:
         # VLLM uses OpenAI-compatible realtime API event types
         if msg_type == "transcription.delta":
             # Forward raw vLLM event payload as-is to preserve provider schema.
-            delta = data.get("delta", "")
-            if delta:
-                await self._call_text_callback(data)
+            # Always forward, including empty deltas, so the frontend gets
+            # heartbeat signals during silent periods.
+            await self._call_text_callback(data)
                 
         elif msg_type == "transcription.done":
             # vLLM's TranscriptionDone schema uses "text" not "transcript"
