@@ -241,14 +241,16 @@ async def _update_x402_payment_status(payment_data, status, result_data):
             update_data['settlement_result'] = result_data
 
         # Find the most recent pending/verified payment for this wallet+resource
-        await supabase.table('x402_payments')
-                .update(update_data)
-                .eq('agent_wallet', wallet)
-                .eq('resource_url', resource_url)
-                .in_('status', ['pending', 'verified'])
-                .order('created_at', desc=True)
-                .limit(1)
-                .execute()
+        await (
+            supabase.table('x402_payments')
+            .update(update_data)
+            .eq('agent_wallet', wallet)
+            .eq('resource_url', resource_url)
+            .in_('status', ['pending', 'verified'])
+            .order('created_at', desc=True)
+            .limit(1)
+            .execute()
+        )
     except Exception as e:
         logger.error(f"Failed to update x402 payment status: {e}")
 

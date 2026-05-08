@@ -806,10 +806,12 @@ class StripePaymentService:
 
         # Event deduplication: check if we've already processed this event
         try:
-            existing = await supabase.table('stripe_events')
-                    .select('id')
-                    .eq('stripe_event_id', event.id)
-                    .execute()
+            existing = await (
+                supabase.table('stripe_events')
+                .select('id')
+                .eq('stripe_event_id', event.id)
+                .execute()
+            )
             if existing.data:
                 logger.info("Duplicate webhook event ignored: %s", event.id)
                 return web.json_response({'status': 'duplicate_ignored'})
@@ -1139,10 +1141,12 @@ class StripePaymentService:
                 return
 
             # Find the user by subscription ID
-            sub_result = await supabase.table('subscriptions')
-                    .select('user_id')
-                    .eq('stripe_subscription_id', subscription_id)
-                    .execute()
+            sub_result = await (
+                supabase.table('subscriptions')
+                .select('user_id')
+                .eq('stripe_subscription_id', subscription_id)
+                .execute()
+            )
 
             if not sub_result.data:
                 logger.error("No subscription found for invoice %s", invoice.id)
@@ -1205,10 +1209,12 @@ class StripePaymentService:
                 return
 
             # Find the subscription to get user_id
-            sub_result = await supabase.table('subscriptions')
-                    .select('user_id')
-                    .eq('stripe_subscription_id', subscription_id)
-                    .execute()
+            sub_result = await (
+                supabase.table('subscriptions')
+                .select('user_id')
+                .eq('stripe_subscription_id', subscription_id)
+                .execute()
+            )
 
             if not sub_result.data:
                 logger.error("No subscription found for failed invoice %s", invoice.id)
@@ -1217,10 +1223,12 @@ class StripePaymentService:
             user_id = sub_result.data[0]['user_id']
 
             # Update subscription status to past_due
-            update_result = await supabase.table('subscriptions')
-                    .update({'status': 'past_due', 'updated_at': 'now()'})
-                    .eq('stripe_subscription_id', subscription_id)
-                    .execute()
+            update_result = await (
+                supabase.table('subscriptions')
+                .update({'status': 'past_due', 'updated_at': 'now()'})
+                .eq('stripe_subscription_id', subscription_id)
+                .execute()
+            )
 
             if not update_result.data:
                 logger.error("Failed to update subscription %s to past_due", subscription_id)
@@ -1368,10 +1376,12 @@ def subscription_required(min_tier: str = 'free'):
                     )
 
                 try:
-                    result = await supabase.table('subscriptions')
-                            .select('plan,status')
-                            .eq('user_id', user_id)
-                            .execute()
+                    result = await (
+                        supabase.table('subscriptions')
+                        .select('plan,status')
+                        .eq('user_id', user_id)
+                        .execute()
+                    )
 
                     if result.data:
                         sub = result.data[0]

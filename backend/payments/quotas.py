@@ -92,11 +92,13 @@ async def check_quota(user_id: str, service_type: str, tier: str = 'free') -> Tu
     thirty_days_ago = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() - 30 * 24 * 60 * 60))
 
     try:
-        result = await supabase.table(table)
-                .select(column)
-                .eq('user_id', user_id)
-                .gte('created_at', thirty_days_ago)
-                .execute()
+        result = await (
+            supabase.table(table)
+            .select(column)
+            .eq('user_id', user_id)
+            .gte('created_at', thirty_days_ago)
+            .execute()
+        )
 
         used_raw = sum(row.get(column, 0) or 0 for row in (result.data or []))
 

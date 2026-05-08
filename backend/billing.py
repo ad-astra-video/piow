@@ -130,10 +130,12 @@ async def get_subscription(request):
         from supabase_client import async_supabase as supabase
         user_id = str(user.id) if hasattr(user, 'id') else None
 
-        result = await supabase.table('subscriptions')
-                .select('*')
-                .eq('user_id', user_id)
-                .execute()
+        result = await (
+            supabase.table('subscriptions')
+            .select('*')
+            .eq('user_id', user_id)
+            .execute()
+        )
 
         if result.data:
             sub = result.data[0]
@@ -169,10 +171,12 @@ async def cancel_subscription(request):
         user_id = str(user.id) if hasattr(user, 'id') else None
 
         # Get current subscription
-        result = await supabase.table('subscriptions')
-                .select('stripe_subscription_id')
-                .eq('user_id', user_id)
-                .execute()
+        result = await (
+            supabase.table('subscriptions')
+            .select('stripe_subscription_id')
+            .eq('user_id', user_id)
+            .execute()
+        )
 
         if not result.data or not result.data[0].get('stripe_subscription_id'):
             return web.json_response({
@@ -227,10 +231,12 @@ async def update_subscription(request):
         user_id = str(user.id) if hasattr(user, 'id') else None
 
         # Get current subscription
-        result = await supabase.table('subscriptions')
-                .select('stripe_subscription_id')
-                .eq('user_id', user_id)
-                .execute()
+        result = await (
+            supabase.table('subscriptions')
+            .select('stripe_subscription_id')
+            .eq('user_id', user_id)
+            .execute()
+        )
 
         if not result.data or not result.data[0].get('stripe_subscription_id'):
             return web.json_response({
@@ -285,10 +291,12 @@ async def get_usage(request):
         user_id = str(user.id) if hasattr(user, 'id') else None
 
         # Get user's subscription tier
-        sub_result = await supabase.table('subscriptions')
-                .select('plan,status')
-                .eq('user_id', user_id)
-                .execute()
+        sub_result = await (
+            supabase.table('subscriptions')
+            .select('plan,status')
+            .eq('user_id', user_id)
+            .execute()
+        )
 
         tier = 'free'
         if sub_result.data and sub_result.data[0].get('status') in ('active', 'trialing'):
