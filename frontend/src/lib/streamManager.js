@@ -118,6 +118,8 @@ class StreamManager {
     // Timer
     this._timerInterval = null;
     this._streamStartTime = 0;
+    // Sentence buffering for timestamped transcript
+    this._textBuffer = '';
   }
 
   _setState(partial) {
@@ -378,6 +380,27 @@ class StreamManager {
           try {
             const message = JSON.parse(event.data);
             const msgType = typeof message.type === 'string' ? message.type : '';
+
+            // Helper: extract sentences from buffer and timestamp them
+            const _processBuffer = (buffer) => {
+              const sentences = [];
+              let remaining = buffer;
+              // Find sentence endings (. ! ?)
+              const regex = /[.!?]+/g;
+              let match;
+              let lastEnd = 0;
+              while ((match = regex.exec(buffer)) !== null) {
+                const sentence = buffer.slice(lastEnd, match.index + match[0].length).trim();
+                if (sentence) {
+                  const ts = formatDuration(this.state.elapsedMs);
+                  sentences.push(`[${ts}] ${sentence}`);
+                }
+                lastEnd = match.index + match[0].length;
+              }
+              remaining = buffer.slice(lastEnd).trimStart();
+              return { sentences, remaining };
+            };
+
             if (
               msgType === 'transcription.delta' ||
               msgType === 'conversation.item.input_audio_transcription.delta' ||
@@ -386,7 +409,18 @@ class StreamManager {
             ) {
               const delta = typeof message.delta === 'string' ? message.delta : '';
               if (!delta) return;
-              this._setState({ partialTranscript: this.state.partialTranscript + delta, status: 'Connected.' });
+              this._textBuffer += delta;
+              const { sentences, remaining } = _processBuffer(this._textBuffer);
+              if (sentences.length > 0) {
+                this._textBuffer = remaining;
+                this._setState({
+                  transcriptEntries: [...this.state.transcriptEntries, ...sentences],
+                  partialTranscript: remaining,
+                  status: 'Connected.',
+                });
+              } else {
+                this._setState({ partialTranscript: this._textBuffer, status: 'Connected.' });
+              }
             } else if (
               msgType === 'transcription.done' ||
               msgType === 'conversation.item.input_audio_transcription.completed' ||
@@ -398,8 +432,17 @@ class StreamManager {
                 (typeof message.text === 'string' && message.text) ||
                 '';
               if (!transcript) return;
+              // Append to buffer and flush all remaining text
+              this._textBuffer += transcript;
+              const { sentences, remaining } = _processBuffer(this._textBuffer);
+              const allEntries = [...this.state.transcriptEntries, ...sentences];
+              if (remaining) {
+                const ts = formatDuration(this.state.elapsedMs);
+                allEntries.push(`[${ts}] ${remaining}`);
+              }
+              this._textBuffer = '';
               this._setState({
-                transcriptEntries: [...this.state.transcriptEntries, transcript.trim()],
+                transcriptEntries: allEntries,
                 partialTranscript: '',
                 status: 'Connected.',
               });
@@ -408,13 +451,32 @@ class StreamManager {
               const isFinal = message.is_final;
               if (!text) return;
               if (isFinal) {
+                this._textBuffer += text;
+                const { sentences, remaining } = _processBuffer(this._textBuffer);
+                const allEntries = [...this.state.transcriptEntries, ...sentences];
+                if (remaining) {
+                  const ts = formatDuration(this.state.elapsedMs);
+                  allEntries.push(`[${ts}] ${remaining}`);
+                }
+                this._textBuffer = '';
                 this._setState({
-                  transcriptEntries: [...this.state.transcriptEntries, text.trim()],
+                  transcriptEntries: allEntries,
                   partialTranscript: '',
                   status: 'Connected.',
                 });
               } else {
-                this._setState({ partialTranscript: text, status: 'Connected.' });
+                this._textBuffer += text;
+                const { sentences, remaining } = _processBuffer(this._textBuffer);
+                if (sentences.length > 0) {
+                  this._textBuffer = remaining;
+                  this._setState({
+                    transcriptEntries: [...this.state.transcriptEntries, ...sentences],
+                    partialTranscript: remaining,
+                    status: 'Connected.',
+                  });
+                } else {
+                  this._setState({ partialTranscript: this._textBuffer, status: 'Connected.' });
+                }
               }
             } else if (msgType === 'text_timestamps') {
               const words = Array.isArray(message.words) ? message.words : [];
@@ -526,6 +588,7 @@ class StreamManager {
       this._beforeunloadHandler = null;
     }
 
+    this._textBuffer = '';
     this._setState({
       isStarted: false,
       partialTranscript: '',
