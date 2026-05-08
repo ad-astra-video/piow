@@ -123,7 +123,6 @@ function LiveTranscriptSidebar({ onStop }) {
         })}
         {partialTranscript ? (
           <article className="live-sidebar-entry partial-entry">
-            <span className="entry-badge">Live</span>
             <p>{partialTranscript}</p>
           </article>
         ) : null}
