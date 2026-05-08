@@ -99,8 +99,8 @@ export default function HistoryPage() {
                 </div>
                 <p className="history-text">
                   {item._type === 'transcription'
-                    ? (item.text || '').replace(/\n\s*/g, ' ')
-                    : (item.translated_text || '').replace(/\n\s*/g, ' ')}
+                    ? (item.text || '')
+                    : (item.translated_text || '')}
                 </p>
                 <div className="history-footer">
                   <span className="lang-tag">
