@@ -240,7 +240,7 @@ async def verify_supabase_user(request) -> Tuple[bool, Any]:
         # Verify the token with Supabase
         from supabase_client import async_supabase as supabase
         try:
-            user_response = supabase.auth.get_user(token)
+            user_response = await supabase.auth.get_user(token)
             if user_response.user:
                 # Store user in request for later use
                 request['user'] = user_response.user
