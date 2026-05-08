@@ -341,6 +341,9 @@ class SSERelay:
             return text
         if not text:
             return buffer
+        # Deltas can emit punctuation as standalone tokens; avoid inserting a space before them.
+        if re.match(r"^[.,!?;:)}\]\"']", text):
+            return buffer + text
         needs_space = not buffer.endswith(" ") and not text.startswith(" ")
         return buffer + (" " if needs_space else "") + text
 

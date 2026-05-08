@@ -385,6 +385,10 @@ class StreamManager {
             const _appendText = (buffer, text) => {
               if (!buffer) return text;
               if (!text) return buffer;
+              // Deltas can emit punctuation as standalone tokens; never prepend a space before them.
+              if (/^[.,!?;:)}\]"']/.test(text)) {
+                return buffer + text;
+              }
               // Add space if neither side already has one
               const needsSpace = !buffer.endsWith(' ') && !text.startsWith(' ');
               return buffer + (needsSpace ? ' ' : '') + text;
