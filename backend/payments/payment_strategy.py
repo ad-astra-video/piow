@@ -187,7 +187,7 @@ async def _record_x402_payment(request, payment_data, service_type, status, resu
     This function is called at the 'verified' stage.
     """
     try:
-        from supabase_client import supabase
+        from supabase_client import async_supabase as supabase
 
         user = request.get('user')
         agent = request.get('agent')
@@ -215,9 +215,7 @@ async def _record_x402_payment(request, payment_data, service_type, status, resu
             record['settlement_result'] = result_data
             record['settled_at'] = 'now()'
 
-        await asyncio.to_thread(
-            lambda: supabase.table('x402_payments').insert(record).execute()
-        )
+        await supabase.table('x402_payments').insert(record).execute()
     except Exception as e:
         logger.error(f"Failed to record x402 payment: {e}")
 
@@ -228,7 +226,7 @@ async def _update_x402_payment_status(payment_data, status, result_data):
     Called after settlement succeeds (→ settled) or fails (→ failed).
     """
     try:
-        from supabase_client import supabase
+        from supabase_client import async_supabase as supabase
 
         authorization = payment_data.get('payload', {}).get('authorization', {})
         wallet = authorization.get('from', 'unknown')
@@ -243,8 +241,7 @@ async def _update_x402_payment_status(payment_data, status, result_data):
             update_data['settlement_result'] = result_data
 
         # Find the most recent pending/verified payment for this wallet+resource
-        await asyncio.to_thread(
-            lambda: supabase.table('x402_payments')
+        await supabase.table('x402_payments')
                 .update(update_data)
                 .eq('agent_wallet', wallet)
                 .eq('resource_url', resource_url)
@@ -252,7 +249,6 @@ async def _update_x402_payment_status(payment_data, status, result_data):
                 .order('created_at', desc=True)
                 .limit(1)
                 .execute()
-        )
     except Exception as e:
         logger.error(f"Failed to update x402 payment status: {e}")
 

@@ -44,7 +44,7 @@ from sessions import (
 from billing import setup_routes as setup_billing_routes
 from user_routes import setup_routes as setup_user_routes
 
-from supabase_client import supabase
+from supabase_client import async_supabase as supabase
 
 # Import compute provider system
 from compute_providers.provider_manager import ComputeProviderManager

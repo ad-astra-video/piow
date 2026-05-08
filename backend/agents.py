@@ -30,7 +30,7 @@ def _get_base_url():
     return ""
 
 # These will be imported when needed to avoid circular imports
-# from supabase_client import supabase
+# from supabase_client import async_supabase as supabase
 
 
 def setup_routes(app):
@@ -73,7 +73,7 @@ async def agent_register(request):
         api_secret = ''.join(secrets.choice(alphabet) for _ in range(64))
 
         # Import supabase here to avoid circular imports
-        from supabase_client import supabase
+        from supabase_client import async_supabase as supabase
 
         # Insert agent into database
         result = supabase.table('agents').insert({
@@ -113,7 +113,7 @@ async def agent_get_usage(request):
     logger.info("Received agent usage request")
 
     # Import here to avoid circular imports
-    from supabase_client import supabase
+    from supabase_client import async_supabase as supabase
 
     # Agent is already verified and set in request by the decorator
     agent = request.get('agent')
@@ -210,7 +210,7 @@ async def agent_list_keys(request):
     logger.info("Received agent list keys request")
 
     # Import here to avoid circular imports
-    from supabase_client import supabase
+    from supabase_client import async_supabase as supabase
 
     # Agent is already verified and set in request by the decorator
     agent = request.get('agent')
@@ -246,7 +246,7 @@ async def agent_create_key(request):
     logger.info("Received agent create key request")
 
     # Import here to avoid circular imports
-    from supabase_client import supabase
+    from supabase_client import async_supabase as supabase
 
     # Agent is already verified and set in request by the decorator
     agent = request.get('agent')
@@ -291,7 +291,7 @@ async def agent_revoke_key(request):
     logger.info("Received agent revoke key request")
 
     # Import here to avoid circular imports
-    from supabase_client import supabase
+    from supabase_client import async_supabase as supabase
 
     # Agent is already verified and set in request by the decorator
     agent = request.get('agent')
@@ -364,7 +364,7 @@ async def agent_create_subscription(request):
     logger.info("Received agent create subscription request")
 
     # Import here to avoid circular imports
-    from supabase_client import supabase
+    from supabase_client import async_supabase as supabase
 
     # Agent is already verified and set in request by the decorator
     agent = request.get('agent')
@@ -528,7 +528,7 @@ async def agent_delete_subscription(request):
     logger.info("Received agent delete subscription request")
 
     # Import here to avoid circular imports
-    from supabase_client import supabase
+    from supabase_client import async_supabase as supabase
 
     # Agent is already verified and set in request by the decorator
     agent = request.get('agent')
@@ -563,7 +563,7 @@ async def agent_reactivate_subscription(request):
     logger.info("Received agent reactivate subscription request")
 
     # Import here to avoid circular imports
-    from supabase_client import supabase
+    from supabase_client import async_supabase as supabase
 
     # Agent is already verified and set in request by the decorator
     agent = request.get('agent')

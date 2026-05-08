@@ -27,7 +27,7 @@ except ImportError:
 
 from auth import no_auth, require_user_auth, track_usage
 from payments.payment_strategy import x402_or_subscription
-from supabase_client import supabase
+from supabase_client import async_supabase as supabase
 from compute_providers.provider_manager import ComputeProviderManager
 from compute_providers.livepeer.livepeer import LivepeerComputeProvider
 from agents import agent_register, agent_get_usage, agent_list_keys, agent_create_key, agent_revoke_key, agent_get_subscription, agent_create_subscription, agent_delete_subscription, agent_reactivate_subscription
@@ -852,7 +852,7 @@ async def get_transcription(request):
         if not transcription_id:
             return web.json_response({"error": "Missing transcription ID"}, status=400)
 
-        result = supabase.table('transcriptions').select('*').eq('id', transcription_id).eq('user_id', user_id).execute()
+        result = await await supabase.table('transcriptions').select('*').eq('id', transcription_id).eq('user_id', user_id).execute()
 
         if not result.data:
             return web.json_response({"error": "Transcription not found"}, status=404)
@@ -878,7 +878,7 @@ async def delete_transcription(request):
         if not transcription_id:
             return web.json_response({"error": "Missing transcription ID"}, status=400)
 
-        result = supabase.table('transcriptions').delete().eq('id', transcription_id).eq('user_id', user_id).execute()
+        result = await await supabase.table('transcriptions').delete().eq('id', transcription_id).eq('user_id', user_id).execute()
 
         if not result.data:
             return web.json_response({"error": "Transcription not found"}, status=404)
@@ -913,7 +913,7 @@ async def transcribe_health_check(request):
         supabase_status = "unknown"
         try:
             if supabase:
-                supabase.table('agents').select('id').limit(1).execute()
+                await supabase.table('agents').select('id').limit(1).execute()
                 supabase_status = "ok"
             else:
                 supabase_status = "error: client not initialized"

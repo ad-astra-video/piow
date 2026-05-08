@@ -109,7 +109,7 @@ def require_agent_auth(handler):
 # Verification functions (used by middleware and directly where needed)
 # ---------------------------------------------------------------------------
 
-def verify_agent_request(request) -> Tuple[bool, Any]:
+async def verify_agent_request(request) -> Tuple[bool, Any]:
     """
     Verify agent request using HMAC-SHA256 signature.
     
@@ -152,8 +152,8 @@ def verify_agent_request(request) -> Tuple[bool, Any]:
             }, status=401)
         
         # Look up agent by API key
-        from supabase_client import supabase
-        result = supabase.table('agents').select('*').eq('api_key', api_key).execute()
+        from supabase_client import async_supabase as supabase
+        result = await supabase.table('agents').select('*').eq('api_key', api_key).execute()
         
         if not result.data:
             return False, web.json_response({
@@ -205,7 +205,7 @@ def verify_agent_request(request) -> Tuple[bool, Any]:
         }, status=500)
 
 
-def verify_supabase_user(request) -> Tuple[bool, Any]:
+async def verify_supabase_user(request) -> Tuple[bool, Any]:
     """
     Verify user request using Supabase JWT token.
     
@@ -238,7 +238,7 @@ def verify_supabase_user(request) -> Tuple[bool, Any]:
             }, status=401)
         
         # Verify the token with Supabase
-        from supabase_client import supabase
+        from supabase_client import async_supabase as supabase
         try:
             user_response = supabase.auth.get_user(token)
             if user_response.user:
@@ -266,7 +266,7 @@ def verify_supabase_user(request) -> Tuple[bool, Any]:
 # Helper functions (extracted from old decorators, used by middleware)
 # ---------------------------------------------------------------------------
 
-def _check_rate_limit(request) -> bool:
+async def _check_rate_limit(request) -> bool:
     """Check rate limit for the authenticated entity.
 
     Returns True if the request is allowed, False if rate-limited.
@@ -291,8 +291,8 @@ def _check_rate_limit(request) -> bool:
 
     try:
         one_minute_ago = datetime.fromtimestamp(time.time() - 60, tz=timezone.utc).isoformat()
-        from supabase_client import supabase
-        rate_query = supabase.table('api_usage').select('id', count='exact').eq('actor_type', auth_type).gte('timestamp', one_minute_ago)
+        from supabase_client import async_supabase as supabase
+        rate_query = await supabase.table('api_usage').select('id', count='exact').eq('actor_type', auth_type).gte('timestamp', one_minute_ago)
         if auth_type == "agent":
             rate_query = rate_query.eq('agent_id', identifier)
         else:
@@ -308,7 +308,7 @@ def _check_rate_limit(request) -> bool:
     return True
 
 
-def _record_usage(request, response, start_time: float) -> None:
+async def _record_usage(request, response, start_time: float) -> None:
     """Record usage after request completion.
 
     Must be called AFTER authentication (so request['user'] or request['agent'] is set).
@@ -367,7 +367,7 @@ def _record_usage(request, response, start_time: float) -> None:
         }
 
         # Insert usage record
-        from supabase_client import supabase
+        from supabase_client import async_supabase as supabase
         usage_payload = {
             "actor_type": entity_type,
             "agent_id": agent_id,
@@ -378,7 +378,7 @@ def _record_usage(request, response, start_time: float) -> None:
             "cost_usdc_cents": cost_usdc_cents,
             "metadata": metadata
         }
-        supabase.table('api_usage').insert(usage_payload).execute()
+        await supabase.table('api_usage').insert(usage_payload).execute()
     except Exception as e:
         logger.error(f"Failed to log usage: {e}")
 
@@ -414,14 +414,14 @@ async def auth_middleware(request, handler):
 
     # Step 3: Perform authentication
     if auth_type == 'user':
-        verified, result = verify_supabase_user(request)
+        verified, result = await verify_supabase_user(request)
     elif auth_type == 'agent':
-        verified, result = verify_agent_request(request)
+        verified, result = await verify_agent_request(request)
     else:
         # Default 'any' — try agent auth first, then user auth
-        verified, result = verify_agent_request(request)
+        verified, result = await verify_agent_request(request)
         if not verified:
-            verified, result = verify_supabase_user(request)
+            verified, result = await verify_supabase_user(request)
 
     if not verified:
         return result  # 401 error response
@@ -441,7 +441,7 @@ async def auth_middleware(request, handler):
 
     # Step 6: Usage tracking (only for routes decorated with @track_usage)
     if getattr(handler, '_track_usage', False):
-        _record_usage(request, response, start_time)
+        await _record_usage(request, response, start_time)
 
     return response
 

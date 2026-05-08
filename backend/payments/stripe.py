@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from aiohttp import web
 
 # Import supabase client
-from supabase_client import supabase
+from supabase_client import async_supabase as supabase
 
 # Stripe imports - separate runtime imports from type hints
 # Note: Type ignore comments are used for Pylance compatibility with Stripe SDK
@@ -540,7 +540,7 @@ class StripePaymentService:
 
         try:
             # Get user info from Supabase
-            user_result = supabase.table('users').select('email, full_name').eq('id', user_id).single().execute()
+            user_result = await supabase.table('users').select('email, full_name').eq('id', user_id).single().execute()
 
             if not user_result.data:
                 raise ValueError(f"User not found: {user_id}")
@@ -806,23 +806,19 @@ class StripePaymentService:
 
         # Event deduplication: check if we've already processed this event
         try:
-            existing = await asyncio.to_thread(
-                lambda: supabase.table('stripe_events')
+            existing = await supabase.table('stripe_events')
                     .select('id')
                     .eq('stripe_event_id', event.id)
                     .execute()
-            )
             if existing.data:
                 logger.info("Duplicate webhook event ignored: %s", event.id)
                 return web.json_response({'status': 'duplicate_ignored'})
 
             # Record event as processed
-            await asyncio.to_thread(
-                lambda: supabase.table('stripe_events').insert({
-                    'stripe_event_id': event.id,
-                    'event_type': event.type,
-                }).execute()
-            )
+            await supabase.table('stripe_events').insert({
+                'stripe_event_id': event.id,
+                'event_type': event.type,
+            }).execute()
         except Exception as e:
             logger.error("Failed to deduplicate webhook event %s: %s", event.id, e)
             # Continue processing even if dedup fails — better to process twice than lose an event
@@ -1143,12 +1139,10 @@ class StripePaymentService:
                 return
 
             # Find the user by subscription ID
-            sub_result = await asyncio.to_thread(
-                lambda: supabase.table('subscriptions')
+            sub_result = await supabase.table('subscriptions')
                     .select('user_id')
                     .eq('stripe_subscription_id', subscription_id)
                     .execute()
-            )
 
             if not sub_result.data:
                 logger.error("No subscription found for invoice %s", invoice.id)
@@ -1172,9 +1166,7 @@ class StripePaymentService:
                 },
             }
 
-            tx_result = await asyncio.to_thread(
-                lambda: supabase.table('transactions').insert(transaction_data).execute()
-            )
+            tx_result = await supabase.table('transactions').insert(transaction_data).execute()
 
             if not tx_result.data:
                 logger.error("Failed to record transaction for invoice %s", invoice.id)
@@ -1213,12 +1205,10 @@ class StripePaymentService:
                 return
 
             # Find the subscription to get user_id
-            sub_result = await asyncio.to_thread(
-                lambda: supabase.table('subscriptions')
+            sub_result = await supabase.table('subscriptions')
                     .select('user_id')
                     .eq('stripe_subscription_id', subscription_id)
                     .execute()
-            )
 
             if not sub_result.data:
                 logger.error("No subscription found for failed invoice %s", invoice.id)
@@ -1227,12 +1217,10 @@ class StripePaymentService:
             user_id = sub_result.data[0]['user_id']
 
             # Update subscription status to past_due
-            update_result = await asyncio.to_thread(
-                lambda: supabase.table('subscriptions')
+            update_result = await supabase.table('subscriptions')
                     .update({'status': 'past_due', 'updated_at': 'now()'})
                     .eq('stripe_subscription_id', subscription_id)
                     .execute()
-            )
 
             if not update_result.data:
                 logger.error("Failed to update subscription %s to past_due", subscription_id)
@@ -1380,12 +1368,10 @@ def subscription_required(min_tier: str = 'free'):
                     )
 
                 try:
-                    result = await asyncio.to_thread(
-                        lambda: supabase.table('subscriptions')
+                    result = await supabase.table('subscriptions')
                             .select('plan,status')
                             .eq('user_id', user_id)
                             .execute()
-                    )
 
                     if result.data:
                         sub = result.data[0]
