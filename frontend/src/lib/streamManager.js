@@ -414,7 +414,9 @@ class StreamManager {
               msgType === 'transcription.delta' ||
               msgType === 'conversation.item.input_audio_transcription.delta' ||
               msgType === 'response.output_text.delta' ||
-              msgType === 'response.output_audio_transcript.delta'
+              msgType === 'response.output_audio_transcript.delta' ||
+              msgType === 'response.text.delta' ||
+              msgType === 'response.audio_transcript.delta'
             ) {
               const delta = typeof message.delta === 'string' ? message.delta : '';
               if (!delta) return;
@@ -434,7 +436,9 @@ class StreamManager {
               msgType === 'transcription.done' ||
               msgType === 'conversation.item.input_audio_transcription.completed' ||
               msgType === 'response.output_text.done' ||
-              msgType === 'response.output_audio_transcript.done'
+              msgType === 'response.output_audio_transcript.done' ||
+              msgType === 'response.text.done' ||
+              msgType === 'response.audio_transcript.done'
             ) {
               const transcript =
                 (typeof message.transcript === 'string' && message.transcript) ||

@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Dict, Any, Optional, Set, List
+from typing import Dict, Any, Optional, Set, List, Tuple
 
 import aiohttp
 from aiohttp import web
@@ -65,13 +65,10 @@ class SSERelay:
         self._last_event_id: Optional[str] = None
         # DB persistence
         self._session_store = session_store
-        self._pending_segments: List[Dict[str, Any]] = []  # segments with timestamps
+        self._pending_transcription_sentences: List[str] = []
         self._pending_timestamps: List[Dict[str, Any]] = []
-        self._sentence_buffer: str = ""  # incomplete sentence carried across DB flushes
-        self._sentence_buffer_ts_ms: int = 0
-        # Real-time broadcast sentence buffering
-        self._broadcast_text_buffer: str = ""
-        self._broadcast_text_ts_ms: int = 0
+        self._db_text_buffer: str = ""
+        self._db_last_ts_ms: int = 0
 
     async def start(self):
         """Start the SSE relay task."""
@@ -322,25 +319,13 @@ class SSERelay:
         """Handle a parsed SSE event and relay to clients if appropriate."""
         messages = self._normalize_messages(event)
         for message in messages:
-            msg_type = message.get("type", "")
+            msg_type = message.get("type", "") if isinstance(message, dict) else ""
 
-            # For transcription messages, do sentence-level timestamping
-            if msg_type in ("transcription", "transcription.delta"):
-                text = (message.get("text") or message.get("delta") or "").strip()
-                ts_ms = message.get("timestamp_ms", 0)
-                is_final = message.get("is_final", False)
-                if text:
-                    await self._broadcast_timestamped_sentences(text, ts_ms, is_final)
+            if self._session_store is not None and isinstance(message, dict):
+                self._buffer_transcription_for_db(message)
 
-                # Also buffer for DB persistence
-                if self._session_store is not None:
-                    self._pending_segments.append({
-                        "text": text,
-                        "timestamp_ms": ts_ms,
-                    })
-            else:
-                # Non-transcription messages pass through unchanged
-                await self._broadcast(message)
+            # Relay messages to frontend as-is.
+            await self._broadcast(message)
 
             if (
                 self._session_store is not None
@@ -349,56 +334,116 @@ class SSERelay:
             ):
                 self._pending_timestamps.append(message)
 
-    async def _broadcast_timestamped_sentences(self, text: str, ts_ms: int, is_final: bool = False):
-        """Accumulate text and broadcast complete sentences with [hh:mm:ss]."""
+    @staticmethod
+    def _append_text(buffer: str, text: str) -> str:
+        """Append text using the same spacing behavior as the frontend buffer."""
+        if not buffer:
+            return text
         if not text:
+            return buffer
+        needs_space = not buffer.endswith(" ") and not text.startswith(" ")
+        return buffer + (" " if needs_space else "") + text
+
+    @staticmethod
+    def _split_complete_sentences(buffer: str) -> Tuple[List[str], str]:
+        """Split complete sentences from a running buffer, returning remaining text."""
+        if not buffer:
+            return [], ""
+
+        sentences: List[str] = []
+        last_end = 0
+        for match in re.finditer(r"[.!?]+", buffer):
+            sentence = buffer[last_end:match.end()].strip()
+            if sentence:
+                sentences.append(sentence)
+            last_end = match.end()
+
+        remaining = buffer[last_end:].lstrip()
+        return sentences, remaining
+
+    def _buffer_transcription_for_db(self, message: Dict[str, Any]):
+        """Build DB sentences using the same delta/final buffering rules as frontend."""
+        msg_type = message.get("type")
+
+        delta_types = {
+            "transcription.delta",
+            "conversation.item.input_audio_transcription.delta",
+            "response.output_text.delta",
+            "response.output_audio_transcript.delta",
+            "response.audio_transcript.delta",
+            "response.text.delta",
+        }
+        done_types = {
+            "transcription.done",
+            "conversation.item.input_audio_transcription.completed",
+            "response.output_text.done",
+            "response.output_audio_transcript.done",
+            "response.audio_transcript.done",
+            "response.text.done",
+        }
+
+        ts_ms = message.get("timestamp_ms")
+        if isinstance(ts_ms, (int, float)):
+            self._db_last_ts_ms = int(ts_ms)
+        ts_for_output = self._db_last_ts_ms
+
+        if msg_type in delta_types:
+            delta = message.get("delta")
+            if not isinstance(delta, str) or not delta:
+                return
+            self._db_text_buffer = self._append_text(self._db_text_buffer, delta)
+            sentences, remaining = self._split_complete_sentences(self._db_text_buffer)
+            if sentences:
+                self._pending_transcription_sentences.extend(
+                    [f"{self._format_timestamp(ts_for_output)} {sentence}" for sentence in sentences]
+                )
+            self._db_text_buffer = remaining
             return
 
-        # For final/done messages, the text is the FULL transcript, not a delta.
-        # Clear the buffer to avoid duplicating previously-buffered partial text.
-        if is_final:
-            self._broadcast_text_buffer = ""
+        if msg_type in done_types:
+            transcript = message.get("transcript") if isinstance(message.get("transcript"), str) else ""
+            if not transcript:
+                transcript = message.get("text") if isinstance(message.get("text"), str) else ""
+            if not transcript:
+                return
+            if not self._db_text_buffer.endswith(transcript):
+                self._db_text_buffer = self._append_text(self._db_text_buffer, transcript)
 
-        # Append new text to buffer
-        if not self._broadcast_text_buffer:
-            self._broadcast_text_ts_ms = ts_ms
-        self._broadcast_text_buffer += text
+            sentences, remaining = self._split_complete_sentences(self._db_text_buffer)
+            if sentences:
+                self._pending_transcription_sentences.extend(
+                    [f"{self._format_timestamp(ts_for_output)} {sentence}" for sentence in sentences]
+                )
+            if remaining:
+                self._pending_transcription_sentences.append(
+                    f"{self._format_timestamp(ts_for_output)} {remaining}"
+                )
+            self._db_text_buffer = ""
+            return
 
-        # Find sentence endings (. ! ?)
-        sentence_ends = []
-        for match in re.finditer(r'[.!?]+', self._broadcast_text_buffer):
-            sentence_ends.append(match.end())
+        if msg_type == "transcription":
+            text = message.get("text") if isinstance(message.get("text"), str) else ""
+            if not text:
+                return
+            is_final = bool(message.get("is_final"))
 
-        start = 0
-        for end in sentence_ends:
-            sentence = self._broadcast_text_buffer[start:end].strip()
-            if sentence:
-                timestamped = f"{self._format_timestamp(ts_ms)} {sentence}"
-                await self._broadcast({
-                    "type": "transcription",
-                    "text": timestamped,
-                    "is_final": True,
-                })
-            start = end
-            while start < len(self._broadcast_text_buffer) and self._broadcast_text_buffer[start].isspace():
-                start += 1
+            # 'transcription' messages carry full cumulative text in current providers.
+            self._db_text_buffer = text
+            sentences, remaining = self._split_complete_sentences(self._db_text_buffer)
+            if sentences:
+                self._pending_transcription_sentences.extend(
+                    [f"{self._format_timestamp(ts_for_output)} {sentence}" for sentence in sentences]
+                )
 
-        # Keep remaining incomplete text
-        if start < len(self._broadcast_text_buffer):
-            self._broadcast_text_buffer = self._broadcast_text_buffer[start:]
-            self._broadcast_text_ts_ms = ts_ms
-        else:
-            self._broadcast_text_buffer = ""
-            self._broadcast_text_ts_ms = 0
-
-        # Also broadcast the remaining buffer as a live partial so the
-        # frontend shows real-time typing
-        if self._broadcast_text_buffer:
-            await self._broadcast({
-                "type": "transcription",
-                "text": self._broadcast_text_buffer,
-                "is_final": False,
-            })
+            if is_final and remaining:
+                self._pending_transcription_sentences.append(
+                    f"{self._format_timestamp(ts_for_output)} {remaining}"
+                )
+                self._db_text_buffer = ""
+            elif is_final:
+                self._db_text_buffer = ""
+            else:
+                self._db_text_buffer = remaining
 
     async def _flush_loop(self):
         """Periodically flush buffered transcription segments to the database."""
@@ -416,76 +461,17 @@ class SSERelay:
         ss = (ms % 60000) // 1000
         return f"[{hh:02d}:{mm:02d}:{ss:02d}]"
 
-    def _extract_timestamped_sentences(self, segments: List[Dict[str, Any]]) -> List[str]:
-        """Split combined segment text into sentences prefixed with [hh:mm:ss]."""
-        if not segments:
-            return []
-
-        # Prepend any incomplete sentence from previous flush
-        all_text = self._sentence_buffer + "".join(seg.get("text", "") for seg in segments)
-
-        # Build char position -> segment index mapping for timestamp lookup
-        char_to_seg: List[int] = []
-        for _ in self._sentence_buffer:
-            char_to_seg.append(-1)  # -1 = from buffer
-        for idx, seg in enumerate(segments):
-            for _ in seg.get("text", ""):
-                char_to_seg.append(idx)
-
-        # Find sentence endings
-        sentence_ends = []
-        for match in re.finditer(r'[.!?]+', all_text):
-            sentence_ends.append(match.end())
-
-        result: List[str] = []
-        start = 0
-        for end in sentence_ends:
-            sentence = all_text[start:end].strip()
-            if sentence:
-                # Timestamp from the segment where sentence ends
-                char_idx = end - 1
-                if char_idx < len(self._sentence_buffer):
-                    ts_ms = self._sentence_buffer_ts_ms
-                else:
-                    seg_idx = char_to_seg[char_idx]
-                    ts_ms = segments[seg_idx].get("timestamp_ms", 0)
-                result.append(f"{self._format_timestamp(ts_ms)} {sentence}")
-            start = end
-            while start < len(all_text) and all_text[start].isspace():
-                start += 1
-
-        # Save trailing incomplete text for next flush
-        if start < len(all_text):
-            self._sentence_buffer = all_text[start:]
-            char_idx = len(all_text) - 1
-            if char_idx < len(self._sentence_buffer):
-                self._sentence_buffer_ts_ms = self._sentence_buffer_ts_ms
-            else:
-                seg_idx = char_to_seg[char_idx]
-                self._sentence_buffer_ts_ms = (
-                    segments[seg_idx].get("timestamp_ms", 0)
-                    if seg_idx >= 0 else self._sentence_buffer_ts_ms
-                )
-        else:
-            self._sentence_buffer = ""
-            self._sentence_buffer_ts_ms = 0
-
-        return result
-
     async def _flush_pending_segments(self):
         """Write any buffered segments to the database and clear the buffer."""
         if self._session_store is None:
             return
-        if not self._pending_segments and not self._pending_timestamps:
+        if not self._pending_transcription_sentences and not self._pending_timestamps:
             return
-        segments, self._pending_segments = self._pending_segments, []
+        sentences, self._pending_transcription_sentences = self._pending_transcription_sentences, []
         timestamp_segments, self._pending_timestamps = self._pending_timestamps, []
 
-        # Extract timestamped sentences
-        timestamped_sentences = self._extract_timestamped_sentences(segments)
-
-        if timestamped_sentences:
-            combined_text = "\n".join(timestamped_sentences)
+        if sentences:
+            combined_text = "\n".join(sentences)
             try:
                 await self._session_store.update_stream_session(
                     self.stream_id, {"transcription_segment": combined_text}
@@ -499,7 +485,7 @@ class SSERelay:
             # Incrementally build the transcriptions row for history/recents
             try:
                 await self._session_store.upsert_stream_transcription(
-                    self.stream_id, timestamped_sentences
+                    self.stream_id, sentences
                 )
             except Exception as exc:
                 logger.warning(
@@ -578,28 +564,21 @@ class SSERelay:
             if msg_type in ("text_timestamps", "text_timestamps.error"):
                 return [payload]
 
-            if msg_type == "transcription.delta":
-                return [payload]
-
-            # Normalize common realtime delta/done event variants.
             if msg_type in (
-                "response.audio_transcript.delta",
-                "response.text.delta",
-            ):
-                text = payload.get("delta") or payload.get("text") or ""
-                if text:
-                    return [{"type": "transcription", "text": text, "is_final": False}]
-                return messages
-
-            if msg_type in (
+                "transcription.delta",
                 "transcription.done",
+                "conversation.item.input_audio_transcription.delta",
+                "conversation.item.input_audio_transcription.completed",
+                "response.output_text.delta",
+                "response.output_text.done",
+                "response.output_audio_transcript.delta",
+                "response.output_audio_transcript.done",
+                "response.audio_transcript.delta",
                 "response.audio_transcript.done",
+                "response.text.delta",
                 "response.text.done",
             ):
-                msg = self._to_transcription(payload, is_final=True)
-                if msg.get("text"):
-                    return [msg]
-                return messages
+                return [payload]
 
             # Unwrap provider envelopes that carry nested payloads/items.
             if msg_type in ("data", "data_item", "data-item", "event", "stream_event", "message"):

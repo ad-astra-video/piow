@@ -361,6 +361,25 @@ class TestSSERelayHandleEvent(unittest.IsolatedAsyncioTestCase):
 
         ws.send_json.assert_called_once_with({"type": "transcription.delta", "delta": "partial text", "extra": {"a": 1}})
 
+    async def test_handle_response_output_text_delta_passthrough(self):
+        """response.output_text.delta events are forwarded unchanged."""
+        from sse_relay import SSERelay
+        relay = SSERelay(data_url="http://localhost:9999/stream/data", stream_id="test-stream")
+
+        ws = AsyncMock()
+        ws.closed = False
+        relay.add_client(ws)
+
+        event = {
+            "event": "message",
+            "data": {"type": "response.output_text.delta", "delta": "partial", "seq": 4},
+            "id": None,
+        }
+
+        await relay._handle_event(event)
+
+        ws.send_json.assert_called_once_with(event["data"])
+
     async def test_handle_text_timestamps_passthrough(self):
         """text_timestamps events are forwarded unchanged."""
         from sse_relay import SSERelay
@@ -388,6 +407,42 @@ class TestSSERelayHandleEvent(unittest.IsolatedAsyncioTestCase):
 
 class TestSSERelayPersistence(unittest.IsolatedAsyncioTestCase):
     """Test DB buffering behavior for transcription and timestamp segments."""
+
+    async def test_flush_persists_sentences_from_delta_buffer(self):
+        from sse_relay import SSERelay
+
+        session_store = AsyncMock()
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=session_store,
+        )
+
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {"type": "response.output_text.delta", "delta": "Hello", "timestamp_ms": 5000},
+                "id": None,
+            }
+        )
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {"type": "response.output_text.delta", "delta": " world.", "timestamp_ms": 5000},
+                "id": None,
+            }
+        )
+
+        await relay._flush_pending_segments()
+
+        session_store.update_stream_session.assert_called_once_with(
+            "test-stream",
+            {"transcription_segment": "[00:00:05] Hello world."},
+        )
+        session_store.upsert_stream_transcription.assert_called_once_with(
+            "test-stream",
+            ["[00:00:05] Hello world."],
+        )
 
     async def test_flush_persists_timestamp_segments(self):
         from sse_relay import SSERelay
