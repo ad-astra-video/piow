@@ -102,7 +102,7 @@ async def sync_compute_providers_to_db(_app):
             logger.info("No compute provider definitions found to sync")
             return
 
-        supabase.table("compute_providers").upsert(
+        await supabase.table("compute_providers").upsert(
             provider_rows,
             on_conflict="name",
         ).execute()

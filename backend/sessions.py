@@ -134,7 +134,7 @@ class SessionStore:
         source_language = stream_data.get("language") or "en"
 
         try:
-            supabase.table("transcription_usage").insert({
+            await supabase.table("transcription_usage").insert({
                 "user_id": user_id,
                 "duration_seconds": duration_seconds,
                 "word_count": word_count,
@@ -158,7 +158,7 @@ class SessionStore:
         session_data = self._build_session_data(session_id=session_id, user_id=user_id)
 
         try:
-            supabase.table("user_sessions").insert({
+            await supabase.table("user_sessions").insert({
                 "id": session_id,
                 "user_id": user_id,
                 "settings": session_data["settings"],
@@ -197,7 +197,7 @@ class SessionStore:
 
         session_data = self._build_session_data(session_id=session_id, user_id=user_id)
         try:
-            supabase.table("user_sessions").insert({
+            await supabase.table("user_sessions").insert({
                 "id": session_id,
                 "user_id": user_id,
                 "settings": session_data["settings"],
@@ -244,7 +244,7 @@ class SessionStore:
 
         # Fire-and-forget Supabase update
         try:
-            supabase.table("user_sessions").update({
+            await supabase.table("user_sessions").update({
                 "last_activity": "now()"
             }).eq("id", session_id).execute()
         except Exception as e:
@@ -267,7 +267,7 @@ class SessionStore:
                     transcription_ids = list(result.data[0].get("transcription_ids") or [])
                 transcription_ids.append(transcription_id)
 
-            supabase.table("user_sessions").update({
+            await supabase.table("user_sessions").update({
                 "transcription_ids": transcription_ids
             }).eq("id", session_id).execute()
         except Exception as e:
@@ -290,7 +290,7 @@ class SessionStore:
                     stream_session_ids = list(result.data[0].get("stream_session_ids") or [])
                 stream_session_ids.append(stream_id)
 
-            supabase.table("user_sessions").update({
+            await supabase.table("user_sessions").update({
                 "stream_session_ids": stream_session_ids
             }).eq("id", session_id).execute()
         except Exception as e:
@@ -339,7 +339,7 @@ class SessionStore:
             )
 
         try:
-            supabase.table("stream_sessions").insert({
+            await supabase.table("stream_sessions").insert({
                 "id": stream_id,
                 "user_session_id": session_id,
                 "language": language,
@@ -442,7 +442,7 @@ class SessionStore:
             transcription_id = self._stream_sessions_cache.get(stream_id, {}).get("transcription_id")
             if transcription_id:
                 try:
-                    supabase.table("transcriptions").update({
+                    await supabase.table("transcriptions").update({
                         "segments": self._stream_sessions_cache.get(stream_id, {}).get("text_timestamps", []),
                     }).eq("id", transcription_id).execute()
                 except Exception as e:
@@ -526,7 +526,7 @@ class SessionStore:
                 rows = await supabase.table("transcriptions").select("text").eq("id", existing_id).execute()
                 prev_text = rows.data[0].get("text", "") if rows.data else ""
                 full_text = (prev_text + "\n" + new_text).strip()
-                supabase.table("transcriptions").update({
+                await supabase.table("transcriptions").update({
                     "text": full_text,
                     "word_count": len(full_text.split()),
                     "segments": existing_segments,
@@ -584,7 +584,7 @@ class SessionStore:
 
         # Persist to Supabase
         try:
-            supabase.table("transcription_sessions").insert({
+            await supabase.table("transcription_sessions").insert({
                 "id": transcription_id,
                 "user_session_id": data.get("session_id"),
                 "filename": data.get("filename", "unknown"),
@@ -749,7 +749,7 @@ async def _provider_stream_is_running(provider_session: Dict[str, Any]) -> bool:
 async def _bill_active_stream_minutes() -> None:
     """Bill one usage minute for each active stream confirmed running by provider status endpoint."""
     try:
-        stream_result = supabase.table("stream_sessions").select(
+        stream_result = await supabase.table("stream_sessions").select(
             "id,user_session_id,language,provider_session,status,created_at,updated_at,total_audio_bytes,transcription_segments,final_text"
         ).eq("status", "active").execute()
     except Exception as e:

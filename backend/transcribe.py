@@ -200,7 +200,7 @@ async def _store_transcription_result(request, job_result, audio_url, language, 
 
     # Store transcription in database
     try:
-        transcription_record = supabase.table('transcriptions').insert({
+        transcription_record = await supabase.table('transcriptions').insert({
             'user_id': user_id,
             'audio_url': audio_url,
             'text': job_result.get('text', ''),
@@ -223,7 +223,7 @@ async def _store_transcription_result(request, job_result, audio_url, language, 
 
     # Record usage
     try:
-        supabase.table('transcription_usage').insert({
+        await supabase.table('transcription_usage').insert({
             'user_id': user_id,
             'duration_seconds': int(effective_duration_seconds),
             'word_count': job_result.get('word_count', 0) or 0,
@@ -824,7 +824,7 @@ async def list_transcriptions(request):
         query = supabase.table('transcriptions').select('*').eq('user_id', user_id)
         if source_type:
             query = query.eq('source_type', source_type)
-        result = query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+        result = await query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
 
         return web.json_response({
             "transcriptions": result.data if hasattr(result, 'data') else result,

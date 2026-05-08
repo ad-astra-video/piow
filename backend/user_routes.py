@@ -99,7 +99,7 @@ async def get_user_history(request):
             query = supabase.table('transcriptions').select('*').eq('user_id', user_id)
             if source_type:
                 query = query.eq('source_type', source_type)
-            t_result = query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+            t_result = await query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
             transcriptions = [
                 {**item, '_type': 'transcription'} for item in (t_result.data or [])
             ]

@@ -76,7 +76,7 @@ async def agent_register(request):
         from supabase_client import async_supabase as supabase
 
         # Insert agent into database
-        result = supabase.table('agents').insert({
+        result = await supabase.table('agents').insert({
             'agent_name': agent_name,
             'contact_email': contact_email,
             'api_key': api_key,
@@ -126,12 +126,12 @@ async def agent_get_usage(request):
         today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).isoformat()
 
         # Today's usage
-        today_result = supabase.table('api_usage').select(
+        today_result = await supabase.table('api_usage').select(
             'endpoint', 'method', 'success', 'cost_usdc_cents'
         ).eq('actor_type', 'agent').eq('agent_id', agent_id).gte('timestamp', today_start).execute()
 
         # Total usage
-        total_result = supabase.table('api_usage').select(
+        total_result = await supabase.table('api_usage').select(
             'endpoint', 'method', 'success', 'cost_usdc_cents'
         ).eq('actor_type', 'agent').eq('agent_id', agent_id).execute()
 
@@ -261,7 +261,7 @@ async def agent_create_key(request):
         # Update the agent with new key (in a full implementation, we'd store multiple keys)
         # For simplicity, we'll update the main key
         import datetime
-        update_result = supabase.table('agents').update({
+        update_result = await supabase.table('agents').update({
             'api_key': new_api_key,
             'api_secret': new_api_secret,
             'last_used_at': datetime.datetime.utcnow().isoformat()
@@ -312,7 +312,7 @@ async def agent_revoke_key(request):
 
         # Deactivate agent (simplified approach)
         import datetime
-        update_result = supabase.table('agents').update({
+        update_result = await supabase.table('agents').update({
             "is_active": False,
             "revoked_at": datetime.datetime.utcnow().isoformat()
         }).eq('id', agent_id).execute()
@@ -394,7 +394,7 @@ async def agent_create_subscription(request):
 
         # If free tier, just update the subscription tier
         if tier == 'free':
-            update_result = supabase.table('agents').update({
+            update_result = await supabase.table('agents').update({
                 'subscription_tier': 'free'
             }).eq('id', agent_id).execute()
 
@@ -536,7 +536,7 @@ async def agent_delete_subscription(request):
 
     try:
         # Update subscription tier to free (cancel subscription)
-        update_result = supabase.table('agents').update({
+        update_result = await supabase.table('agents').update({
             'subscription_tier': 'free'
         }).eq('id', agent_id).execute()
 
@@ -583,7 +583,7 @@ async def agent_reactivate_subscription(request):
         # and reactivate it with the same payment method
 
         # Update to the requested tier (payment would be processed separately)
-        update_result = supabase.table('agents').update({
+        update_result = await supabase.table('agents').update({
             'subscription_tier': tier
         }).eq('id', agent_id).execute()
 

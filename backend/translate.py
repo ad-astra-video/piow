@@ -86,7 +86,7 @@ async def _store_translation_result(request, job_result, original_text, source_l
     translation_id = None
 
     try:
-        translation_record = supabase.table('translations').insert({
+        translation_record = await supabase.table('translations').insert({
             'user_id': user_id,
             'original_text': original_text,
             'translated_text': job_result.get('translated_text', ''),
@@ -106,7 +106,7 @@ async def _store_translation_result(request, job_result, original_text, source_l
 
     try:
         total_text_sent_chars = _get_total_text_sent_chars(original_text)
-        supabase.table('translation_usage').insert({
+        await supabase.table('translation_usage').insert({
             'user_id': user_id,
             'characters_translated': total_text_sent_chars,
             'source_language': job_result.get('source_language', source_language),

@@ -292,13 +292,13 @@ async def _check_rate_limit(request) -> bool:
     try:
         one_minute_ago = datetime.fromtimestamp(time.time() - 60, tz=timezone.utc).isoformat()
         from supabase_client import async_supabase as supabase
-        rate_query = await supabase.table('api_usage').select('id', count='exact').eq('actor_type', auth_type).gte('timestamp', one_minute_ago)
+        rate_query = supabase.table('api_usage').select('id', count='exact').eq('actor_type', auth_type).gte('timestamp', one_minute_ago)
         if auth_type == "agent":
             rate_query = rate_query.eq('agent_id', identifier)
         else:
             rate_query = rate_query.eq('user_id', identifier)
 
-        result = rate_query.execute()
+        result = await rate_query.execute()
         if result.count >= RATE_LIMIT_PER_MINUTE:
             return False
     except Exception as e:
@@ -427,7 +427,7 @@ async def auth_middleware(request, handler):
         return result  # 401 error response
 
     # Step 4: Rate limiting
-    if not _check_rate_limit(request):
+    if not await _check_rate_limit(request):
         return web.json_response({
             "error": f"Rate limit exceeded: {RATE_LIMIT_PER_MINUTE} requests per minute",
         }, status=429)
