@@ -441,8 +441,11 @@ class StreamManager {
                 (typeof message.text === 'string' && message.text) ||
                 '';
               if (!transcript) return;
-              // Append to buffer and flush all remaining text
-              this._textBuffer = _appendText(this._textBuffer, transcript);
+              // If the buffer already contains this transcript (built from prior
+              // deltas), avoid appending it again and causing duplication.
+              if (!this._textBuffer.endsWith(transcript)) {
+                this._textBuffer = _appendText(this._textBuffer, transcript);
+              }
               const { sentences, remaining } = _processBuffer(this._textBuffer);
               const allEntries = [...this.state.transcriptEntries, ...sentences];
               if (remaining) {
@@ -459,8 +462,10 @@ class StreamManager {
               const text = typeof message.text === 'string' ? message.text : '';
               const isFinal = message.is_final;
               if (!text) return;
+              // The 'transcription' message type sends the FULL cumulative text
+              // (not a delta), so we replace the buffer rather than append.
               if (isFinal) {
-                this._textBuffer = _appendText(this._textBuffer, text);
+                this._textBuffer = text;
                 const { sentences, remaining } = _processBuffer(this._textBuffer);
                 const allEntries = [...this.state.transcriptEntries, ...sentences];
                 if (remaining) {
@@ -474,7 +479,7 @@ class StreamManager {
                   status: 'Connected.',
                 });
               } else {
-                this._textBuffer = _appendText(this._textBuffer, text);
+                this._textBuffer = text;
                 const { sentences, remaining } = _processBuffer(this._textBuffer);
                 if (sentences.length > 0) {
                   this._textBuffer = remaining;
