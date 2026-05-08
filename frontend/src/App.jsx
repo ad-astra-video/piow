@@ -21,8 +21,9 @@ import UsagePage from './pages/UsagePage';
 
 import {
   LayoutDashboard, Mic, Upload, Link as LinkIcon, Languages,
-  History, BarChart3, CreditCard, Menu, X, Radio, MicOff, ArrowRight, AlertCircle
+  History, BarChart3, CreditCard, Menu, X, Radio, MicOff, ArrowRight, AlertCircle, Clock
 } from 'lucide-react';
+import { formatDuration } from './lib/streamManager';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -71,6 +72,7 @@ function LiveTranscriptSidebar({ onStop }) {
     transcriptEntries,
     partialTranscript,
     errorMessage,
+    elapsedMs,
     stop,
   } = useLiveTranscription();
 
@@ -92,19 +94,32 @@ function LiveTranscriptSidebar({ onStop }) {
           </button>
         </div>
       </div>
-      <div className="live-sidebar-status">{status}</div>
+      <div className="live-sidebar-status">
+        <span>{status}</span>
+        <span className="live-sidebar-timer">
+          <Clock size={12} /> {formatDuration(elapsedMs)}
+        </span>
+      </div>
       <div className="live-sidebar-scroll">
         {transcriptEntries.length === 0 && !partialTranscript ? (
           <div className="empty-state compact">
             <p>Listening…</p>
           </div>
         ) : null}
-        {transcriptEntries.map((entry, index) => (
-          <article className="live-sidebar-entry" key={`${entry}-${index}`}>
-            <span className="entry-badge">Final</span>
-            <p>{entry}</p>
-          </article>
-        ))}
+        {transcriptEntries.map((entry, index) => {
+          const tsMatch = entry.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/);
+          const timestamp = tsMatch ? tsMatch[1] : null;
+          const text = tsMatch ? tsMatch[2] : entry;
+          return (
+            <article className="live-sidebar-entry" key={`${entry}-${index}`}>
+              <div className="live-sidebar-entry-header">
+                <span className="entry-badge">Final</span>
+                {timestamp && <span className="entry-timestamp">{timestamp}</span>}
+              </div>
+              <p>{text}</p>
+            </article>
+          );
+        })}
         {partialTranscript ? (
           <article className="live-sidebar-entry partial-entry">
             <span className="entry-badge">Live</span>

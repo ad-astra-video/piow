@@ -1,10 +1,19 @@
-﻿import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock } from 'lucide-react';
 import useLiveTranscription from '../hooks/useLiveTranscription';
-import streamManager from '../lib/streamManager';
+import streamManager, { formatDuration } from '../lib/streamManager';
 
 function formatSentences(text) {
   return text.replace(/([.!?]+)\s+/g, '$1\n');
+}
+
+function parseTimestampedEntry(entry) {
+  // Parse [hh:mm:ss] prefix from transcript entries
+  const match = entry.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/);
+  if (match) {
+    return { timestamp: match[1], text: match[2] };
+  }
+  return { timestamp: null, text: entry };
 }
 
 const SOURCE_META = {
@@ -20,6 +29,7 @@ export default function TranscribeStream({ accessToken }) {
     transcriptEntries,
     partialTranscript,
     errorMessage,
+    elapsedMs,
     start,
     stop,
   } = useLiveTranscription();
@@ -94,15 +104,23 @@ export default function TranscribeStream({ accessToken }) {
           <span>Speak naturally and the transcript will appear here.</span>
         </div>
       ) : null}
-      {transcriptEntries.map((entry, index) => (
-        <article className="transcript-entry" key={`${entry}-${index}`}>
-          <span className="entry-badge">Final</span>
-          <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(entry)}</p>
-        </article>
-      ))}
+      {transcriptEntries.map((entry, index) => {
+        const { timestamp, text } = parseTimestampedEntry(entry);
+        return (
+          <article className="transcript-entry" key={`${entry}-${index}`}>
+            <div className="transcript-entry-header">
+              <span className="entry-badge">Final</span>
+              {timestamp && <span className="entry-timestamp">{timestamp}</span>}
+            </div>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(text)}</p>
+          </article>
+        );
+      })}
       {partialTranscript ? (
         <article className="transcript-entry partial-entry">
-          <span className="entry-badge">Live</span>
+          <div className="transcript-entry-header">
+            <span className="entry-badge">Live</span>
+          </div>
           <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(partialTranscript)}</p>
         </article>
       ) : null}
@@ -115,7 +133,7 @@ export default function TranscribeStream({ accessToken }) {
       <h1 className="page-title">Live Stream Transcription</h1>
       <div className="stream-layout">
 
-        {/* â”€â”€ Session setup â€” hidden once session starts â”€â”€ */}
+        {/* Session setup — hidden once session starts */}
         {!isStarted && (
           <section className="panel-glass stream-controls">
             {status !== 'Ready.' && (
@@ -170,7 +188,6 @@ export default function TranscribeStream({ accessToken }) {
                 {!fileObjectUrl && (
                   <p className="source-hint">Select a file to enable the Start button.</p>
                 )}
-                {/* Video element is rendered persistently below; placeholder shown here when setup */}
               </div>
             )}
 
@@ -194,8 +211,7 @@ export default function TranscribeStream({ accessToken }) {
           </section>
         )}
 
-        {/* â”€â”€ Persistent video element â€” always mounted while a file URL is loaded.
-             CSS class controls whether it appears in setup, inline, hidden, or fullscreen. â”€â”€ */}
+        {/* Persistent video element */}
         {fileObjectUrl && (
           <div className={`file-video-container ${videoContainerClass}`}>
             {playerFullscreen && (
@@ -224,7 +240,7 @@ export default function TranscribeStream({ accessToken }) {
           </div>
         )}
 
-        {/* â”€â”€ Transcript â€” shown only when session is active â”€â”€ */}
+        {/* Transcript — shown only when session is active */}
         {isStarted && (
           <section className="panel-glass transcript-panel">
             {/* Compact session bar */}
@@ -254,9 +270,15 @@ export default function TranscribeStream({ accessToken }) {
                   </div>
                 )}
               </div>
-              <button className="secondary-button session-stop-btn" onClick={() => stop()}>
-                <MicOff size={14} /> Stop
-              </button>
+              <div className="session-bar-right">
+                <div className="stream-timer">
+                  <Clock size={14} />
+                  <span>{formatDuration(elapsedMs)}</span>
+                </div>
+                <button className="secondary-button session-stop-btn" onClick={() => stop()}>
+                  <MicOff size={14} /> Stop
+                </button>
+              </div>
             </div>
 
             {errorMessage && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}

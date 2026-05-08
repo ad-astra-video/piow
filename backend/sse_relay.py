@@ -64,8 +64,10 @@ class SSERelay:
         self._last_event_id: Optional[str] = None
         # DB persistence
         self._session_store = session_store
-        self._pending_segments: List[str] = []  # final segments not yet flushed
+        self._pending_segments: List[Dict[str, Any]] = []  # segments with timestamps
         self._pending_timestamps: List[Dict[str, Any]] = []
+        self._sentence_buffer: str = ""  # incomplete sentence carried across flushes
+        self._sentence_buffer_ts_ms: int = 0
 
     async def start(self):
         """Start the SSE relay task."""
@@ -328,7 +330,10 @@ class SSERelay:
             ):
                 text = (message.get("text") or message.get("delta") or "").strip()
                 if text:
-                    self._pending_segments.append(text)
+                    self._pending_segments.append({
+                        "text": text,
+                        "timestamp_ms": message.get("timestamp_ms", 0),
+                    })
             if (
                 self._session_store is not None
                 and message.get("type") == "text_timestamps"
@@ -345,6 +350,69 @@ class SSERelay:
                 break
             await self._flush_pending_segments()
 
+    def _format_timestamp(self, ms: int) -> str:
+        """Format milliseconds as [hh:mm:ss]."""
+        hh = ms // 3600000
+        mm = (ms % 3600000) // 60000
+        ss = (ms % 60000) // 1000
+        return f"[{hh:02d}:{mm:02d}:{ss:02d}]"
+
+    def _extract_timestamped_sentences(self, segments: List[Dict[str, Any]]) -> List[str]:
+        """Split combined segment text into sentences prefixed with [hh:mm:ss]."""
+        if not segments:
+            return []
+
+        # Prepend any incomplete sentence from previous flush
+        all_text = self._sentence_buffer + "".join(seg.get("text", "") for seg in segments)
+
+        # Build char position -> segment index mapping for timestamp lookup
+        char_to_seg: List[int] = []
+        for _ in self._sentence_buffer:
+            char_to_seg.append(-1)  # -1 = from buffer
+        for idx, seg in enumerate(segments):
+            for _ in seg.get("text", ""):
+                char_to_seg.append(idx)
+
+        # Find sentence endings
+        sentence_ends = []
+        for match in re.finditer(r'[.!?]+', all_text):
+            sentence_ends.append(match.end())
+
+        result: List[str] = []
+        start = 0
+        for end in sentence_ends:
+            sentence = all_text[start:end].strip()
+            if sentence:
+                # Timestamp from the segment where sentence ends
+                char_idx = end - 1
+                if char_idx < len(self._sentence_buffer):
+                    ts_ms = self._sentence_buffer_ts_ms
+                else:
+                    seg_idx = char_to_seg[char_idx]
+                    ts_ms = segments[seg_idx].get("timestamp_ms", 0)
+                result.append(f"{self._format_timestamp(ts_ms)} {sentence}")
+            start = end
+            while start < len(all_text) and all_text[start].isspace():
+                start += 1
+
+        # Save trailing incomplete text for next flush
+        if start < len(all_text):
+            self._sentence_buffer = all_text[start:]
+            char_idx = len(all_text) - 1
+            if char_idx < len(self._sentence_buffer):
+                self._sentence_buffer_ts_ms = self._sentence_buffer_ts_ms
+            else:
+                seg_idx = char_to_seg[char_idx]
+                self._sentence_buffer_ts_ms = (
+                    segments[seg_idx].get("timestamp_ms", 0)
+                    if seg_idx >= 0 else self._sentence_buffer_ts_ms
+                )
+        else:
+            self._sentence_buffer = ""
+            self._sentence_buffer_ts_ms = 0
+
+        return result
+
     async def _flush_pending_segments(self):
         """Write any buffered segments to the database and clear the buffer."""
         if self._session_store is None:
@@ -354,9 +422,11 @@ class SSERelay:
         segments, self._pending_segments = self._pending_segments, []
         timestamp_segments, self._pending_timestamps = self._pending_timestamps, []
 
-        # Combine all segment text into a single string and do one DB update
-        combined_text = " ".join(seg for seg in segments if seg)
-        if combined_text:
+        # Extract timestamped sentences
+        timestamped_sentences = self._extract_timestamped_sentences(segments)
+
+        if timestamped_sentences:
+            combined_text = "\n".join(timestamped_sentences)
             try:
                 await self._session_store.update_stream_session(
                     self.stream_id, {"transcription_segment": combined_text}
@@ -367,10 +437,11 @@ class SSERelay:
                     self.stream_id, exc
                 )
 
-        # Incrementally build the transcriptions row for history/recents
-        if segments:
+            # Incrementally build the transcriptions row for history/recents
             try:
-                await self._session_store.upsert_stream_transcription(self.stream_id, segments)
+                await self._session_store.upsert_stream_transcription(
+                    self.stream_id, timestamped_sentences
+                )
             except Exception as exc:
                 logger.warning(
                     "Failed to upsert live transcription for stream %s: %s",

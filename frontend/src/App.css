@@ -2202,6 +2202,77 @@ html, body {
   }
 }
 
+
+/* Timestamp styles */
+.transcript-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.entry-timestamp {
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  color: var(--accent);
+  background: rgba(91, 124, 250, 0.1);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+/* Stream timer */
+.stream-timer {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  color: var(--accent-2);
+  background: rgba(52, 211, 153, 0.08);
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid rgba(52, 211, 153, 0.15);
+}
+
+.session-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Live sidebar timer */
+.live-sidebar-timer {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  color: var(--accent-2);
+  margin-left: auto;
+}
+
+.live-sidebar-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.15rem;
+}
+
+.live-sidebar-entry .entry-timestamp {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.3rem;
+}
+
+/* Update live-sidebar-status to flex */
+.live-sidebar-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 /* =========================================
    Persistent Live Transcript Sidebar
    ========================================= */

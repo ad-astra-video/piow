@@ -82,6 +82,14 @@ class WHIPClient {
   }
 }
 
+function formatDuration(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hh = Math.floor(totalSeconds / 3600);
+  const mm = Math.floor((totalSeconds % 3600) / 60);
+  const ss = totalSeconds % 60;
+  return `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`;
+}
+
 class StreamManager {
   constructor() {
     this.state = {
@@ -91,6 +99,7 @@ class StreamManager {
       partialTranscript: '',
       textTimestamps: [],
       errorMessage: '',
+      elapsedMs: 0,
     };
     this.listeners = new Set();
     this.whipClient = null;
@@ -106,6 +115,9 @@ class StreamManager {
     this._fileMediaElement = null;
     // Screen share video tracks kept alive to prevent Chrome from killing the audio track
     this._screenVideoTracks = [];
+    // Timer
+    this._timerInterval = null;
+    this._streamStartTime = 0;
   }
 
   _setState(partial) {
@@ -121,6 +133,27 @@ class StreamManager {
 
   getState() {
     return this.state;
+  }
+
+  _startTimer() {
+    this._streamStartTime = Date.now();
+    this._setState({ elapsedMs: 0 });
+    if (this._timerInterval) clearInterval(this._timerInterval);
+    this._timerInterval = setInterval(() => {
+      if (!this.state.isStarted) {
+        clearInterval(this._timerInterval);
+        this._timerInterval = null;
+        return;
+      }
+      this._setState({ elapsedMs: Date.now() - this._streamStartTime });
+    }, 1000);
+  }
+
+  _stopTimer() {
+    if (this._timerInterval) {
+      clearInterval(this._timerInterval);
+      this._timerInterval = null;
+    }
   }
 
   async _createBlackVideoTrack() {
@@ -300,6 +333,7 @@ class StreamManager {
         partialTranscript: '',
         textTimestamps: [],
         status: statusLabels[sourceType] || 'Getting user media...',
+        elapsedMs: 0,
       });
 
       const audioTrack = await this._getAudioTrack(sourceConfig);
@@ -331,6 +365,7 @@ class StreamManager {
         ws.onopen = () => {
           ws.send(JSON.stringify({ type: 'start_stream', stream_id }));
           this._setState({ status: 'Connected.', isStarted: true });
+          this._startTimer();
           // For file sources, start playback now that the pipeline is ready.
           if (this._fileMediaElement) {
             this._fileMediaElement.currentTime = 0;
@@ -368,6 +403,19 @@ class StreamManager {
                 partialTranscript: '',
                 status: 'Connected.',
               });
+            } else if (msgType === 'transcription') {
+              const text = typeof message.text === 'string' ? message.text : '';
+              const isFinal = message.is_final;
+              if (!text) return;
+              if (isFinal) {
+                this._setState({
+                  transcriptEntries: [...this.state.transcriptEntries, text.trim()],
+                  partialTranscript: '',
+                  status: 'Connected.',
+                });
+              } else {
+                this._setState({ partialTranscript: this.state.partialTranscript + text, status: 'Connected.' });
+              }
             } else if (msgType === 'text_timestamps') {
               const words = Array.isArray(message.words) ? message.words : [];
               const transcript = typeof message.transcript === 'string' ? message.transcript : '';
@@ -430,6 +478,8 @@ class StreamManager {
     const wasStarted = this.state.isStarted;
     const activeStreamId = this.streamId;
 
+    this._stopTimer();
+
     if (activeStreamId) {
       try {
         await this._requestStreamStop(activeStreamId);
@@ -480,9 +530,11 @@ class StreamManager {
       isStarted: false,
       partialTranscript: '',
       status: !preserveStatus && wasStarted ? 'Transcription stopped.' : this.state.status,
+      elapsedMs: 0,
     });
   }
 }
 
 const streamManager = new StreamManager();
 export default streamManager;
+export { formatDuration };
