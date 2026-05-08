@@ -444,6 +444,39 @@ class TestSSERelayPersistence(unittest.IsolatedAsyncioTestCase):
             ["[00:00:05] Hello world."],
         )
 
+    async def test_flush_persists_newline_between_cut_sentences(self):
+        from sse_relay import SSERelay
+
+        session_store = AsyncMock()
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=session_store,
+        )
+
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {
+                    "type": "response.output_text.delta",
+                    "delta": "First sentence. Second sentence.",
+                    "timestamp_ms": 5000,
+                },
+                "id": None,
+            }
+        )
+
+        await relay._flush_pending_segments()
+
+        session_store.update_stream_session.assert_called_once_with(
+            "test-stream",
+            {"transcription_segment": "[00:00:05] First sentence.\n[00:00:05] Second sentence."},
+        )
+        session_store.upsert_stream_transcription.assert_called_once_with(
+            "test-stream",
+            ["[00:00:05] First sentence.", "[00:00:05] Second sentence."],
+        )
+
     async def test_flush_persists_timestamp_segments(self):
         from sse_relay import SSERelay
 
