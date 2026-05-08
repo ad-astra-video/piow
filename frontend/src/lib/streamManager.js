@@ -381,6 +381,15 @@ class StreamManager {
             const message = JSON.parse(event.data);
             const msgType = typeof message.type === 'string' ? message.type : '';
 
+            // Helper: safely append text with space between words
+            const _appendText = (buffer, text) => {
+              if (!buffer) return text;
+              if (!text) return buffer;
+              // Add space if neither side already has one
+              const needsSpace = !buffer.endsWith(' ') && !text.startsWith(' ');
+              return buffer + (needsSpace ? ' ' : '') + text;
+            };
+
             // Helper: extract sentences from buffer and timestamp them
             const _processBuffer = (buffer) => {
               const sentences = [];
@@ -409,7 +418,7 @@ class StreamManager {
             ) {
               const delta = typeof message.delta === 'string' ? message.delta : '';
               if (!delta) return;
-              this._textBuffer += delta;
+              this._textBuffer = _appendText(this._textBuffer, delta);
               const { sentences, remaining } = _processBuffer(this._textBuffer);
               if (sentences.length > 0) {
                 this._textBuffer = remaining;
@@ -433,7 +442,7 @@ class StreamManager {
                 '';
               if (!transcript) return;
               // Append to buffer and flush all remaining text
-              this._textBuffer += transcript;
+              this._textBuffer = _appendText(this._textBuffer, transcript);
               const { sentences, remaining } = _processBuffer(this._textBuffer);
               const allEntries = [...this.state.transcriptEntries, ...sentences];
               if (remaining) {
@@ -451,7 +460,7 @@ class StreamManager {
               const isFinal = message.is_final;
               if (!text) return;
               if (isFinal) {
-                this._textBuffer += text;
+                this._textBuffer = _appendText(this._textBuffer, text);
                 const { sentences, remaining } = _processBuffer(this._textBuffer);
                 const allEntries = [...this.state.transcriptEntries, ...sentences];
                 if (remaining) {
@@ -465,7 +474,7 @@ class StreamManager {
                   status: 'Connected.',
                 });
               } else {
-                this._textBuffer += text;
+                this._textBuffer = _appendText(this._textBuffer, text);
                 const { sentences, remaining } = _processBuffer(this._textBuffer);
                 if (sentences.length > 0) {
                   this._textBuffer = remaining;

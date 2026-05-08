@@ -107,16 +107,17 @@ function LiveTranscriptSidebar({ onStop }) {
           </div>
         ) : null}
         {transcriptEntries.map((entry, index) => {
-          const tsMatch = entry.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/);
-          const timestamp = tsMatch ? tsMatch[1] : null;
-          const text = tsMatch ? tsMatch[2] : entry;
+          const tsMatch = entry.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*(.*)$/);
+          if (tsMatch) {
+            return (
+              <article className="live-sidebar-entry" key={`${entry}-${index}`}>
+                <p><span className="entry-timestamp">{tsMatch[1]}</span>{' '}{tsMatch[2]}</p>
+              </article>
+            );
+          }
           return (
             <article className="live-sidebar-entry" key={`${entry}-${index}`}>
-              <div className="live-sidebar-entry-header">
-                <span className="entry-badge">Final</span>
-                {timestamp && <span className="entry-timestamp">{timestamp}</span>}
-              </div>
-              <p>{text}</p>
+              <p>{entry}</p>
             </article>
           );
         })}

@@ -7,15 +7,6 @@ function formatSentences(text) {
   return text.replace(/([.!?]+)\s+/g, '$1\n');
 }
 
-function parseTimestampedEntry(entry) {
-  // Parse [hh:mm:ss] prefix from transcript entries
-  const match = entry.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/);
-  if (match) {
-    return { timestamp: match[1], text: match[2] };
-  }
-  return { timestamp: null, text: entry };
-}
-
 const SOURCE_META = {
   microphone: { Icon: Mic, label: 'Microphone' },
   screen: { Icon: Monitor, label: 'Screen Share' },
@@ -105,22 +96,25 @@ export default function TranscribeStream({ accessToken }) {
         </div>
       ) : null}
       {transcriptEntries.map((entry, index) => {
-        const { timestamp, text } = parseTimestampedEntry(entry);
+        const tsMatch = entry.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*(.*)$/);
+        if (tsMatch) {
+          return (
+            <article className="transcript-entry" key={`${entry}-${index}`}>
+              <p style={{ whiteSpace: 'pre-wrap' }}>
+                <span className="entry-timestamp">{tsMatch[1]}</span>{' '}{formatSentences(tsMatch[2])}
+              </p>
+            </article>
+          );
+        }
         return (
           <article className="transcript-entry" key={`${entry}-${index}`}>
-            <div className="transcript-entry-header">
-              <span className="entry-badge">Final</span>
-              {timestamp && <span className="entry-timestamp">{timestamp}</span>}
-            </div>
-            <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(text)}</p>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(entry)}</p>
           </article>
         );
       })}
       {partialTranscript ? (
         <article className="transcript-entry partial-entry">
-          <div className="transcript-entry-header">
-            <span className="entry-badge">Live</span>
-          </div>
+          <span className="entry-badge">Live</span>
           <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(partialTranscript)}</p>
         </article>
       ) : null}
