@@ -114,7 +114,6 @@ export default function TranscribeStream({ accessToken }) {
       })}
       {partialTranscript ? (
         <article className="transcript-entry partial-entry">
-          <span className="entry-badge">Live</span>
           <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(partialTranscript)}</p>
         </article>
       ) : null}
