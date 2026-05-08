@@ -19,6 +19,7 @@ export default function TranscribeStream({ accessToken }) {
     status,
     transcriptEntries,
     partialTranscript,
+    partialTranscriptTimestamp,
     errorMessage,
     elapsedMs,
     start,
@@ -114,7 +115,11 @@ export default function TranscribeStream({ accessToken }) {
       })}
       {partialTranscript ? (
         <article className="transcript-entry partial-entry">
-          <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(partialTranscript)}</p>
+          <p style={{ whiteSpace: 'pre-wrap' }}>
+            {partialTranscriptTimestamp ? <span className="entry-timestamp">[{partialTranscriptTimestamp}]</span> : null}
+            {partialTranscriptTimestamp ? ' ' : ''}
+            {formatSentences(partialTranscript)}
+          </p>
         </article>
       ) : null}
       <div className="transcript-scroll-spacer" />

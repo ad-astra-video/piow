@@ -97,6 +97,7 @@ class StreamManager {
       status: 'Ready.',
       transcriptEntries: [],
       partialTranscript: '',
+      partialTranscriptTimestamp: '',
       textTimestamps: [],
       errorMessage: '',
       elapsedMs: 0,
@@ -120,6 +121,7 @@ class StreamManager {
     this._streamStartTime = 0;
     // Sentence buffering for timestamped transcript
     this._textBuffer = '';
+    this._textBufferStartMs = null;
   }
 
   _setState(partial) {
@@ -333,6 +335,7 @@ class StreamManager {
         errorMessage: '',
         transcriptEntries: [],
         partialTranscript: '',
+        partialTranscriptTimestamp: '',
         textTimestamps: [],
         status: statusLabels[sourceType] || 'Getting user media...',
         elapsedMs: 0,
@@ -390,9 +393,10 @@ class StreamManager {
             };
 
             // Helper: extract sentences from buffer and timestamp them
-            const _processBuffer = (buffer) => {
+            const _processBuffer = (buffer, startMs, currentMs) => {
               const sentences = [];
               let remaining = buffer;
+              let sentenceStartMs = typeof startMs === 'number' ? startMs : currentMs;
               // Find sentence endings (. ! ?)
               const regex = /[.!?]+/g;
               let match;
@@ -400,13 +404,15 @@ class StreamManager {
               while ((match = regex.exec(buffer)) !== null) {
                 const sentence = buffer.slice(lastEnd, match.index + match[0].length).trim();
                 if (sentence) {
-                  const ts = formatDuration(this.state.elapsedMs);
+                  const ts = formatDuration(sentenceStartMs);
                   sentences.push(`[${ts}] ${sentence}`);
                 }
                 lastEnd = match.index + match[0].length;
+                sentenceStartMs = currentMs;
               }
               remaining = buffer.slice(lastEnd).trimStart();
-              return { sentences, remaining };
+              const remainingStartMs = remaining ? sentenceStartMs : null;
+              return { sentences, remaining, remainingStartMs };
             };
 
             if (
@@ -419,17 +425,31 @@ class StreamManager {
             ) {
               const delta = typeof message.delta === 'string' ? message.delta : '';
               if (!delta) return;
+              const currentMs = this.state.elapsedMs;
+              if (!this._textBuffer) {
+                this._textBufferStartMs = currentMs;
+              }
               this._textBuffer = _appendText(this._textBuffer, delta);
-              const { sentences, remaining } = _processBuffer(this._textBuffer);
+              const { sentences, remaining, remainingStartMs } = _processBuffer(
+                this._textBuffer,
+                this._textBufferStartMs,
+                currentMs
+              );
               if (sentences.length > 0) {
                 this._textBuffer = remaining;
+                this._textBufferStartMs = remainingStartMs;
                 this._setState({
                   transcriptEntries: [...this.state.transcriptEntries, ...sentences],
                   partialTranscript: remaining,
+                  partialTranscriptTimestamp: remaining ? formatDuration(remainingStartMs) : '',
                   status: 'Connected.',
                 });
               } else {
-                this._setState({ partialTranscript: this._textBuffer, status: 'Connected.' });
+                this._setState({
+                  partialTranscript: this._textBuffer,
+                  partialTranscriptTimestamp: this._textBuffer ? formatDuration(this._textBufferStartMs) : '',
+                  status: 'Connected.'
+                });
               }
             } else if (
               msgType === 'transcription.done' ||
@@ -444,55 +464,88 @@ class StreamManager {
                 (typeof message.text === 'string' && message.text) ||
                 '';
               if (!transcript) return;
+              const currentMs = this.state.elapsedMs;
+              if (!this._textBuffer) {
+                this._textBufferStartMs = currentMs;
+              }
               // If the buffer already contains this transcript (built from prior
               // deltas), avoid appending it again and causing duplication.
               if (!this._textBuffer.endsWith(transcript)) {
                 this._textBuffer = _appendText(this._textBuffer, transcript);
               }
-              const { sentences, remaining } = _processBuffer(this._textBuffer);
+              const { sentences, remaining, remainingStartMs } = _processBuffer(
+                this._textBuffer,
+                this._textBufferStartMs,
+                currentMs
+              );
               const allEntries = [...this.state.transcriptEntries, ...sentences];
               if (remaining) {
-                const ts = formatDuration(this.state.elapsedMs);
+                const ts = formatDuration(remainingStartMs ?? currentMs);
                 allEntries.push(`[${ts}] ${remaining}`);
               }
               this._textBuffer = '';
+              this._textBufferStartMs = null;
               this._setState({
                 transcriptEntries: allEntries,
                 partialTranscript: '',
+                partialTranscriptTimestamp: '',
                 status: 'Connected.',
               });
             } else if (msgType === 'transcription') {
               const text = typeof message.text === 'string' ? message.text : '';
               const isFinal = message.is_final;
               if (!text) return;
+              const currentMs = this.state.elapsedMs;
               // The 'transcription' message type sends the FULL cumulative text
               // (not a delta), so we replace the buffer rather than append.
               if (isFinal) {
+                if (!this._textBufferStartMs) {
+                  this._textBufferStartMs = currentMs;
+                }
                 this._textBuffer = text;
-                const { sentences, remaining } = _processBuffer(this._textBuffer);
+                const { sentences, remaining, remainingStartMs } = _processBuffer(
+                  this._textBuffer,
+                  this._textBufferStartMs,
+                  currentMs
+                );
                 const allEntries = [...this.state.transcriptEntries, ...sentences];
                 if (remaining) {
-                  const ts = formatDuration(this.state.elapsedMs);
+                  const ts = formatDuration(remainingStartMs ?? currentMs);
                   allEntries.push(`[${ts}] ${remaining}`);
                 }
                 this._textBuffer = '';
+                this._textBufferStartMs = null;
                 this._setState({
                   transcriptEntries: allEntries,
                   partialTranscript: '',
+                  partialTranscriptTimestamp: '',
                   status: 'Connected.',
                 });
               } else {
+                if (!this._textBuffer) {
+                  this._textBufferStartMs = currentMs;
+                }
                 this._textBuffer = text;
-                const { sentences, remaining } = _processBuffer(this._textBuffer);
+                const { sentences, remaining, remainingStartMs } = _processBuffer(
+                  this._textBuffer,
+                  this._textBufferStartMs,
+                  currentMs
+                );
                 if (sentences.length > 0) {
                   this._textBuffer = remaining;
+                  this._textBufferStartMs = remainingStartMs;
                   this._setState({
                     transcriptEntries: [...this.state.transcriptEntries, ...sentences],
                     partialTranscript: remaining,
+                    partialTranscriptTimestamp: remaining ? formatDuration(remainingStartMs) : '',
                     status: 'Connected.',
                   });
                 } else {
-                  this._setState({ partialTranscript: this._textBuffer, status: 'Connected.' });
+                  this._setState({
+                    partialTranscript: this._textBuffer,
+                    partialTranscriptTimestamp: this._textBuffer ? formatDuration(this._textBufferStartMs) : '',
+                    status: 'Connected.'
+                  });
                 }
               }
             } else if (msgType === 'text_timestamps') {
@@ -606,9 +659,11 @@ class StreamManager {
     }
 
     this._textBuffer = '';
+    this._textBufferStartMs = null;
     this._setState({
       isStarted: false,
       partialTranscript: '',
+      partialTranscriptTimestamp: '',
       status: !preserveStatus && wasStarted ? 'Transcription stopped.' : this.state.status,
       elapsedMs: 0,
     });

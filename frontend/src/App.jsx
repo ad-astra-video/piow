@@ -71,6 +71,7 @@ function LiveTranscriptSidebar({ onStop }) {
     status,
     transcriptEntries,
     partialTranscript,
+    partialTranscriptTimestamp,
     errorMessage,
     elapsedMs,
     stop,
@@ -123,7 +124,11 @@ function LiveTranscriptSidebar({ onStop }) {
         })}
         {partialTranscript ? (
           <article className="live-sidebar-entry partial-entry">
-            <p>{partialTranscript}</p>
+            <p>
+              {partialTranscriptTimestamp ? <span className="entry-timestamp">[{partialTranscriptTimestamp}]</span> : null}
+              {partialTranscriptTimestamp ? ' ' : ''}
+              {partialTranscript}
+            </p>
           </article>
         ) : null}
       </div>
