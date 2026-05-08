@@ -414,7 +414,7 @@ class StreamManager {
                   status: 'Connected.',
                 });
               } else {
-                this._setState({ partialTranscript: this.state.partialTranscript + text, status: 'Connected.' });
+                this._setState({ partialTranscript: text, status: 'Connected.' });
               }
             } else if (msgType === 'text_timestamps') {
               const words = Array.isArray(message.words) ? message.words : [];

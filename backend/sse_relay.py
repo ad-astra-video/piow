@@ -14,6 +14,7 @@ Architecture:
 import asyncio
 import json
 import logging
+import re
 from typing import Dict, Any, Optional, Set, List
 
 import aiohttp
@@ -66,8 +67,11 @@ class SSERelay:
         self._session_store = session_store
         self._pending_segments: List[Dict[str, Any]] = []  # segments with timestamps
         self._pending_timestamps: List[Dict[str, Any]] = []
-        self._sentence_buffer: str = ""  # incomplete sentence carried across flushes
+        self._sentence_buffer: str = ""  # incomplete sentence carried across DB flushes
         self._sentence_buffer_ts_ms: int = 0
+        # Real-time broadcast sentence buffering
+        self._broadcast_text_buffer: str = ""
+        self._broadcast_text_ts_ms: int = 0
 
     async def start(self):
         """Start the SSE relay task."""
@@ -318,28 +322,83 @@ class SSERelay:
         """Handle a parsed SSE event and relay to clients if appropriate."""
         messages = self._normalize_messages(event)
         for message in messages:
-            await self._broadcast(message)
-            # Buffer transcription text for periodic DB persistence.
-            # Buffer ALL transcription messages (delta and final) because the
-            # worker cycles the VLLM WebSocket every 15 minutes, so
-            # transcription.done events may never arrive before the connection
-            # is torn down.
-            if self._session_store is not None and message.get("type") in (
-                "transcription",
-                "transcription.delta",
-            ):
+            msg_type = message.get("type", "")
+
+            # For transcription messages, do sentence-level timestamping
+            if msg_type in ("transcription", "transcription.delta"):
                 text = (message.get("text") or message.get("delta") or "").strip()
+                ts_ms = message.get("timestamp_ms", 0)
+                is_final = message.get("is_final", False)
                 if text:
+                    await self._broadcast_timestamped_sentences(text, ts_ms, is_final)
+
+                # Also buffer for DB persistence
+                if self._session_store is not None:
                     self._pending_segments.append({
                         "text": text,
-                        "timestamp_ms": message.get("timestamp_ms", 0),
+                        "timestamp_ms": ts_ms,
                     })
+            else:
+                # Non-transcription messages pass through unchanged
+                await self._broadcast(message)
+
             if (
                 self._session_store is not None
-                and message.get("type") == "text_timestamps"
+                and msg_type == "text_timestamps"
                 and isinstance(message.get("words"), list)
             ):
                 self._pending_timestamps.append(message)
+
+    async def _broadcast_timestamped_sentences(self, text: str, ts_ms: int, is_final: bool = False):
+        """Accumulate text and broadcast complete sentences with [hh:mm:ss]."""
+        if not text:
+            return
+
+        # For final/done messages, the text is the FULL transcript, not a delta.
+        # Clear the buffer to avoid duplicating previously-buffered partial text.
+        if is_final:
+            self._broadcast_text_buffer = ""
+
+        # Append new text to buffer
+        if not self._broadcast_text_buffer:
+            self._broadcast_text_ts_ms = ts_ms
+        self._broadcast_text_buffer += text
+
+        # Find sentence endings (. ! ?)
+        sentence_ends = []
+        for match in re.finditer(r'[.!?]+', self._broadcast_text_buffer):
+            sentence_ends.append(match.end())
+
+        start = 0
+        for end in sentence_ends:
+            sentence = self._broadcast_text_buffer[start:end].strip()
+            if sentence:
+                timestamped = f"{self._format_timestamp(ts_ms)} {sentence}"
+                await self._broadcast({
+                    "type": "transcription",
+                    "text": timestamped,
+                    "is_final": True,
+                })
+            start = end
+            while start < len(self._broadcast_text_buffer) and self._broadcast_text_buffer[start].isspace():
+                start += 1
+
+        # Keep remaining incomplete text
+        if start < len(self._broadcast_text_buffer):
+            self._broadcast_text_buffer = self._broadcast_text_buffer[start:]
+            self._broadcast_text_ts_ms = ts_ms
+        else:
+            self._broadcast_text_buffer = ""
+            self._broadcast_text_ts_ms = 0
+
+        # Also broadcast the remaining buffer as a live partial so the
+        # frontend shows real-time typing
+        if self._broadcast_text_buffer:
+            await self._broadcast({
+                "type": "transcription",
+                "text": self._broadcast_text_buffer,
+                "is_final": False,
+            })
 
     async def _flush_loop(self):
         """Periodically flush buffered transcription segments to the database."""
