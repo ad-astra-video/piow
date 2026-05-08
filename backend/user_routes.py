@@ -42,15 +42,15 @@ async def get_user_profile(request):
 
     try:
         # Get user from public.users table
-        user_result = await await supabase.table('users').select('*').eq('id', user_id).execute()
+        user_result = await supabase.table('users').select('*').eq('id', user_id).execute()
         user_data = user_result.data[0] if user_result.data else {}
 
         # Get subscription
-        sub_result = await await supabase.table('subscriptions').select('*').eq('user_id', user_id).execute()
+        sub_result = await supabase.table('subscriptions').select('*').eq('user_id', user_id).execute()
         subscription = sub_result.data[0] if sub_result.data else None
 
         # Get preferences
-        pref_result = await await supabase.table('user_preferences').select('*').eq('user_id', user_id).execute()
+        pref_result = await supabase.table('user_preferences').select('*').eq('user_id', user_id).execute()
         preferences = pref_result.data[0] if pref_result.data else {}
 
         return web.json_response({
@@ -105,7 +105,7 @@ async def get_user_history(request):
             ]
 
         if item_type in ('all', 'translation'):
-            tr_result = await await supabase.table('translations').select('*').eq('user_id', user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+            tr_result = await supabase.table('translations').select('*').eq('user_id', user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
             translations = [
                 {**item, '_type': 'translation'} for item in (tr_result.data or [])
             ]
@@ -146,11 +146,11 @@ async def get_usage_details(request):
         since = (datetime.utcnow() - timedelta(days=days)).isoformat()
 
         # Transcription usage
-        t_usage_result = await await supabase.table('transcription_usage').select('*').eq('user_id', user_id).gte('created_at', since).order('created_at', desc=True).execute()
+        t_usage_result = await supabase.table('transcription_usage').select('*').eq('user_id', user_id).gte('created_at', since).order('created_at', desc=True).execute()
         t_usage = t_usage_result.data or []
 
         # Translation usage
-        tr_usage_result = await await supabase.table('translation_usage').select('*').eq('user_id', user_id).gte('created_at', since).order('created_at', desc=True).execute()
+        tr_usage_result = await supabase.table('translation_usage').select('*').eq('user_id', user_id).gte('created_at', since).order('created_at', desc=True).execute()
         tr_usage = tr_usage_result.data or []
 
         # Aggregates

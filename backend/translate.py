@@ -211,7 +211,7 @@ async def translate_transcription(request):
         if not transcription_id:
             return web.json_response({"error": "Missing transcription_id parameter"}, status=400)
 
-        trans_result = await await supabase.table('transcriptions').select('*').eq('id', transcription_id).execute()
+        trans_result = await supabase.table('transcriptions').select('*').eq('id', transcription_id).execute()
 
         if not trans_result.data:
             return web.json_response({"error": "Transcription not found"}, status=404)
@@ -306,7 +306,7 @@ async def list_translations(request):
         limit = int(request.query.get('limit', '100'))
         offset = int(request.query.get('offset', '0'))
 
-        result = await await supabase.table('translations').select('*').eq('user_id', user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+        result = await supabase.table('translations').select('*').eq('user_id', user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
 
         return web.json_response({
             "translations": result.data if hasattr(result, 'data') else result,
@@ -334,7 +334,7 @@ async def get_translation(request):
         if not translation_id:
             return web.json_response({"error": "Missing translation ID"}, status=400)
 
-        result = await await supabase.table('translations').select('*').eq('id', translation_id).eq('user_id', user_id).execute()
+        result = await supabase.table('translations').select('*').eq('id', translation_id).eq('user_id', user_id).execute()
 
         if not result.data:
             return web.json_response({"error": "Translation not found"}, status=404)
@@ -360,7 +360,7 @@ async def delete_translation(request):
         if not translation_id:
             return web.json_response({"error": "Missing translation ID"}, status=400)
 
-        result = await await supabase.table('translations').delete().eq('id', translation_id).eq('user_id', user_id).execute()
+        result = await supabase.table('translations').delete().eq('id', translation_id).eq('user_id', user_id).execute()
 
         if not result.data:
             return web.json_response({"error": "Translation not found"}, status=404)

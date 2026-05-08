@@ -852,7 +852,7 @@ async def get_transcription(request):
         if not transcription_id:
             return web.json_response({"error": "Missing transcription ID"}, status=400)
 
-        result = await await supabase.table('transcriptions').select('*').eq('id', transcription_id).eq('user_id', user_id).execute()
+        result = await supabase.table('transcriptions').select('*').eq('id', transcription_id).eq('user_id', user_id).execute()
 
         if not result.data:
             return web.json_response({"error": "Transcription not found"}, status=404)
@@ -878,7 +878,7 @@ async def delete_transcription(request):
         if not transcription_id:
             return web.json_response({"error": "Missing transcription ID"}, status=400)
 
-        result = await await supabase.table('transcriptions').delete().eq('id', transcription_id).eq('user_id', user_id).execute()
+        result = await supabase.table('transcriptions').delete().eq('id', transcription_id).eq('user_id', user_id).execute()
 
         if not result.data:
             return web.json_response({"error": "Transcription not found"}, status=404)
