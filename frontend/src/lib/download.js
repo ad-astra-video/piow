@@ -52,6 +52,23 @@ function buildWordTimeline(segments) {
 
 function buildTimedSentences(text, segments) {
   const cleanText = stripTimestamps(text);
+
+  // If segments have start/end timing at the segment level, use them directly
+  if (Array.isArray(segments) && segments.length > 0) {
+    const hasSegmentTiming = segments.some(
+      (seg) => seg && typeof seg.start === 'number' && typeof seg.end === 'number'
+    );
+    if (hasSegmentTiming) {
+      return segments
+        .filter((seg) => seg && typeof seg.start === 'number' && typeof seg.end === 'number')
+        .map((seg) => ({
+          text: (typeof seg.text === 'string' ? seg.text : '').trim(),
+          start: seg.start,
+          end: seg.end,
+        }));
+    }
+  }
+
   const words = buildWordTimeline(segments);
 
   if (words.length === 0) {
