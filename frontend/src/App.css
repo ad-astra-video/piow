@@ -758,7 +758,9 @@ html, body {
   background: rgba(255,255,255,0.03);
   border-left: 3px solid var(--accent);
 }
-.transcript-entry.partial-entry { border-left-color: var(--accent-2); opacity: 0.8; }
+.transcript-entry.partial-entry {
+  border-left-color: var(--accent-2);
+}
 .transcript-entry p { margin: 0.3rem 0 0; font-size: 0.9rem; line-height: 1.5; }
 .entry-badge {
   font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
@@ -2323,7 +2325,6 @@ html, body {
 
 .live-sidebar-entry.partial-entry {
   border-left-color: var(--accent-2);
-  opacity: 0.85;
 }
 
 .live-sidebar-entry p {
