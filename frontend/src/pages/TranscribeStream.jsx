@@ -3,10 +3,6 @@ import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, C
 import useLiveTranscription from '../hooks/useLiveTranscription';
 import streamManager, { formatDuration } from '../lib/streamManager';
 
-function formatSentences(text) {
-  return text.replace(/([.!?]+)\s+/g, '$1\n');
-}
-
 const SOURCE_META = {
   microphone: { Icon: Mic, label: 'Microphone' },
   screen: { Icon: Monitor, label: 'Screen Share' },
@@ -96,30 +92,24 @@ export default function TranscribeStream({ accessToken }) {
           <span>Speak naturally and the transcript will appear here.</span>
         </div>
       ) : null}
-      {transcriptEntries.map((entry, index) => {
-        const tsMatch = entry.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*(.*)$/);
-        if (tsMatch) {
-          return (
-            <article className="transcript-entry" key={`${entry}-${index}`}>
-              <p style={{ whiteSpace: 'pre-wrap' }}>
-                <span className="entry-timestamp">{tsMatch[1]}</span>{' '}{formatSentences(tsMatch[2])}
-              </p>
-            </article>
-          );
-        }
-        return (
-          <article className="transcript-entry" key={`${entry}-${index}`}>
-            <p style={{ whiteSpace: 'pre-wrap' }}>{formatSentences(entry)}</p>
-          </article>
-        );
-      })}
+      {transcriptEntries.map((entry, index) => (
+        <article className="transcript-entry" key={`${entry.timestamp}-${index}`}>
+          <div className="entry-row">
+            <time className="entry-timestamp-col">[{entry.timestamp}]</time>
+            <p className="entry-text">{entry.text}</p>
+          </div>
+        </article>
+      ))}
       {partialTranscript ? (
         <article className="transcript-entry partial-entry">
-          <p style={{ whiteSpace: 'pre-wrap' }}>
-            {partialTranscriptTimestamp ? <span className="entry-timestamp">[{partialTranscriptTimestamp}]</span> : null}
-            {partialTranscriptTimestamp ? ' ' : ''}
-            {formatSentences(partialTranscript)}
-          </p>
+          <div className="entry-row">
+            {partialTranscriptTimestamp ? (
+              <time className="entry-timestamp-col">[{partialTranscriptTimestamp}]</time>
+            ) : (
+              <span className="entry-timestamp-col placeholder" />
+            )}
+            <p className="entry-text">{partialTranscript}</p>
+          </div>
         </article>
       ) : null}
       <div className="transcript-scroll-spacer" />

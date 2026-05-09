@@ -49,6 +49,13 @@ export default function HistoryPage() {
   const formatDate = (d) => new Date(d).toLocaleString();
   const formatDuration = (s) => s ? `${Math.floor(s / 60)}m ${s % 60}s` : '';
 
+  const splitSentences = (text) => {
+    if (!text) return [];
+    const matches = text.match(/[^.!?]+[.!?]+/g);
+    if (matches) return matches.map((s) => s.trim()).filter(Boolean);
+    return [text];
+  };
+
   const sourceIcon = (type, src) => {
     if (type === 'translation') return <Globe size={14} />;
     if (src === 'stream' || src === 'whip') return <Mic size={14} />;
@@ -97,11 +104,15 @@ export default function HistoryPage() {
                   </span>
                   <span className="history-date">{formatDate(item.created_at)}</span>
                 </div>
-                <p className="history-text">
-                  {item._type === 'transcription'
-                    ? (item.text || '')
-                    : (item.translated_text || '')}
-                </p>
+                {item._type === 'transcription' ? (
+                  <div className="history-sentences">
+                    {splitSentences(item.text).map((sentence, i) => (
+                      <p key={i} className="history-sentence">{sentence}</p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="history-text">{item.translated_text || ''}</p>
+                )}
                 <div className="history-footer">
                   <span className="lang-tag">
                     {item.language || item.source_language}

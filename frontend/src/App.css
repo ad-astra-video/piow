@@ -761,7 +761,7 @@ html, body {
 .transcript-entry.partial-entry {
   border-left-color: var(--accent-2);
 }
-.transcript-entry p { margin: 0.3rem 0 0; font-size: 0.9rem; line-height: 1.5; }
+.transcript-entry .entry-text { margin: 0; font-size: 0.9rem; line-height: 1.5; }
 .entry-badge {
   font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--accent);
@@ -801,6 +801,20 @@ html, body {
 .history-date { font-size: 0.75rem; color: var(--text-muted); margin-left: auto; }
 .history-text { margin: 0; font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; }
 .history-footer { display: flex; gap: 0.75rem; margin-top: 0.4rem; font-size: 0.75rem; color: var(--text-muted); }
+
+.history-sentences {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.history-sentence {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--glass-border);
+}
 .history-actions { display: flex; gap: 0.4rem; flex-shrink: 0; padding-top: 0.2rem; }
 
 /* Usage */
@@ -2205,14 +2219,34 @@ html, body {
 }
 
 
-/* Timestamp styles */
-.entry-timestamp {
-  font-size: 0.85rem;
+/* Timestamp column styles */
+.entry-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.entry-timestamp-col {
+  flex-shrink: 0;
+  width: 4.5rem;
+  text-align: right;
+  font-size: 0.8rem;
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   color: var(--accent-2);
   letter-spacing: 0.02em;
-  margin-right: 0.35rem;
+  padding-top: 0.15rem;
+}
+
+.entry-timestamp-col.placeholder {
+  opacity: 0;
+}
+
+.entry-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  flex: 1;
 }
 
 /* Stream timer */
@@ -2246,11 +2280,6 @@ html, body {
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   color: var(--accent-2);
   margin-left: auto;
-}
-
-.live-sidebar-entry .entry-timestamp {
-  font-size: 0.75rem;
-  margin-right: 0.25rem;
 }
 
 /* Update live-sidebar-status to flex */
@@ -2331,6 +2360,22 @@ html, body {
   margin: 0.2rem 0 0;
   font-size: 0.85rem;
   line-height: 1.45;
+}
+
+.live-sidebar-entry .entry-row {
+  gap: 0.5rem;
+}
+
+.live-sidebar-entry .entry-timestamp-col {
+  width: 3.8rem;
+  font-size: 0.72rem;
+  padding-top: 0.1rem;
+}
+
+.live-sidebar-entry .entry-text {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
 }
 
 .live-sidebar-error {

@@ -107,28 +107,24 @@ function LiveTranscriptSidebar({ onStop }) {
             <p>Listening…</p>
           </div>
         ) : null}
-        {transcriptEntries.map((entry, index) => {
-          const tsMatch = entry.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*(.*)$/);
-          if (tsMatch) {
-            return (
-              <article className="live-sidebar-entry" key={`${entry}-${index}`}>
-                <p><span className="entry-timestamp">{tsMatch[1]}</span>{' '}{tsMatch[2]}</p>
-              </article>
-            );
-          }
-          return (
-            <article className="live-sidebar-entry" key={`${entry}-${index}`}>
-              <p>{entry}</p>
-            </article>
-          );
-        })}
+        {transcriptEntries.map((entry, index) => (
+          <article className="live-sidebar-entry" key={`${entry.timestamp}-${index}`}>
+            <div className="entry-row">
+              <time className="entry-timestamp-col">[{entry.timestamp}]</time>
+              <p className="entry-text">{entry.text}</p>
+            </div>
+          </article>
+        ))}
         {partialTranscript ? (
           <article className="live-sidebar-entry partial-entry">
-            <p>
-              {partialTranscriptTimestamp ? <span className="entry-timestamp">[{partialTranscriptTimestamp}]</span> : null}
-              {partialTranscriptTimestamp ? ' ' : ''}
-              {partialTranscript}
-            </p>
+            <div className="entry-row">
+              {partialTranscriptTimestamp ? (
+                <time className="entry-timestamp-col">[{partialTranscriptTimestamp}]</time>
+              ) : (
+                <span className="entry-timestamp-col placeholder" />
+              )}
+              <p className="entry-text">{partialTranscript}</p>
+            </div>
           </article>
         ) : null}
       </div>

@@ -405,7 +405,7 @@ class StreamManager {
                 const sentence = buffer.slice(lastEnd, match.index + match[0].length).trim();
                 if (sentence) {
                   const ts = formatDuration(sentenceStartMs);
-                  sentences.push(`[${ts}] ${sentence}`);
+                  sentences.push({ timestamp: ts, text: sentence });
                 }
                 lastEnd = match.index + match[0].length;
                 sentenceStartMs = currentMs;
@@ -481,7 +481,7 @@ class StreamManager {
               const allEntries = [...this.state.transcriptEntries, ...sentences];
               if (remaining) {
                 const ts = formatDuration(remainingStartMs ?? currentMs);
-                allEntries.push(`[${ts}] ${remaining}`);
+                allEntries.push({ timestamp: ts, text: remaining });
               }
               this._textBuffer = '';
               this._textBufferStartMs = null;
@@ -511,7 +511,7 @@ class StreamManager {
                 const allEntries = [...this.state.transcriptEntries, ...sentences];
                 if (remaining) {
                   const ts = formatDuration(remainingStartMs ?? currentMs);
-                  allEntries.push(`[${ts}] ${remaining}`);
+                  allEntries.push({ timestamp: ts, text: remaining });
                 }
                 this._textBuffer = '';
                 this._textBufferStartMs = null;
