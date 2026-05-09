@@ -153,6 +153,12 @@ async def get_usage_details(request):
         tr_usage_result = await supabase.table('translation_usage').select('*').eq('user_id', user_id).gte('created_at', since).order('created_at', desc=True).execute()
         tr_usage = tr_usage_result.data or []
 
+        # Actual job counts (from transcriptions/translations tables, not usage rows)
+        t_jobs_result = await supabase.table('transcriptions').select('id', count='exact').eq('user_id', user_id).gte('created_at', since).execute()
+        tr_jobs_result = await supabase.table('translations').select('id', count='exact').eq('user_id', user_id).gte('created_at', since).execute()
+        transcription_job_count = t_jobs_result.count if hasattr(t_jobs_result, 'count') else len(t_jobs_result.data or [])
+        translation_job_count = tr_jobs_result.count if hasattr(tr_jobs_result, 'count') else len(tr_jobs_result.data or [])
+
         # Aggregates
         total_transcription_seconds = sum(u.get('duration_seconds', 0) for u in t_usage)
         total_transcription_words = sum(u.get('word_count', 0) for u in t_usage)
@@ -188,12 +194,12 @@ async def get_usage_details(request):
             'transcription': {
                 'total_seconds': total_transcription_seconds,
                 'total_words': total_transcription_words,
-                'job_count': len(t_usage),
+                'job_count': transcription_job_count,
                 'source_breakdown': source_breakdown,
             },
             'translation': {
                 'total_characters': total_translation_chars,
-                'job_count': len(tr_usage),
+                'job_count': translation_job_count,
             },
             'daily_breakdown': daily_breakdown,
             'raw_transcription_usage': t_usage,
