@@ -35,83 +35,61 @@ function formatVttTime(totalSeconds) {
   return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}.${pad3(ms)}`;
 }
 
-function buildWordTimeline(segments) {
-  if (!Array.isArray(segments) || segments.length === 0) return [];
-  const words = [];
-  for (const seg of segments) {
-    if (seg && Array.isArray(seg.words)) {
-      for (const w of seg.words) {
-        if (w && typeof w.word === 'string' && typeof w.start === 'number' && typeof w.end === 'number') {
-          words.push({ word: w.word, start: w.start, end: w.end });
-        }
-      }
-    }
-  }
-  return words;
+function parseTimestampToSeconds(ts) {
+  const clean = ts.replace(/^\[|\]$/g, '');
+  const [hh, mm, ss] = clean.split(':');
+  return (parseInt(hh, 10) || 0) * 3600 + (parseInt(mm, 10) || 0) * 60 + (parseFloat(ss) || 0);
 }
 
-function buildTimedSentences(text, segments) {
-  const cleanText = stripTimestamps(text);
-
-  // If segments have start/end timing at the segment level, use them directly
-  if (Array.isArray(segments) && segments.length > 0) {
-    const hasSegmentTiming = segments.some(
-      (seg) => seg && typeof seg.start === 'number' && typeof seg.end === 'number'
-    );
-    if (hasSegmentTiming) {
-      return segments
-        .filter((seg) => seg && typeof seg.start === 'number' && typeof seg.end === 'number')
-        .map((seg) => ({
-          text: (typeof seg.text === 'string' ? seg.text : '').trim(),
-          start: seg.start,
-          end: seg.end,
-        }));
-    }
+function parseTimestampedSentences(text) {
+  if (!text) return [];
+  const regex = /\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\]/g;
+  const matches = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    matches.push({ index: match.index, ts: match[0] });
   }
-
-  const words = buildWordTimeline(segments);
-
-  if (words.length === 0) {
-    // Fallback: no word-level timing available
-    return splitSentences(cleanText).map((s) => ({ text: s, start: null, end: null }));
-  }
+  if (matches.length === 0) return [];
 
   const sentences = [];
-  let currentWords = [];
-
-  for (const w of words) {
-    currentWords.push(w);
-    const cleanWord = w.word.trim();
-    if (/[.!?]+$/.test(cleanWord)) {
-      if (currentWords.length > 0) {
-        sentences.push({
-          text: currentWords.map((cw) => cw.word).join(' '),
-          start: currentWords[0].start,
-          end: currentWords[currentWords.length - 1].end,
-        });
-        currentWords = [];
-      }
+  for (let i = 0; i < matches.length; i++) {
+    const startIdx = matches[i].index + matches[i].ts.length;
+    const endIdx = i + 1 < matches.length ? matches[i + 1].index : text.length;
+    const sentenceText = text.slice(startIdx, endIdx).trim();
+    if (sentenceText) {
+      sentences.push({
+        text: sentenceText,
+        start: parseTimestampToSeconds(matches[i].ts),
+        end: null,
+      });
     }
   }
 
-  // Remaining words without a sentence terminator
-  if (currentWords.length > 0) {
-    sentences.push({
-      text: currentWords.map((cw) => cw.word).join(' '),
-      start: currentWords[0].start,
-      end: currentWords[currentWords.length - 1].end,
-    });
+  // Use next sentence's timestamp as this sentence's end time
+  for (let i = 0; i < sentences.length - 1; i++) {
+    sentences[i].end = sentences[i + 1].start;
   }
 
   return sentences;
+}
+
+function buildTimedSentences(text) {
+  // Primary: parse timestamps embedded in the text itself
+  const textSentences = parseTimestampedSentences(text);
+  if (textSentences.length > 0) {
+    return textSentences;
+  }
+
+  // Fallback: plain text without timestamps
+  return splitSentences(stripTimestamps(text)).map((s) => ({ text: s, start: null, end: null }));
 }
 
 function buildText(text) {
   return stripTimestamps(text) || '';
 }
 
-function buildSrt(text, durationSeconds, segments) {
-  const timedSentences = buildTimedSentences(text, segments);
+function buildSrt(text, durationSeconds) {
+  const timedSentences = buildTimedSentences(text);
   if (timedSentences.length === 0) return '';
 
   const segDuration = durationSeconds > 0 ? durationSeconds / timedSentences.length : 5;
@@ -124,8 +102,8 @@ function buildSrt(text, durationSeconds, segments) {
     let start, end;
     if (sentence.start !== null) {
       start = sentence.start;
-      // End at the start of the next sentence, or this sentence's last word end if last
-      end = next ? next.start : sentence.end;
+      // End at the start of the next sentence, or total duration if this is the last
+      end = next ? next.start : (sentence.end ?? (durationSeconds > 0 ? durationSeconds : start + segDuration));
     } else {
       // Fallback: evenly distribute total duration
       start = i * segDuration;
@@ -140,8 +118,8 @@ function buildSrt(text, durationSeconds, segments) {
   return out.trim();
 }
 
-function buildWebVtt(text, durationSeconds, segments) {
-  const timedSentences = buildTimedSentences(text, segments);
+function buildWebVtt(text, durationSeconds) {
+  const timedSentences = buildTimedSentences(text);
   if (timedSentences.length === 0) return 'WEBVTT\n\n';
 
   const segDuration = durationSeconds > 0 ? durationSeconds / timedSentences.length : 5;
@@ -154,7 +132,7 @@ function buildWebVtt(text, durationSeconds, segments) {
     let start, end;
     if (sentence.start !== null) {
       start = sentence.start;
-      end = next ? next.start : sentence.end;
+      end = next ? next.start : (sentence.end ?? (durationSeconds > 0 ? durationSeconds : start + segDuration));
     } else {
       start = i * segDuration;
       end = (i + 1) * segDuration;
@@ -183,7 +161,6 @@ export function downloadTranscription(item, format) {
   const baseName = `transcription_${item.id?.slice(0, 8) || 'export'}`;
   const text = item.text || '';
   const duration = item.duration || 0;
-  const segments = item.segments || [];
 
   switch (format) {
     case 'txt': {
@@ -192,12 +169,12 @@ export function downloadTranscription(item, format) {
       break;
     }
     case 'srt': {
-      const content = buildSrt(text, duration, segments);
+      const content = buildSrt(text, duration);
       triggerDownload(content, `${baseName}.srt`, 'text/plain');
       break;
     }
     case 'vtt': {
-      const content = buildWebVtt(text, duration, segments);
+      const content = buildWebVtt(text, duration);
       triggerDownload(content, `${baseName}.vtt`, 'text/vtt');
       break;
     }
