@@ -815,6 +815,85 @@ html, body {
   padding-left: 0.5rem;
   border-left: 2px solid var(--glass-border);
 }
+
+.history-sentences.preview {
+  cursor: pointer;
+  transition: background 0.15s;
+  border-radius: 6px;
+  padding: 0.25rem;
+  margin: -0.25rem;
+}
+.history-sentences.preview:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+.history-more {
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
+  color: var(--accent);
+  font-weight: 500;
+  padding-left: 0.5rem;
+}
+
+/* History modal */
+.history-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  animation: fadeIn 0.2s ease;
+}
+
+.history-modal {
+  width: 100%;
+  max-width: 720px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem;
+  animation: slideUp 0.2s ease;
+}
+
+.history-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.history-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.history-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 0;
+}
+
+.history-modal-footer {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--glass-border);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .history-actions { display: flex; gap: 0.4rem; flex-shrink: 0; padding-top: 0.2rem; }
 
 /* Usage */

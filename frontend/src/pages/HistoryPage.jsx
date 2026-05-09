@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Trash2, Languages, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter } from 'lucide-react';
+import { Trash2, Languages, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, Maximize2, X } from 'lucide-react';
 import { api } from '../lib/api';
 
 export default function HistoryPage() {
@@ -8,6 +8,7 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [modalItem, setModalItem] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -105,10 +106,13 @@ export default function HistoryPage() {
                   <span className="history-date">{formatDate(item.created_at)}</span>
                 </div>
                 {item._type === 'transcription' ? (
-                  <div className="history-sentences">
-                    {splitSentences(item.text).map((sentence, i) => (
+                  <div className="history-sentences preview" onClick={() => setModalItem(item)}>
+                    {splitSentences(item.text).slice(0, 5).map((sentence, i) => (
                       <p key={i} className="history-sentence">{sentence}</p>
                     ))}
+                    {splitSentences(item.text).length > 5 && (
+                      <p className="history-more">+{splitSentences(item.text).length - 5} more…</p>
+                    )}
                   </div>
                 ) : (
                   <p className="history-text">{item.translated_text || ''}</p>
@@ -135,6 +139,44 @@ export default function HistoryPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {modalItem && (
+        <div className="history-modal-overlay" onClick={() => setModalItem(null)}>
+          <div className="history-modal panel-glass" onClick={(e) => e.stopPropagation()}>
+            <div className="history-modal-header">
+              <div className="history-modal-title">
+                <span className={`badge ${modalItem._type}`}>
+                  {sourceIcon(modalItem._type, modalItem.source_type)} {modalItem._type}
+                </span>
+                <span className="history-date">{formatDate(modalItem.created_at)}</span>
+              </div>
+              <button className="icon-btn" onClick={() => setModalItem(null)} title="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="history-modal-body">
+              {modalItem._type === 'transcription' ? (
+                <div className="history-sentences">
+                  {splitSentences(modalItem.text).map((sentence, i) => (
+                    <p key={i} className="history-sentence">{sentence}</p>
+                  ))}
+                </div>
+              ) : (
+                <p className="history-text">{modalItem.translated_text || ''}</p>
+              )}
+            </div>
+            <div className="history-modal-footer">
+              <span className="lang-tag">
+                {modalItem.language || modalItem.source_language}
+                {modalItem.target_language ? ` → ${modalItem.target_language}` : ''}
+              </span>
+              {modalItem.duration ? <span className="duration-tag"><Clock size={12} /> {formatDuration(modalItem.duration)}</span> : null}
+              {modalItem.word_count ? <span>{modalItem.word_count} words</span> : null}
+              {modalItem.token_count ? <span>{modalItem.token_count} tokens</span> : null}
+            </div>
+          </div>
         </div>
       )}
     </div>
