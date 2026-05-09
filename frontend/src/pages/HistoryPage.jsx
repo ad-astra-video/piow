@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Trash2, Languages, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, Maximize2, X } from 'lucide-react';
+import { Trash2, Languages, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, Maximize2, X, Download } from 'lucide-react';
 import { api } from '../lib/api';
+import { downloadTranscription } from '../lib/download';
 
 export default function HistoryPage() {
   const [items, setItems] = useState([]);
@@ -129,9 +130,20 @@ export default function HistoryPage() {
               </div>
               <div className="history-actions">
                 {item._type === 'transcription' && (
-                  <Link to={`/translate?transcription=${item.id}`} className="icon-btn" title="Translate">
-                    <Languages size={16} />
-                  </Link>
+                  <>
+                    <Link to={`/translate?transcription=${item.id}`} className="icon-btn" title="Translate">
+                      <Languages size={16} />
+                    </Link>
+                    <button className="icon-btn" onClick={() => downloadTranscription(item, 'txt')} title="Download TXT">
+                      <Download size={16} />
+                    </button>
+                    <button className="icon-btn" onClick={() => downloadTranscription(item, 'srt')} title="Download SRT">
+                      SRT
+                    </button>
+                    <button className="icon-btn" onClick={() => downloadTranscription(item, 'vtt')} title="Download VTT">
+                      VTT
+                    </button>
+                  </>
                 )}
                 <button className="icon-btn danger" onClick={() => handleDelete(item)} title="Delete">
                   <Trash2 size={16} />
@@ -175,6 +187,19 @@ export default function HistoryPage() {
               {modalItem.duration ? <span className="duration-tag"><Clock size={12} /> {formatDuration(modalItem.duration)}</span> : null}
               {modalItem.word_count ? <span>{modalItem.word_count} words</span> : null}
               {modalItem.token_count ? <span>{modalItem.token_count} tokens</span> : null}
+              {modalItem._type === 'transcription' && (
+                <div className="history-modal-downloads">
+                  <button className="icon-btn" onClick={() => downloadTranscription(modalItem, 'txt')} title="Download TXT">
+                    <Download size={14} />
+                  </button>
+                  <button className="icon-btn" onClick={() => downloadTranscription(modalItem, 'srt')} title="Download SRT">
+                    SRT
+                  </button>
+                  <button className="icon-btn" onClick={() => downloadTranscription(modalItem, 'vtt')} title="Download VTT">
+                    VTT
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

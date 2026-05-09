@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Mic, Upload, Globe, Languages, Clock, BarChart3, FileAudio, Link as LinkIcon, ArrowRight } from 'lucide-react';
+import { Mic, Upload, Globe, Languages, Clock, BarChart3, FileAudio, Link as LinkIcon, ArrowRight, Download } from 'lucide-react';
 import { api } from '../lib/api';
+import { downloadTranscription } from '../lib/download';
 
 export default function Dashboard() {
   const [recentItems, setRecentItems] = useState([]);
@@ -132,6 +133,19 @@ export default function Dashboard() {
                 <div className="recent-footer">
                   <span className="lang-tag">{item.language || item.source_language} → {item.target_language || '—'}</span>
                   {item.duration ? <span>{formatDuration(item.duration)}</span> : null}
+                  {item._type === 'transcription' && (
+                    <div className="recent-downloads">
+                      <button className="icon-btn-sm" onClick={() => downloadTranscription(item, 'txt')} title="Download TXT">
+                        <Download size={12} />
+                      </button>
+                      <button className="icon-btn-sm" onClick={() => downloadTranscription(item, 'srt')} title="Download SRT">
+                        SRT
+                      </button>
+                      <button className="icon-btn-sm" onClick={() => downloadTranscription(item, 'vtt')} title="Download VTT">
+                        VTT
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
