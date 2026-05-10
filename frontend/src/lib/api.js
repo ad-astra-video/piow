@@ -80,4 +80,10 @@ export const api = {
   getSubscription: () => _fetch('/billing/subscription'),
   getBillingUsage: () => _fetch('/billing/usage'),
   createCheckoutSession: (tier) => _fetch('/billing/create-checkout-session', { method: 'POST', body: JSON.stringify({ tier }) }),
+
+  // Annotations
+  getAnnotations: (transcriptionId) => _fetch(`/transcriptions/${transcriptionId}/annotations`),
+  createAnnotation: (transcriptionId, body) => _fetch(`/transcriptions/${transcriptionId}/annotations`, { method: 'POST', body: JSON.stringify(body) }),
+  updateAnnotation: (annotationId, body) => _fetch(`/annotations/${annotationId}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteAnnotation: (annotationId) => _fetch(`/annotations/${annotationId}`, { method: 'DELETE' }),
 };
