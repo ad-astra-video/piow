@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { Trash2, Languages, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, Maximize2, X, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
-import { api } from '../lib/api';
 import SentenceList from '../components/SentenceList';
 import { splitSentences } from '../lib/download';
 

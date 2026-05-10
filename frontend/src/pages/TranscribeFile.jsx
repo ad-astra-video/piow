@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Upload, FileAudio, Loader2, CheckCircle, AlertCircle, Download, Copy, HelpCircle } from 'lucide-react';
 import { api } from '../lib/api';
 import SentenceList from '../components/SentenceList';
-import { api } from '../lib/api';
 import { splitSentences } from '../lib/download';
 
 const TRANSCRIPTION_MODES = [
