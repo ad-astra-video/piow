@@ -145,6 +145,64 @@ function buildWebVtt(text, durationSeconds) {
   return out.trim();
 }
 
+function formatDurationMs(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hh = Math.floor(totalSeconds / 3600);
+  const mm = Math.floor((totalSeconds % 3600) / 60);
+  const ss = totalSeconds % 60;
+  return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}`;
+}
+
+function buildMd(text, annotationsByIndex = {}, durationSeconds = 0) {
+  const sentences = splitSentences(text);
+  if (sentences.length === 0) return '';
+
+  let out = '# Transcription\n\n';
+  if (durationSeconds > 0) {
+    out += `**Duration:** ${formatDurationMs(durationSeconds * 1000)}\n\n`;
+  }
+
+  sentences.forEach((sentence, i) => {
+    out += `${sentence}\n`;
+    const annotations = annotationsByIndex[i] || [];
+    annotations.forEach((a) => {
+      if (a.type === 'note') {
+        out += `  > **Note:** ${a.content}\n`;
+      } else if (a.type === 'todo') {
+        const checkbox = a.completed ? '[x]' : '[ ]';
+        out += `  - ${checkbox} ${a.content}\n`;
+      }
+    });
+    out += '\n';
+  });
+
+  return out.trim();
+}
+
+function buildAnnotationsMd(annotationsByIndex = {}) {
+  const indices = Object.keys(annotationsByIndex).map(Number).sort((a, b) => a - b);
+  if (indices.length === 0) return '';
+
+  let out = '# Notes & Todos\n\n';
+
+  indices.forEach((i) => {
+    const annotations = annotationsByIndex[i] || [];
+    if (annotations.length === 0) return;
+    out += `## Sentence ${i + 1}\n\n`;
+    annotations.forEach((a) => {
+      if (a.type === 'note') {
+        out += `- **Note:** ${a.content}\n`;
+      } else if (a.type === 'todo') {
+        const checkbox = a.completed ? '[x]' : '[ ]';
+        out += `- ${checkbox} ${a.content}\n`;
+      }
+    });
+    out += '\n';
+  });
+
+  return out.trim();
+}
+
 function triggerDownload(content, filename, mimeType) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -157,7 +215,7 @@ function triggerDownload(content, filename, mimeType) {
   URL.revokeObjectURL(url);
 }
 
-export function downloadTranscription(item, format) {
+export function downloadTranscription(item, format, annotationsByIndex = {}) {
   const baseName = `transcription_${item.id?.slice(0, 8) || 'export'}`;
   const text = item.text || '';
   const duration = item.duration || 0;
@@ -176,6 +234,16 @@ export function downloadTranscription(item, format) {
     case 'vtt': {
       const content = buildWebVtt(text, duration);
       triggerDownload(content, `${baseName}.vtt`, 'text/vtt');
+      break;
+    }
+    case 'md': {
+      const content = buildMd(text, annotationsByIndex, duration);
+      triggerDownload(content, `${baseName}.md`, 'text/markdown');
+      break;
+    }
+    case 'annotations': {
+      const content = buildAnnotationsMd(annotationsByIndex);
+      triggerDownload(content, `${baseName}_annotations.md`, 'text/markdown');
       break;
     }
     default:

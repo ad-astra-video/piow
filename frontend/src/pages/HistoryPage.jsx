@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Trash2, Languages, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, Maximize2, X, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
+import { api } from '../lib/api';
 import SentenceList from '../components/SentenceList';
 import { splitSentences } from '../lib/download';
 
@@ -28,6 +29,23 @@ export default function HistoryPage() {
   };
 
   useEffect(() => { load(); }, [filter]);
+
+  const handleDownload = async (item, format) => {
+    let annotationsByIndex = {};
+    if (item._type === 'transcription' && item.id && (format === 'md' || format === 'annotations')) {
+      try {
+        const res = await api.getAnnotations(item.id);
+        annotationsByIndex = (res.annotations || []).reduce((acc, a) => {
+          acc[a.sentence_index] = acc[a.sentence_index] || [];
+          acc[a.sentence_index].push(a);
+          return acc;
+        }, {});
+      } catch (e) {
+        console.error('Failed to load annotations for download:', e);
+      }
+    }
+    downloadTranscription(item, format, annotationsByIndex);
+  };
 
   const handleDelete = async (item) => {
     if (!confirm('Delete this item?')) return;
@@ -131,14 +149,20 @@ export default function HistoryPage() {
                     <Link to={`/translate?transcription=${item.id}`} className="icon-btn" title="Translate">
                       <Languages size={16} />
                     </Link>
-                    <button className="icon-btn" onClick={() => downloadTranscription(item, 'txt')} title="Download TXT">
+                    <button className="icon-btn" onClick={() => handleDownload(item, 'txt')} title="Download TXT">
                       <Download size={16} />
                     </button>
-                    <button className="icon-btn" onClick={() => downloadTranscription(item, 'srt')} title="Download SRT">
+                    <button className="icon-btn" onClick={() => handleDownload(item, 'srt')} title="Download SRT">
                       SRT
                     </button>
-                    <button className="icon-btn" onClick={() => downloadTranscription(item, 'vtt')} title="Download VTT">
+                    <button className="icon-btn" onClick={() => handleDownload(item, 'vtt')} title="Download VTT">
                       VTT
+                    </button>
+                    <button className="icon-btn" onClick={() => handleDownload(item, 'md')} title="Download Markdown">
+                      MD
+                    </button>
+                    <button className="icon-btn" onClick={() => handleDownload(item, 'annotations')} title="Download Notes & Todos">
+                      Notes
                     </button>
                   </>
                 )}
@@ -185,14 +209,20 @@ export default function HistoryPage() {
               {modalItem.token_count ? <span>{modalItem.token_count} tokens</span> : null}
               {modalItem._type === 'transcription' && (
                 <div className="history-modal-downloads">
-                  <button className="icon-btn" onClick={() => downloadTranscription(modalItem, 'txt')} title="Download TXT">
+                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'txt')} title="Download TXT">
                     <Download size={14} />
                   </button>
-                  <button className="icon-btn" onClick={() => downloadTranscription(modalItem, 'srt')} title="Download SRT">
+                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'srt')} title="Download SRT">
                     SRT
                   </button>
-                  <button className="icon-btn" onClick={() => downloadTranscription(modalItem, 'vtt')} title="Download VTT">
+                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'vtt')} title="Download VTT">
                     VTT
+                  </button>
+                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'md')} title="Download Markdown">
+                    MD
+                  </button>
+                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'annotations')} title="Download Notes & Todos">
+                    Notes
                   </button>
                 </div>
               )}

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Upload, FileAudio, Loader2, CheckCircle, AlertCircle, Download, Copy, HelpCircle } from 'lucide-react';
 import { api } from '../lib/api';
 import SentenceList from '../components/SentenceList';
+import { api } from '../lib/api';
 import { splitSentences } from '../lib/download';
 
 const TRANSCRIPTION_MODES = [
@@ -145,6 +146,23 @@ export default function TranscribeFile() {
     URL.revokeObjectURL(url);
   };
 
+  const handleDownload = async (entry, format) => {
+    let annotationsByIndex = {};
+    if (entry.id && (format === 'md' || format === 'annotations')) {
+      try {
+        const res = await api.getAnnotations(entry.id);
+        annotationsByIndex = (res.annotations || []).reduce((acc, a) => {
+          acc[a.sentence_index] = acc[a.sentence_index] || [];
+          acc[a.sentence_index].push(a);
+          return acc;
+        }, {});
+      } catch (e) {
+        console.error('Failed to load annotations for download:', e);
+      }
+    }
+    downloadTranscription(entry, format, annotationsByIndex);
+  };
+
   return (
     <div className="transcribe-page">
       <h1 className="page-title">Transcribe File</h1>
@@ -273,6 +291,8 @@ export default function TranscribeFile() {
                   <div className="result-actions">
                     <button className="icon-btn" onClick={() => copyText(entry)} title="Copy text"><Copy size={16} /></button>
                     <button className="icon-btn" onClick={() => downloadJson(entry)} title="Download JSON"><Download size={16} /></button>
+                    <button className="icon-btn" onClick={() => handleDownload(entry, 'md')} title="Download Markdown">MD</button>
+                    <button className="icon-btn" onClick={() => handleDownload(entry, 'annotations')} title="Download Notes & Todos">Notes</button>
                   </div>
                 </div>
                 <div className="result-meta">
