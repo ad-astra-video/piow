@@ -101,6 +101,7 @@ class StreamManager {
       textTimestamps: [],
       errorMessage: '',
       elapsedMs: 0,
+      localAnnotations: {},
     };
     this.listeners = new Set();
     this.whipClient = null;
@@ -137,6 +138,69 @@ class StreamManager {
 
   getState() {
     return this.state;
+  }
+
+  // Local annotation methods (for live streams before transcription is persisted)
+  addLocalAnnotation(sentenceIndex, type, content) {
+    const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const annotation = { id, sentence_index: sentenceIndex, type, content, completed: false };
+    const next = { ...this.state.localAnnotations };
+    next[sentenceIndex] = [...(next[sentenceIndex] || []), annotation];
+    this._setState({ localAnnotations: next });
+    return annotation;
+  }
+
+  updateLocalAnnotation(annotationId, updates) {
+    const next = { ...this.state.localAnnotations };
+    for (const idx of Object.keys(next)) {
+      next[idx] = next[idx].map((a) => (a.id === annotationId ? { ...a, ...updates } : a));
+    }
+    this._setState({ localAnnotations: next });
+  }
+
+  deleteLocalAnnotation(annotationId) {
+    const next = { ...this.state.localAnnotations };
+    for (const idx of Object.keys(next)) {
+      next[idx] = next[idx].filter((a) => a.id !== annotationId);
+      if (next[idx].length === 0) delete next[idx];
+    }
+    this._setState({ localAnnotations: next });
+  }
+
+  toggleLocalTodo(annotationId) {
+    const annotation = Object.values(this.state.localAnnotations)
+      .flat()
+      .find((a) => a.id === annotationId);
+    if (annotation) {
+      this.updateLocalAnnotation(annotationId, { completed: !annotation.completed });
+    }
+  }
+
+  async flushLocalAnnotations(transcriptionId) {
+    const allAnnotations = Object.values(this.state.localAnnotations).flat();
+    if (!transcriptionId || allAnnotations.length === 0) return;
+
+    for (const a of allAnnotations) {
+      try {
+        await fetch(`${API_BASE}/transcriptions/${transcriptionId}/annotations`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(this.accessToken ? { 'Authorization': `Bearer ${this.accessToken}` } : {}),
+          },
+          body: JSON.stringify({
+            sentence_index: a.sentence_index,
+            sentence_text: this.state.transcriptEntries[a.sentence_index]?.text || '',
+            type: a.type,
+            content: a.content,
+            completed: a.completed,
+          }),
+        });
+      } catch (e) {
+        console.error('Failed to flush local annotation:', e);
+      }
+    }
+    this._setState({ localAnnotations: {} });
   }
 
   _startTimer() {
@@ -295,7 +359,7 @@ class StreamManager {
   }
 
   async _requestStreamStop(streamId) {
-    if (!streamId) return;
+    if (!streamId) return null;
     const headers = {};
 
     // Refresh token at stop time so long-running streams can stop after token rotation.
@@ -316,6 +380,12 @@ class StreamManager {
     if (!response.ok) {
       const errorBody = await response.text().catch(() => '');
       throw new Error(`Stop request failed (${response.status}): ${errorBody}`);
+    }
+
+    try {
+      return await response.json();
+    } catch (_e) {
+      return null;
     }
   }
 
@@ -612,12 +682,19 @@ class StreamManager {
 
     this._stopTimer();
 
+    let stopResult = null;
     if (activeStreamId) {
       try {
-        await this._requestStreamStop(activeStreamId);
+        stopResult = await this._requestStreamStop(activeStreamId);
       } catch (stopErr) {
         this._setState({ errorMessage: this.state.errorMessage || `Failed to stop stream cleanly: ${stopErr.message}` });
       }
+    }
+
+    // Flush local annotations if we got a transcription_id
+    const transcriptionId = stopResult?.transcription_id;
+    if (transcriptionId) {
+      await this.flushLocalAnnotations(transcriptionId);
     }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN && activeStreamId) {
@@ -666,6 +743,7 @@ class StreamManager {
       partialTranscriptTimestamp: '',
       status: !preserveStatus && wasStarted ? 'Transcription stopped.' : this.state.status,
       elapsedMs: 0,
+      localAnnotations: transcriptionId ? {} : this.state.localAnnotations,
     });
   }
 }

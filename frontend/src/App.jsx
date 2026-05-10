@@ -24,6 +24,7 @@ import {
   History, BarChart3, CreditCard, Menu, X, Radio, MicOff, ArrowRight, AlertCircle, Clock
 } from 'lucide-react';
 import { formatDuration } from './lib/streamManager';
+import Sentence from './components/Sentence';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -74,7 +75,12 @@ function LiveTranscriptSidebar({ onStop }) {
     partialTranscriptTimestamp,
     errorMessage,
     elapsedMs,
+    localAnnotations,
     stop,
+    addLocalAnnotation,
+    updateLocalAnnotation,
+    deleteLocalAnnotation,
+    toggleLocalTodo,
   } = useLiveTranscription();
 
   if (!isStarted) return null;
@@ -108,12 +114,18 @@ function LiveTranscriptSidebar({ onStop }) {
           </div>
         ) : null}
         {transcriptEntries.map((entry, index) => (
-          <article className="live-sidebar-entry" key={`${entry.timestamp}-${index}`}>
-            <div className="entry-row">
-              <time className="entry-timestamp-col">[{entry.timestamp}]</time>
-              <p className="entry-text">{entry.text}</p>
-            </div>
-          </article>
+          <Sentence
+            key={`${entry.timestamp}-${index}`}
+            index={index}
+            text={entry.text}
+            timestamp={entry.timestamp}
+            annotations={localAnnotations[index] || []}
+            readOnly={false}
+            onCreateAnnotation={(idx, text, ts, type, content) => addLocalAnnotation(idx, type, content)}
+            onUpdateAnnotation={(id, updates) => updateLocalAnnotation(id, updates)}
+            onDeleteAnnotation={(id) => deleteLocalAnnotation(id)}
+            onToggleTodo={(id) => toggleLocalTodo(id)}
+          />
         ))}
         {partialTranscript ? (
           <article className="live-sidebar-entry partial-entry">

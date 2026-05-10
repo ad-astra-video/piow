@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock } from 'lucide-react';
+import Sentence from '../components/Sentence';
 import useLiveTranscription from '../hooks/useLiveTranscription';
 import streamManager, { formatDuration } from '../lib/streamManager';
 
@@ -18,8 +19,13 @@ export default function TranscribeStream({ accessToken }) {
     partialTranscriptTimestamp,
     errorMessage,
     elapsedMs,
+    localAnnotations,
     start,
     stop,
+    addLocalAnnotation,
+    updateLocalAnnotation,
+    deleteLocalAnnotation,
+    toggleLocalTodo,
   } = useLiveTranscription();
 
   const scrollRef = useRef(null);
@@ -93,12 +99,18 @@ export default function TranscribeStream({ accessToken }) {
         </div>
       ) : null}
       {transcriptEntries.map((entry, index) => (
-        <article className="transcript-entry" key={`${entry.timestamp}-${index}`}>
-          <div className="entry-row">
-            <time className="entry-timestamp-col">[{entry.timestamp}]</time>
-            <p className="entry-text">{entry.text}</p>
-          </div>
-        </article>
+        <Sentence
+          key={`${entry.timestamp}-${index}`}
+          index={index}
+          text={entry.text}
+          timestamp={entry.timestamp}
+          annotations={localAnnotations[index] || []}
+          readOnly={false}
+          onCreateAnnotation={(idx, text, ts, type, content) => addLocalAnnotation(idx, type, content)}
+          onUpdateAnnotation={(id, updates) => updateLocalAnnotation(id, updates)}
+          onDeleteAnnotation={(id) => deleteLocalAnnotation(id)}
+          onToggleTodo={(id) => toggleLocalTodo(id)}
+        />
       ))}
       {partialTranscript ? (
         <article className="transcript-entry partial-entry">
