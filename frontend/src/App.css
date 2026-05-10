@@ -2524,3 +2524,316 @@ html, body {
     margin-right: 320px;
   }
 }
+
+
+/* ============================================================
+   Sentence Annotations — Notes & Todos
+   ============================================================ */
+
+.sentence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sentence-wrapper {
+  position: relative;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+
+.sentence-wrapper:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sentence-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.sentence-row .entry-timestamp-col {
+  flex-shrink: 0;
+  width: 4.2rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 0.15rem;
+}
+
+.sentence-row .entry-text {
+  flex: 1;
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.sentence-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+  padding-top: 0.15rem;
+}
+
+.sentence-wrapper:hover .sentence-actions {
+  opacity: 1;
+}
+
+.sentence-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sentence-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.sentence-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.25rem 0.4rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.note-indicator {
+  color: #fbbf24;
+}
+
+.note-indicator:hover {
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.todo-indicator {
+  color: #34d399;
+}
+
+.todo-indicator.all-done {
+  color: var(--text-muted);
+}
+
+.todo-indicator:hover {
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.todo-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: rgba(52, 211, 153, 0.2);
+  color: #34d399;
+  padding: 0.05rem 0.3rem;
+  border-radius: 999px;
+}
+
+/* Annotations list */
+.sentence-annotations {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem 0.5rem calc(4.2rem + 0.6rem + 0.5rem);
+  margin-left: 0;
+}
+
+.annotation-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.annotation-note {
+  background: rgba(251, 191, 36, 0.08);
+  border-left: 2px solid rgba(251, 191, 36, 0.4);
+}
+
+.annotation-todo {
+  background: rgba(52, 211, 153, 0.08);
+  border-left: 2px solid rgba(52, 211, 153, 0.4);
+}
+
+.annotation-icon {
+  flex-shrink: 0;
+  color: #fbbf24;
+}
+
+.annotation-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.15rem;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+
+.annotation-check:hover {
+  color: var(--accent-2);
+}
+
+.annotation-content {
+  flex: 1;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.annotation-content.completed {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.annotation-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.annotation-item:hover .annotation-actions {
+  opacity: 1;
+}
+
+.annotation-action-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  transition: color 0.15s;
+}
+
+.annotation-action-btn:hover {
+  color: var(--text);
+}
+
+.annotation-action-btn.danger:hover {
+  color: var(--danger);
+}
+
+.edit-icon {
+  font-size: 0.7rem;
+  text-decoration: underline;
+}
+
+/* Inline editor */
+.sentence-editor {
+  margin: 0.25rem 0.5rem 0.5rem calc(4.2rem + 0.6rem + 0.5rem);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sentence-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.sentence-editor-textarea {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  font-family: inherit;
+}
+
+.sentence-editor-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(91, 124, 250, 0.15);
+}
+
+.sentence-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.editor-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.editor-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.icon-btn-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.icon-btn-sm:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+/* Mobile adjustments */
+@media (max-width: 720px) {
+  .sentence-row .entry-timestamp-col {
+    width: 3.2rem;
+    font-size: 0.7rem;
+  }
+
+  .sentence-actions {
+    opacity: 1;
+  }
+
+  .sentence-annotations,
+  .sentence-editor {
+    padding-left: calc(3.2rem + 0.6rem + 0.5rem);
+  }
+
+  .annotation-actions {
+    opacity: 1;
+  }
+}
