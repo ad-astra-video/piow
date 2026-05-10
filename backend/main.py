@@ -43,6 +43,7 @@ from sessions import (
 )
 from billing import setup_routes as setup_billing_routes
 from user_routes import setup_routes as setup_user_routes
+from annotations import setup_routes as setup_annotations_routes
 
 from supabase_client import async_supabase as supabase
 
@@ -361,6 +362,7 @@ async def init_app():
     setup_sessions_routes(app)
     setup_billing_routes(app)
     setup_user_routes(app)
+    setup_annotations_routes(app)
 
     # Frontend: serve hashed build assets under a known prefix so that
     # missing assets return a real 404, then fall back to index.html for
