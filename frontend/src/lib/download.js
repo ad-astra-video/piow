@@ -1,4 +1,4 @@
-function splitSentences(text) {
+export function splitSentences(text) {
   if (!text) return [];
   const matches = text.match(/[^.!?]+[.!?]+/g);
   if (matches) return matches.map((s) => s.trim()).filter(Boolean);

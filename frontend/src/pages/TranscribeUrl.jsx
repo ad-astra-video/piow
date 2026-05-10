@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link as LinkIcon, Loader2, CheckCircle, AlertCircle, Download, Copy, HelpCircle } from 'lucide-react';
 import { api } from '../lib/api';
+import SentenceList from '../components/SentenceList';
+import { splitSentences } from '../lib/download';
 
 const TRANSCRIPTION_MODES = [
   { id: 'standard', label: 'Standard Text', description: 'Plain transcription output.' },
@@ -258,7 +260,14 @@ export default function TranscribeUrl() {
                   {entry.words ? <span>Word timestamps: {entry.words.length}</span> : null}
                   {entry.speakers ? <span>Speakers: {entry.speakers.length}</span> : null}
                 </div>
-                <div className="result-text">{entry.text}</div>
+                {entry.id ? (
+                  <SentenceList
+                    transcriptionId={entry.id}
+                    sentences={splitSentences(entry.text).map((s) => ({ text: s }))}
+                  />
+                ) : (
+                  <div className="result-text">{entry.text}</div>
+                )}
                 {entry.segments && (
                   <details className="result-segments">
                     <summary>Segments ({entry.segments.length})</summary>

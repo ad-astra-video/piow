@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { Trash2, Languages, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, Maximize2, X, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
+import SentenceList from '../components/SentenceList';
+import { splitSentences } from '../lib/download';
 
 export default function HistoryPage() {
   const [items, setItems] = useState([]);
@@ -51,12 +53,7 @@ export default function HistoryPage() {
   const formatDate = (d) => new Date(d).toLocaleString();
   const formatDuration = (s) => s ? `${Math.floor(s / 60)}m ${s % 60}s` : '';
 
-  const splitSentences = (text) => {
-    if (!text) return [];
-    const matches = text.match(/[^.!?]+[.!?]+/g);
-    if (matches) return matches.map((s) => s.trim()).filter(Boolean);
-    return [text];
-  };
+
 
   const sourceIcon = (type, src) => {
     if (type === 'translation') return <Globe size={14} />;
@@ -170,11 +167,10 @@ export default function HistoryPage() {
             </div>
             <div className="history-modal-body">
               {modalItem._type === 'transcription' ? (
-                <div className="history-sentences">
-                  {splitSentences(modalItem.text).map((sentence, i) => (
-                    <p key={i} className="history-sentence">{sentence}</p>
-                  ))}
-                </div>
+                <SentenceList
+                  transcriptionId={modalItem.id}
+                  sentences={splitSentences(modalItem.text).map((s) => ({ text: s }))}
+                />
               ) : (
                 <p className="history-text">{modalItem.translated_text || ''}</p>
               )}
