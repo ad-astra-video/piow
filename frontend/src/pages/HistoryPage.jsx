@@ -31,7 +31,7 @@ export default function HistoryPage() {
 
   const handleDownload = async (item, format) => {
     let annotationsByIndex = {};
-    if (item._type === 'transcription' && item.id && (format === 'md' || format === 'annotations')) {
+    if (item._type === 'transcription' && item.id && (format === 'md' || format === 'notes-md' || format === 'annotations')) {
       try {
         const res = await api.getAnnotations(item.id);
         annotationsByIndex = (res.annotations || []).reduce((acc, a) => {
@@ -160,7 +160,10 @@ export default function HistoryPage() {
                     <button className="icon-btn" onClick={() => handleDownload(item, 'md')} title="Download Markdown">
                       MD
                     </button>
-                    <button className="icon-btn" onClick={() => handleDownload(item, 'annotations')} title="Download Notes & Todos">
+                    <button className="icon-btn" onClick={() => handleDownload(item, 'notes-md')} title="Download Notes & Todos with Sentences">
+                      Notes+
+                    </button>
+                    <button className="icon-btn" onClick={() => handleDownload(item, 'annotations')} title="Download Notes & Todos Only">
                       Notes
                     </button>
                   </>
@@ -220,7 +223,10 @@ export default function HistoryPage() {
                   <button className="icon-btn" onClick={() => handleDownload(modalItem, 'md')} title="Download Markdown">
                     MD
                   </button>
-                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'annotations')} title="Download Notes & Todos">
+                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'notes-md')} title="Download Notes & Todos with Sentences">
+                    Notes+
+                  </button>
+                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'annotations')} title="Download Notes & Todos Only">
                     Notes
                   </button>
                 </div>

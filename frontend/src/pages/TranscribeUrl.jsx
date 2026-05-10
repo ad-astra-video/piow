@@ -134,7 +134,7 @@ export default function TranscribeUrl() {
 
   const handleDownload = async (entry, format) => {
     let annotationsByIndex = {};
-    if (entry.id && (format === 'md' || format === 'annotations')) {
+    if (entry.id && (format === 'md' || format === 'notes-md' || format === 'annotations')) {
       try {
         const res = await api.getAnnotations(entry.id);
         annotationsByIndex = (res.annotations || []).reduce((acc, a) => {
@@ -268,7 +268,8 @@ export default function TranscribeUrl() {
                     <button className="icon-btn" onClick={() => copyText(entry)} title="Copy text"><Copy size={16} /></button>
                     <button className="icon-btn" onClick={() => downloadJson(entry)} title="Download JSON"><Download size={16} /></button>
                     <button className="icon-btn" onClick={() => handleDownload(entry, 'md')} title="Download Markdown">MD</button>
-                    <button className="icon-btn" onClick={() => handleDownload(entry, 'annotations')} title="Download Notes & Todos">Notes</button>
+                    <button className="icon-btn" onClick={() => handleDownload(entry, 'notes-md')} title="Download Notes & Todos with Sentences">Notes+</button>
+                    <button className="icon-btn" onClick={() => handleDownload(entry, 'annotations')} title="Download Notes & Todos Only">Notes</button>
                   </div>
                 </div>
                 <div className="result-meta">
