@@ -321,6 +321,8 @@ class SessionStore:
         language: str,
         provider_session_data: Any,
         user_id: Optional[str] = None,
+        source_language: Optional[str] = None,
+        target_language: Optional[str] = None,
     ) -> str:
         """
         Create a new stream session with provider data.
@@ -328,14 +330,28 @@ class SessionStore:
         """
         stream_id = str(uuid.uuid4())
         now = time.time()
+        effective_source_language = source_language or language
+        provider_session_payload = dict(provider_session_data or {})
+        metadata = provider_session_payload.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.update({
+            "source_language": effective_source_language,
+            "target_language": target_language,
+        })
+        provider_session_payload["metadata"] = metadata
+        provider_session_payload.setdefault("source_language", effective_source_language)
+        provider_session_payload.setdefault("target_language", target_language)
         stream_data = {
             "id": stream_id,
             "session_id": session_id,
             "language": language,
+            "source_language": effective_source_language,
+            "target_language": target_language,
             "status": "active",
             "created_at": now,
             "updated_at": now,
-            "provider_session": provider_session_data,
+            "provider_session": provider_session_payload,
             "total_audio_bytes": 0,
             "transcription_segments": [],
             "text_timestamps": [],
@@ -359,7 +375,7 @@ class SessionStore:
                 "user_session_id": session_id,
                 "language": language,
                 "status": "active",
-                "provider_session": provider_session_data,
+                "provider_session": provider_session_payload,
                 "total_audio_bytes": 0,
                 "transcription_segments": [],
                 "text_timestamps": [],
@@ -369,7 +385,7 @@ class SessionStore:
 
         # Update cache
         self._stream_sessions_cache[stream_id] = stream_data
-        logger.info(f"Created stream session {stream_id} with provider {provider_session_data.get('provider', 'unknown')}")
+        logger.info(f"Created stream session {stream_id} with provider {provider_session_payload.get('provider', 'unknown')}")
         return stream_id
 
     async def get_stream_session(self, stream_id: str) -> Optional[Dict[str, Any]]:
@@ -676,14 +692,31 @@ class SessionStore:
 
     def _row_to_stream_session(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a Supabase stream_sessions row to in-memory format."""
+        provider_session = row.get("provider_session", {})
+        metadata = provider_session.get("metadata") if isinstance(provider_session, dict) else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        source_language = (
+            row.get("source_language")
+            or (provider_session.get("source_language") if isinstance(provider_session, dict) else None)
+            or metadata.get("source_language")
+            or row.get("language", "en")
+        )
+        target_language = (
+            row.get("target_language")
+            or (provider_session.get("target_language") if isinstance(provider_session, dict) else None)
+            or metadata.get("target_language")
+        )
         return {
             "id": row["id"],
             "session_id": row.get("user_session_id"),
             "language": row.get("language", "en"),
+            "source_language": source_language,
+            "target_language": target_language,
             "status": row.get("status", "active"),
             "created_at": row.get("created_at", time.time()),
             "updated_at": row.get("updated_at", time.time()),
-            "provider_session": row.get("provider_session", {}),
+            "provider_session": provider_session,
             "total_audio_bytes": row.get("total_audio_bytes", 0),
             "transcription_segments": row.get("transcription_segments", []),
             "text_timestamps": row.get("text_timestamps", []),

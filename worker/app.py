@@ -35,6 +35,7 @@ from pytrickle.decorators import (
     on_stream_start,
     on_stream_stop,
     model_loader,
+    param_updater,
 )
 
 # ---------------------------------------------------------------------------
@@ -795,6 +796,61 @@ class LiveTranscriptionWorker:
                 await vllm_client.send_audio(remaining_audio)
             except Exception as exc:
                 logger.warning(f"VLLM send remaining audio after reconnect: {exc}")
+
+    @param_updater
+    async def update_params(self, params: Dict[str, Any]) -> None:
+        """Handle mid-stream parameter updates delivered via the stream update route."""
+        sentence = params.get("translate_sentence")
+        if not isinstance(sentence, str) or not sentence.strip() or processor is None:
+            return
+
+        source_lang = params.get("source_language", "en")
+        target_lang = params.get("target_language", "es")
+        asyncio.create_task(
+            self._translate_sentence_async(sentence.strip(), source_lang, target_lang)
+        )
+
+    async def _translate_sentence_async(
+        self,
+        sentence: str,
+        source_lang: str,
+        target_lang: str,
+    ) -> None:
+        """Translate a sentence and emit the result over the data channel."""
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                granite_transcriber.translate,
+                sentence,
+                source_lang,
+                target_lang,
+            )
+            translated_text = ""
+            if isinstance(result, dict):
+                translated_text = (result.get("translated_text") or "").strip()
+
+            if translated_text and processor is not None:
+                await processor.send_data(json.dumps({
+                    "type": "translation",
+                    "text": translated_text,
+                    "original": sentence,
+                    "source_language": source_lang,
+                    "target_language": target_lang,
+                }))
+                logger.info(
+                    "Translation sent: original='%s...' translated='%s...'",
+                    sentence[:40],
+                    translated_text[:40],
+                )
+        except Exception as exc:
+            logger.error("Sentence translation failed: %s", exc)
+            if processor is not None:
+                await processor.send_data(json.dumps({
+                    "type": "translation.error",
+                    "error": str(exc),
+                    "original": sentence,
+                }))
 
     @on_stream_stop
     async def on_stop(self) -> None:

@@ -37,7 +37,7 @@ class TestWebSocketHandlerStartStream(unittest.IsolatedAsyncioTestCase):
             await relay.stop()
 
     @patch('main.get_or_create_relay', new_callable=AsyncMock)
-    @patch('main.session_store')
+    @patch('sessions.session_store')
     async def test_start_stream_success(self, mock_session_store, mock_get_relay):
         """start_stream looks up session, creates relay, subscribes ws."""
         import main
@@ -63,7 +63,11 @@ class TestWebSocketHandlerStartStream(unittest.IsolatedAsyncioTestCase):
         await main._handle_start_stream(mock_ws, "stream-1")
 
         mock_session_store.get_stream_session.assert_called_once_with("stream-1")
-        mock_get_relay.assert_called_once_with("stream-1", "http://worker:9935/stream/data")
+        mock_get_relay.assert_called_once_with(
+            "stream-1",
+            "http://worker:9935/stream/data",
+            session_store=mock_session_store,
+        )
         mock_relay.add_client.assert_called_once_with(mock_ws)
         mock_ws.send_json.assert_called()
         # Check the status message
@@ -71,7 +75,7 @@ class TestWebSocketHandlerStartStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent_msg["type"], "status")
         self.assertIn("stream-1", sent_msg["text"])
 
-    @patch('main.session_store')
+    @patch('sessions.session_store')
     async def test_start_stream_session_not_found(self, mock_session_store):
         """start_stream sends error when session not found."""
         import main
@@ -86,7 +90,7 @@ class TestWebSocketHandlerStartStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent_msg["type"], "error")
         self.assertIn("not found", sent_msg["text"])
 
-    @patch('main.session_store')
+    @patch('sessions.session_store')
     async def test_start_stream_no_data_url(self, mock_session_store):
         """start_stream sends error when data_url is missing."""
         import main
@@ -108,7 +112,7 @@ class TestWebSocketHandlerStartStream(unittest.IsolatedAsyncioTestCase):
         self.assertIn("No data_url", sent_msg["text"])
 
     @patch('main.get_or_create_relay', new_callable=AsyncMock)
-    @patch('main.session_store')
+    @patch('sessions.session_store')
     async def test_start_stream_relay_creation_failure(self, mock_session_store, mock_get_relay):
         """start_stream sends error when relay creation fails."""
         import main
@@ -129,6 +133,53 @@ class TestWebSocketHandlerStartStream(unittest.IsolatedAsyncioTestCase):
         sent_msg = mock_ws.send_json.call_args[0][0]
         self.assertEqual(sent_msg["type"], "error")
         self.assertIn("Failed to connect", sent_msg["text"])
+
+    @patch('main.get_or_create_relay', new_callable=AsyncMock)
+    @patch('sessions.session_store')
+    async def test_start_stream_configures_translation_callback(self, mock_session_store, mock_get_relay):
+        """start_stream wires a translation callback when the stream has a language pair."""
+        import main
+
+        mock_session_store.get_stream_session = AsyncMock(return_value={
+            "id": "stream-translation",
+            "language": "en",
+            "source_language": "en",
+            "target_language": "es",
+            "provider_session": {
+                "provider": "livepeer",
+                "provider_stream_id": "provider-stream-1",
+                "data_url": "http://worker:9935/stream/data",
+                "whip_url": "http://worker:9935/whip",
+            }
+        })
+
+        mock_provider = MagicMock()
+        mock_provider.update_streaming_session = AsyncMock()
+        mock_relay = MagicMock()
+        mock_relay.add_client = MagicMock()
+        mock_relay.set_translation_callback = MagicMock()
+        mock_get_relay.return_value = mock_relay
+        mock_ws = AsyncMock()
+
+        with patch.object(main.compute_provider_manager, 'get_provider', return_value=mock_provider) as mock_get_provider:
+            await main._handle_start_stream(mock_ws, "stream-translation")
+
+        mock_get_provider.assert_called_once_with("livepeer")
+        translation_callback = mock_relay.set_translation_callback.call_args[0][0]
+        self.assertTrue(callable(translation_callback))
+
+        await translation_callback("Hello world.")
+
+        mock_provider.update_streaming_session.assert_awaited_once_with(
+            provider_stream_id="provider-stream-1",
+            params={
+                "translate_sentence": "Hello world.",
+                "source_language": "en",
+                "target_language": "es",
+            },
+            capability="live-transcription",
+            timeout_seconds=30,
+        )
 
 
 class TestWebSocketHandlerStopStream(unittest.IsolatedAsyncioTestCase):

@@ -11,7 +11,7 @@ import pytest_asyncio
 import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 # Add worker dir to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -147,3 +147,32 @@ async def test_transcribe_returns_500_for_transcriber_errors(cli):
     payload = await resp.json()
     assert payload["status"] == "failed"
     assert payload["error"] == "decoder failure"
+
+
+async def test_translate_sentence_async_emits_stream_message():
+    """Worker stream updates emit translated text over the data channel."""
+    worker = worker_app.LiveTranscriptionWorker()
+    mock_processor = MagicMock()
+    mock_processor.send_data = AsyncMock()
+
+    original_processor = worker_app.processor
+    worker_app.processor = mock_processor
+    try:
+        with patch.object(
+            worker_app.granite_transcriber,
+            "translate",
+            return_value={"translated_text": "Hola mundo"},
+        ):
+            await worker._translate_sentence_async("Hello world", "en", "es")
+    finally:
+        worker_app.processor = original_processor
+
+    mock_processor.send_data.assert_awaited_once()
+    payload = json.loads(mock_processor.send_data.call_args[0][0])
+    assert payload == {
+        "type": "translation",
+        "text": "Hola mundo",
+        "original": "Hello world",
+        "source_language": "en",
+        "target_language": "es",
+    }

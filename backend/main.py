@@ -28,6 +28,7 @@ import contextlib
 import json
 import logging
 import os
+from typing import Any, Awaitable, Callable, Optional
 from aiohttp import web, WSMsgType
 
 # Import setup_routes functions from each module
@@ -186,6 +187,58 @@ async def _handle_start_stream(ws: web.WebSocketResponse, stream_id: str):
             "text": f"Failed to connect to transcription stream: {exc}",
         })
         return
+
+    metadata = provider_session.get("metadata") if isinstance(provider_session, dict) else {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    provider_name = provider_session.get("provider")
+    provider_stream_id = provider_session.get("provider_stream_id")
+    source_language = (
+        stream_session.get("source_language")
+        or provider_session.get("source_language")
+        or metadata.get("source_language")
+        or stream_session.get("language")
+        or "en"
+    )
+    target_language = (
+        stream_session.get("target_language")
+        or provider_session.get("target_language")
+        or metadata.get("target_language")
+    )
+
+    relay.set_translation_callback(None)
+    if target_language and provider_name and provider_stream_id:
+        provider = compute_provider_manager.get_provider(provider_name)
+        update_streaming_session: Optional[Callable[..., Awaitable[Any]]] = (
+            getattr(provider, "update_streaming_session", None) if provider else None
+        )
+        if callable(update_streaming_session):
+            async def _translate_sentence(sentence: str):
+                try:
+                    await update_streaming_session(
+                        provider_stream_id=provider_stream_id,
+                        params={
+                            "translate_sentence": sentence,
+                            "source_language": source_language,
+                            "target_language": target_language,
+                        },
+                        capability="live-transcription",
+                        timeout_seconds=30,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Translation request failed for stream %s: %s",
+                        stream_id,
+                        exc,
+                    )
+
+            relay.set_translation_callback(_translate_sentence)
+        else:
+            logger.warning(
+                "Skipping live translation for stream %s: provider '%s' does not support updates",
+                stream_id,
+                provider_name,
+            )
 
     relay.add_client(ws)
     ws_streams.setdefault(ws, set()).add(stream_id)

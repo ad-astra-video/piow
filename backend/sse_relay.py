@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Dict, Any, Optional, Set, List, Tuple
+from typing import Awaitable, Callable, Dict, Any, Optional, Set, List, Tuple
 
 import aiohttp
 from aiohttp import web
@@ -70,6 +70,14 @@ class SSERelay:
         self._db_text_buffer: str = ""
         self._db_last_ts_ms: int = 0
         self._db_text_buffer_start_ts_ms: int = 0
+        self._translation_callback: Optional[Callable[[str], Awaitable[None]]] = None
+
+    def set_translation_callback(
+        self,
+        callback: Optional[Callable[[str], Awaitable[None]]],
+    ) -> None:
+        """Set or clear the callback used for sentence-level live translation."""
+        self._translation_callback = callback
 
     async def start(self):
         """Start the SSE relay task."""
@@ -323,7 +331,10 @@ class SSERelay:
             msg_type = message.get("type", "") if isinstance(message, dict) else ""
 
             if self._session_store is not None and isinstance(message, dict):
-                self._buffer_transcription_for_db(message)
+                new_sentences = self._buffer_transcription_for_db(message)
+                if new_sentences and self._translation_callback:
+                    for sentence in new_sentences:
+                        asyncio.create_task(self._run_translation_callback(sentence))
 
             # Relay messages to frontend as-is.
             await self._broadcast(message)
@@ -334,6 +345,19 @@ class SSERelay:
                 and isinstance(message.get("words"), list)
             ):
                 self._pending_timestamps.append(message)
+
+    async def _run_translation_callback(self, sentence: str) -> None:
+        """Run the translation callback with logging around callback failures."""
+        if not self._translation_callback:
+            return
+        try:
+            await self._translation_callback(sentence)
+        except Exception as exc:
+            logger.warning(
+                "Translation callback failed for stream %s: %s",
+                self.stream_id,
+                exc,
+            )
 
     @staticmethod
     def _append_text(buffer: str, text: str) -> str:
@@ -362,8 +386,8 @@ class SSERelay:
         remaining = buffer[last_end:].lstrip()
         return sentences, remaining
 
-    def _buffer_transcription_for_db(self, message: Dict[str, Any]):
-        """Build DB sentences using the same delta/final buffering rules as frontend."""
+    def _buffer_transcription_for_db(self, message: Dict[str, Any]) -> List[str]:
+        """Build DB sentences and return newly completed raw sentences."""
         msg_type = message.get("type")
 
         delta_types = {
@@ -389,27 +413,29 @@ class SSERelay:
         ts_for_output = self._db_last_ts_ms
 
         def _process_buffer(buffer: str, start_ts_ms: int, current_ts_ms: int):
-            sentences: List[str] = []
+            formatted_sentences: List[str] = []
+            raw_sentences: List[str] = []
             sentence_start_ts = start_ts_ms or current_ts_ms
             last_end = 0
             for match in re.finditer(r"[.!?]+", buffer):
                 sentence = buffer[last_end:match.end()].strip()
                 if sentence:
-                    sentences.append(f"{self._format_timestamp(sentence_start_ts)} {sentence}")
+                    raw_sentences.append(sentence)
+                    formatted_sentences.append(f"{self._format_timestamp(sentence_start_ts)} {sentence}")
                 last_end = match.end()
                 sentence_start_ts = current_ts_ms
             remaining = buffer[last_end:].lstrip()
             remaining_start_ts = sentence_start_ts if remaining else 0
-            return sentences, remaining, remaining_start_ts
+            return formatted_sentences, raw_sentences, remaining, remaining_start_ts
 
         if msg_type in delta_types:
             delta = message.get("delta")
             if not isinstance(delta, str) or not delta:
-                return
+                return []
             if not self._db_text_buffer:
                 self._db_text_buffer_start_ts_ms = ts_for_output
             self._db_text_buffer = self._append_text(self._db_text_buffer, delta)
-            sentences, remaining, remaining_start_ts = _process_buffer(
+            sentences, raw_sentences, remaining, remaining_start_ts = _process_buffer(
                 self._db_text_buffer,
                 self._db_text_buffer_start_ts_ms,
                 ts_for_output,
@@ -418,20 +444,20 @@ class SSERelay:
                 self._pending_transcription_sentences.extend(sentences)
             self._db_text_buffer = remaining
             self._db_text_buffer_start_ts_ms = remaining_start_ts
-            return
+            return raw_sentences
 
         if msg_type in done_types:
             transcript = message.get("transcript") if isinstance(message.get("transcript"), str) else ""
             if not transcript:
                 transcript = message.get("text") if isinstance(message.get("text"), str) else ""
             if not transcript:
-                return
+                return []
             if not self._db_text_buffer:
                 self._db_text_buffer_start_ts_ms = ts_for_output
             if not self._db_text_buffer.endswith(transcript):
                 self._db_text_buffer = self._append_text(self._db_text_buffer, transcript)
 
-            sentences, remaining, remaining_start_ts = _process_buffer(
+            sentences, raw_sentences, remaining, remaining_start_ts = _process_buffer(
                 self._db_text_buffer,
                 self._db_text_buffer_start_ts_ms,
                 ts_for_output,
@@ -442,21 +468,22 @@ class SSERelay:
                 self._pending_transcription_sentences.append(
                     f"{self._format_timestamp(remaining_start_ts or ts_for_output)} {remaining}"
                 )
+                raw_sentences.append(remaining)
             self._db_text_buffer = ""
             self._db_text_buffer_start_ts_ms = 0
-            return
+            return raw_sentences
 
         if msg_type == "transcription":
             text = message.get("text") if isinstance(message.get("text"), str) else ""
             if not text:
-                return
+                return []
             is_final = bool(message.get("is_final"))
             if not self._db_text_buffer:
                 self._db_text_buffer_start_ts_ms = ts_for_output
 
             # 'transcription' messages carry full cumulative text in current providers.
             self._db_text_buffer = text
-            sentences, remaining, remaining_start_ts = _process_buffer(
+            sentences, raw_sentences, remaining, remaining_start_ts = _process_buffer(
                 self._db_text_buffer,
                 self._db_text_buffer_start_ts_ms,
                 ts_for_output,
@@ -468,6 +495,7 @@ class SSERelay:
                 self._pending_transcription_sentences.append(
                     f"{self._format_timestamp(remaining_start_ts or ts_for_output)} {remaining}"
                 )
+                raw_sentences.append(remaining)
                 self._db_text_buffer = ""
                 self._db_text_buffer_start_ts_ms = 0
             elif is_final:
@@ -476,6 +504,9 @@ class SSERelay:
             else:
                 self._db_text_buffer = remaining
                 self._db_text_buffer_start_ts_ms = remaining_start_ts
+            return raw_sentences
+
+        return []
 
     async def _flush_loop(self):
         """Periodically flush buffered transcription segments to the database."""

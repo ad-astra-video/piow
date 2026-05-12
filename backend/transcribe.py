@@ -630,6 +630,8 @@ async def transcribe_stream(request):
         data = await request.json()
         session_id = data.get('session_id')
         language = data.get('language', 'en')
+        source_language = data.get('source_language') or language
+        target_language = data.get('target_language') or None
 
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -666,6 +668,8 @@ async def transcribe_stream(request):
                     session_id=session_id,
                     language=language,
                     stream_request_id=stream_request_id,
+                    source_language=source_language,
+                    target_language=target_language,
                 )
                 if _is_valid_streaming_session(session_result):
                     logger.info(
@@ -714,6 +718,8 @@ async def transcribe_stream(request):
                 language=language,
                 provider_session_data=session_result,
                 user_id=user_id,
+                source_language=source_language,
+                target_language=target_language,
             )
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=403)

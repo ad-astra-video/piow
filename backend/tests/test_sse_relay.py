@@ -408,6 +408,36 @@ class TestSSERelayHandleEvent(unittest.IsolatedAsyncioTestCase):
 class TestSSERelayPersistence(unittest.IsolatedAsyncioTestCase):
     """Test DB buffering behavior for transcription and timestamp segments."""
 
+    async def test_completed_sentence_triggers_translation_callback(self):
+        from sse_relay import SSERelay
+
+        callback = AsyncMock()
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=AsyncMock(),
+        )
+        relay.set_translation_callback(callback)
+
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {"type": "response.output_text.delta", "delta": "Hello", "timestamp_ms": 5000},
+                "id": None,
+            }
+        )
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {"type": "response.output_text.delta", "delta": " world.", "timestamp_ms": 5000},
+                "id": None,
+            }
+        )
+
+        await asyncio.sleep(0)
+
+        callback.assert_awaited_once_with("Hello world.")
+
     async def test_flush_persists_sentences_from_delta_buffer(self):
         from sse_relay import SSERelay
 

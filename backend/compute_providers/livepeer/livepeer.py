@@ -293,7 +293,8 @@ class LivepeerComputeProvider(BaseComputeProvider):
                 - metadata: Full provider response
         """
         model = kwargs.get("model", "voxtral-realtime")
-        capability = kwargs.get("capability", "live-transcription")
+        target_language = kwargs.get("target_language")
+        capability = kwargs.get("capability", "transcribe-translate" if target_language else "live-transcription")
         timeout_seconds = kwargs.get("timeout_seconds", 120)
         stream_name = "live-transcribe"
         stream_request_id = kwargs.get("stream_request_id")
@@ -328,14 +329,23 @@ class LivepeerComputeProvider(BaseComputeProvider):
             json.dumps(livepeer_header_payload).encode()
         ).decode()
         
+        # Build worker params
+        worker_params = {
+            "language": language,
+            "model": model,
+        }
+        source_language = kwargs.get("source_language")
+        target_language = kwargs.get("target_language")
+        if source_language:
+            worker_params["source_language"] = source_language
+        if target_language:
+            worker_params["target_language"] = target_language
+
         # Build StartRequest body
         start_request = {
             "stream_id": session_id,
             "stream_name": stream_name,
-            "params": json.dumps({
-                "language": language,
-                "model": model
-            })
+            "params": json.dumps(worker_params)
         }
         
         # Add optional rtmp_output if provided
