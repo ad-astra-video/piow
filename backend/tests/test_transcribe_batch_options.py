@@ -50,6 +50,7 @@ def _install_transcribe_stubs():
 
     supabase_module = types.ModuleType("supabase_client")
     setattr(supabase_module, "supabase", MagicMock())
+    setattr(supabase_module, "async_supabase", MagicMock())
     sys.modules["supabase_client"] = supabase_module
 
     provider_manager_module = types.ModuleType("compute_providers.provider_manager")
@@ -88,6 +89,19 @@ def _install_transcribe_stubs():
     setattr(translate_module, "translate_transcription", MagicMock())
     sys.modules["translate"] = translate_module
 
+    sessions_module = types.ModuleType("sessions")
+    setattr(sessions_module, "session_store", MagicMock())
+
+    async def _verify_stream_ownership(_request, _stream_id):
+        return True
+
+    setattr(sessions_module, "_verify_stream_ownership", _verify_stream_ownership)
+    sys.modules["sessions"] = sessions_module
+
+    sse_relay_module = types.ModuleType("sse_relay")
+    setattr(sse_relay_module, "get_relay", MagicMock(return_value=None))
+    sys.modules["sse_relay"] = sse_relay_module
+
 
 class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -109,6 +123,7 @@ class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
             "provider": "test-provider",
         })
         self.transcribe.compute_provider_manager.select_providers = MagicMock(return_value=[self.provider])
+        self.transcribe.compute_provider_manager.get_provider = MagicMock(return_value=self.provider)
         self.store_patch = patch.object(self.transcribe, "_store_transcription_result", AsyncMock(return_value="tx-123"))
         self.store_patch.start()
         self.duration_patch = patch.object(self.transcribe, "_probe_duration_from_bytes", return_value=None)
@@ -117,6 +132,7 @@ class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
         application = web.Application()
         application.router.add_post("/file", self.transcribe.transcribe_file)
         application.router.add_post("/url", self.transcribe.transcribe_url)
+        application.router.add_put("/stream/{stream_id}/translation", self.transcribe.update_stream_translation)
         self.server = TestServer(application)
         self.client = TestClient(self.server)
         await self.client.start_server()
@@ -143,6 +159,69 @@ class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(call.kwargs["with_word_timestamps"])
         self.assertEqual(payload["words"], [{"word": "hello", "start": 0.0, "end": 0.5}])
         self.assertEqual(payload["speakers"], [{"speaker": 1, "text": "hello"}])
+
+    async def test_update_stream_translation_registers_relay_callback(self):
+        sessions_module = sys.modules["sessions"]
+        sse_relay_module = sys.modules["sse_relay"]
+
+        sessions_module.session_store.get_stream_session = AsyncMock(return_value={
+            "id": "stream-1",
+            "language": "en",
+            "source_language": "en",
+            "target_language": None,
+            "provider_session": {
+                "provider": "test-provider",
+                "provider_stream_id": "provider-stream-1",
+            },
+        })
+        sessions_module.session_store.update_stream_translation_config = AsyncMock(return_value={
+            "id": "stream-1",
+            "language": "en",
+            "source_language": "en",
+            "target_language": "es",
+            "provider_session": {
+                "provider": "test-provider",
+                "provider_stream_id": "provider-stream-1",
+                "metadata": {
+                    "source_language": "en",
+                    "target_language": "es",
+                },
+            },
+        })
+
+        relay = MagicMock()
+        relay.set_translation_callback = MagicMock()
+        sse_relay_module.get_relay.return_value = relay
+        self.provider.update_streaming_session = AsyncMock()
+
+        response = await self.client.put(
+            "/stream/stream-1/translation",
+            json={"source_language": "en", "target_language": "es"},
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertTrue(payload["translation_enabled"])
+        sessions_module.session_store.update_stream_translation_config.assert_awaited_once_with(
+            stream_id="stream-1",
+            source_language="en",
+            target_language="es",
+        )
+        callback = relay.set_translation_callback.call_args_list[-1][0][0]
+        self.assertTrue(callable(callback))
+
+        await callback("Hello world.")
+
+        self.provider.update_streaming_session.assert_awaited_once_with(
+            provider_stream_id="provider-stream-1",
+            params={
+                "translate_sentence": "Hello world.",
+                "source_language": "en",
+                "target_language": "es",
+            },
+            capability="live-transcription",
+            timeout_seconds=30,
+        )
 
     async def test_transcribe_url_forwards_speaker_and_timestamp_flags(self):
         with patch.object(

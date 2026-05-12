@@ -16,7 +16,7 @@ import aiohttp
 import logging
 import uuid
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Awaitable, Callable
 import time
 from typing import Any as TypingAny
 
@@ -45,6 +45,16 @@ class _SupabaseProxy:
 
 
 supabase = _SupabaseProxy()
+
+
+def _build_compute_provider_manager():
+    """Build a provider manager with the configured provider definitions."""
+    from compute_providers.provider_manager import ComputeProviderManager
+    from compute_providers.provider_definitions import PROVIDER_DEFINITIONS
+
+    provider_manager = ComputeProviderManager()
+    provider_manager.register_providers_from_definitions(PROVIDER_DEFINITIONS)
+    return provider_manager
 
 
 class SessionStore:
@@ -482,6 +492,47 @@ class SessionStore:
                         stream_id,
                         e,
                     )
+
+    async def update_stream_translation_config(
+        self,
+        stream_id: str,
+        source_language: str,
+        target_language: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Persist live translation configuration on the stream session."""
+        stream_session = self._stream_sessions_cache.get(stream_id) or await self.get_stream_session(stream_id)
+        if not stream_session:
+            return None
+
+        now = time.time()
+        provider_session = dict(stream_session.get("provider_session") or {})
+        metadata = provider_session.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        metadata.update({
+            "source_language": source_language,
+            "target_language": target_language,
+        })
+        provider_session["metadata"] = metadata
+        provider_session["source_language"] = source_language
+        provider_session["target_language"] = target_language
+
+        stream_session["source_language"] = source_language
+        stream_session["target_language"] = target_language
+        stream_session["provider_session"] = provider_session
+        stream_session["updated_at"] = now
+        self._stream_sessions_cache[stream_id] = stream_session
+
+        try:
+            await supabase.table("stream_sessions").update({
+                "provider_session": provider_session,
+                "updated_at": "now()",
+            }).eq("id", stream_id).execute()
+        except Exception as e:
+            logger.warning("Failed to persist stream translation config for %s: %s", stream_id, e)
+
+        return stream_session
 
     async def close_stream_session(self, stream_id: str, final_text: str = ""):
         """Close a stream session."""
@@ -1138,13 +1189,7 @@ async def create_stream_session(request):
         if not await _verify_session_ownership(request, session_id):
             return web.json_response({"error": "Access denied: session does not belong to authenticated user"}, status=403)
 
-        # Import provider manager here to avoid circular imports
-        from compute_providers.provider_manager import ComputeProviderManager
-        from compute_providers.provider_definitions import PROVIDER_DEFINITIONS
-
-        # Initialize provider manager
-        provider_manager = ComputeProviderManager()
-        provider_manager.register_providers_from_definitions(PROVIDER_DEFINITIONS)
+        provider_manager = _build_compute_provider_manager()
 
         def _is_valid_streaming_session(session_result):
             """Check if a provider returned a usable streaming session with a WHIP URL."""
@@ -1284,19 +1329,57 @@ async def update_stream_session(request):
         if not await _verify_stream_ownership(request, stream_id):
             return web.json_response({"error": "Access denied"}, status=403)
 
-        # Get provider URLs
-        provider_urls = await session_store.get_provider_urls(stream_id)
+        stream_session = await session_store.get_stream_session(stream_id)
+        provider_session = (stream_session or {}).get("provider_session") or {}
+        provider_name = provider_session.get("provider")
+        provider_stream_id = provider_session.get("provider_stream_id")
+        update_payload = {
+            "audio_bytes": audio_bytes,
+            "transcription_segment": transcription_segment,
+        }
 
-        # If provider has an update_url, send the update there
-        if provider_urls and provider_urls.get("update_url"):
-            import aiohttp
+        provider_urls = await session_store.get_provider_urls(stream_id)
+        provider_update_url = (provider_urls or {}).get("update_url")
+
+        if provider_name and provider_stream_id:
+            provider_manager = _build_compute_provider_manager()
+            provider = provider_manager.get_provider(provider_name)
+            update_streaming_session: Optional[Callable[..., Awaitable[Any]]] = (
+                getattr(provider, "update_streaming_session", None) if provider else None
+            )
+
+            if callable(update_streaming_session):
+                try:
+                    await update_streaming_session(
+                        provider_stream_id=provider_stream_id,
+                        params=update_payload,
+                        capability="live-transcription",
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Provider update failed for stream %s via provider '%s': %s",
+                        stream_id,
+                        provider_name,
+                        exc,
+                    )
+            elif provider_update_url:
+                async with aiohttp.ClientSession() as http_session:
+                    async with http_session.post(
+                        provider_update_url,
+                        json={
+                            "provider_stream_id": provider_stream_id,
+                            **update_payload,
+                        }
+                    ) as response:
+                        if response.status != 200:
+                            logger.warning(f"Provider update returned status {response.status}")
+        elif provider_update_url:
             async with aiohttp.ClientSession() as http_session:
                 async with http_session.post(
-                    provider_urls["update_url"],
+                    provider_update_url,
                     json={
-                        "provider_stream_id": provider_urls.get("provider_stream_id"),
-                        "audio_bytes": audio_bytes,
-                        "transcription_segment": transcription_segment
+                        "provider_stream_id": provider_stream_id,
+                        **update_payload,
                     }
                 ) as response:
                     if response.status != 200:

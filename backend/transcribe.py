@@ -17,7 +17,7 @@ import re
 import time
 import uuid
 import json
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import urlparse
 
 try:
@@ -124,6 +124,7 @@ def setup_routes(app):
     app.router.add_post('/api/v1/transcribe/file', transcribe_file)
     app.router.add_post('/api/v1/transcribe/url', transcribe_url)
     app.router.add_post('/api/v1/transcribe/stream', transcribe_stream)
+    app.router.add_put('/api/v1/transcribe/stream/{stream_id}/translation', update_stream_translation)
     app.router.add_post('/api/v1/transcribe/stream/{stream_id}/whip', whip_proxy)
     app.router.add_get('/api/v1/transcriptions', list_transcriptions)
     app.router.add_get('/api/v1/transcriptions/{id}', get_transcription)
@@ -741,6 +742,100 @@ async def transcribe_stream(request):
     except Exception as e:
         logger.error(f"Error in transcribe_stream: {e}")
         return web.json_response({"error": str(e), "status": "error"}, status=500)
+
+
+async def update_stream_translation(request):
+    """Update live translation settings for an active transcription stream."""
+    stream_id = request.match_info.get('stream_id')
+    if not stream_id:
+        return web.json_response({"error": "Stream ID required"}, status=400)
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    from sessions import session_store, _verify_stream_ownership
+    from sse_relay import get_relay
+
+    stream_session = await session_store.get_stream_session(stream_id)
+    if not stream_session:
+        return web.json_response({"error": "Stream session not found"}, status=404)
+
+    if not await _verify_stream_ownership(request, stream_id):
+        return web.json_response({"error": "Access denied"}, status=403)
+
+    source_language = (
+        data.get('source_language')
+        or stream_session.get('source_language')
+        or stream_session.get('language')
+        or 'en'
+    )
+    target_language = data.get('target_language') or None
+
+    updated_session = await session_store.update_stream_translation_config(
+        stream_id=stream_id,
+        source_language=source_language,
+        target_language=target_language,
+    )
+
+    relay = get_relay(stream_id)
+    if relay:
+        relay.set_translation_callback(None)
+
+        provider_session = (updated_session or stream_session).get('provider_session', {})
+        metadata = provider_session.get('metadata') if isinstance(provider_session, dict) else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        provider_name = provider_session.get('provider') if isinstance(provider_session, dict) else None
+        provider_stream_id = provider_session.get('provider_stream_id') if isinstance(provider_session, dict) else None
+        effective_source_language = (
+            (updated_session or stream_session).get('source_language')
+            or (provider_session.get('source_language') if isinstance(provider_session, dict) else None)
+            or metadata.get('source_language')
+            or (updated_session or stream_session).get('language')
+            or 'en'
+        )
+        effective_target_language = (
+            (updated_session or stream_session).get('target_language')
+            or (provider_session.get('target_language') if isinstance(provider_session, dict) else None)
+            or metadata.get('target_language')
+        )
+
+        if effective_target_language and provider_name and provider_stream_id:
+            provider = compute_provider_manager.get_provider(provider_name)
+            update_streaming_session: Optional[Callable[..., Awaitable[Any]]] = (
+                getattr(provider, 'update_streaming_session', None) if provider else None
+            )
+            if callable(update_streaming_session):
+                async def _translate_sentence(sentence: str):
+                    try:
+                        await update_streaming_session(
+                            provider_stream_id=provider_stream_id,
+                            params={
+                                'translate_sentence': sentence,
+                                'source_language': effective_source_language,
+                                'target_language': effective_target_language,
+                            },
+                            capability='live-transcription',
+                            timeout_seconds=30,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            'Translation request failed for stream %s: %s',
+                            stream_id,
+                            exc,
+                        )
+
+                relay.set_translation_callback(_translate_sentence)
+
+    return web.json_response({
+        'stream_id': stream_id,
+        'source_language': source_language,
+        'target_language': target_language,
+        'translation_enabled': bool(target_language),
+        'message': 'Stream translation configuration updated',
+    })
 
 
 @x402_or_subscription(service_type='transcribe_gpu')

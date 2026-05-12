@@ -93,7 +93,26 @@ class ComputeProviderManager:
         if provider_name is None:
             return None
 
-        return self.providers.get(provider_name)
+        provider = self.providers.get(provider_name)
+        if provider is not None:
+            return provider
+
+        normalized_name = provider_name.lower()
+        for registered_name, registered_provider in self.providers.items():
+            if registered_name.lower() == normalized_name:
+                return registered_provider
+            if registered_provider.provider_name.lower() == normalized_name:
+                return registered_provider
+
+        prefix_matches = [
+            registered_provider
+            for registered_name, registered_provider in self.providers.items()
+            if registered_name.split("-", 1)[0].lower() == normalized_name
+        ]
+        if len(prefix_matches) == 1:
+            return prefix_matches[0]
+
+        return None
 
     def select_providers(self, job_type: str, requirements: Dict[str, Any] = None) -> List[BaseComputeProvider]:
         """

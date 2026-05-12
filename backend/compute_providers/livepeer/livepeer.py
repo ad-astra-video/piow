@@ -428,7 +428,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
                     
                     # Return the full provider response in standardized format
                     return {
-                        "provider": "livepeer",
+                        "provider": self.provider_name,
                         "provider_stream_id": provider_data.get("stream_id", session_id),
                         "whip_url": provider_data.get("whip_url", ""),
                         "whep_url": provider_data.get("whep_url", ""),
