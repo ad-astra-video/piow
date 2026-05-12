@@ -4,7 +4,7 @@ import { Trash2, Languages, Mic, Upload, Link as LinkIcon, Globe, Clock, Search,
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
 import SentenceList from '../components/SentenceList';
-import { splitSentences } from '../lib/download';
+import { splitSentences, parseTranscriptSentences } from '../lib/download';
 
 export default function HistoryPage() {
   const [items, setItems] = useState([]);
@@ -195,7 +195,7 @@ export default function HistoryPage() {
               {modalItem._type === 'transcription' ? (
                 <SentenceList
                   transcriptionId={modalItem.id}
-                  sentences={splitSentences(modalItem.text).map((s) => ({ text: s }))}
+                    sentences={parseTranscriptSentences(modalItem.text)}
                 />
               ) : (
                 <p className="history-text">{modalItem.translated_text || ''}</p>

@@ -5,6 +5,11 @@ export function splitSentences(text) {
   return [text];
 }
 
+function normalizeSentenceText(text) {
+  if (!text) return '';
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 function stripTimestamps(text) {
   if (!text) return '';
   return text.replace(/\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*/g, '');
@@ -40,6 +45,11 @@ function parseTimestampToSeconds(ts) {
   return (parseInt(hh, 10) || 0) * 3600 + (parseInt(mm, 10) || 0) * 60 + (parseFloat(ss) || 0);
 }
 
+function normalizeTimestamp(ts) {
+  if (!ts || typeof ts !== 'string') return '';
+  return ts.replace(/^\[|\]$/g, '').trim();
+}
+
 function parseTimestampedSentences(text) {
   if (!text) return [];
   const regex = /\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\]/g;
@@ -54,10 +64,11 @@ function parseTimestampedSentences(text) {
   for (let i = 0; i < matches.length; i++) {
     const startIdx = matches[i].index + matches[i].ts.length;
     const endIdx = i + 1 < matches.length ? matches[i + 1].index : text.length;
-    const sentenceText = text.slice(startIdx, endIdx).trim();
+    const sentenceText = normalizeSentenceText(text.slice(startIdx, endIdx));
     if (sentenceText) {
       sentences.push({
         text: sentenceText,
+        timestamp: normalizeTimestamp(matches[i].ts),
         start: parseTimestampToSeconds(matches[i].ts),
         end: null,
       });
@@ -76,7 +87,19 @@ function buildTimedSentences(text) {
   if (textSentences.length > 0) {
     return textSentences;
   }
-  return splitSentences(stripTimestamps(text)).map((s) => ({ text: s, start: null, end: null }));
+  return splitSentences(stripTimestamps(text)).map((s) => ({
+    text: normalizeSentenceText(s),
+    timestamp: '',
+    start: null,
+    end: null,
+  }));
+}
+
+export function parseTranscriptSentences(text) {
+  return buildTimedSentences(text).map((sentence) => ({
+    text: sentence.text,
+    timestamp: sentence.timestamp || '',
+  }));
 }
 
 function buildText(text) {
@@ -155,63 +178,92 @@ function formatDate() {
   });
 }
 
+function countAnnotations(annotationsByIndex = {}) {
+  const allAnnotations = Object.values(annotationsByIndex).flat();
+  return {
+    noteCount: allAnnotations.filter((a) => a.type === 'note').length,
+    todoCount: allAnnotations.filter((a) => a.type === 'todo').length,
+  };
+}
+
+function getSentenceTimestamp(annotation, sentence) {
+  return normalizeTimestamp(annotation?.sentence_timestamp) || normalizeTimestamp(sentence?.timestamp);
+}
+
+function formatAnnotationSuffix(annotation, sentence) {
+  const timestamp = getSentenceTimestamp(annotation, sentence);
+  return timestamp ? ` _(${timestamp})_` : '';
+}
+
+function formatSentenceHeading(index, sentence) {
+  const timestamp = normalizeTimestamp(sentence?.timestamp);
+  return timestamp ? `### Sentence ${index + 1} · ${timestamp}\n\n` : `### Sentence ${index + 1}\n\n`;
+}
+
+function formatSentenceBody(sentence) {
+  return `${sentence?.text || ''}\n\n`;
+}
+
+function buildTranscriptOverview(durationSeconds, annotationsByIndex = {}) {
+  let out = `- Exported: ${formatDate()}\n`;
+  if (durationSeconds > 0) {
+    out += `- Duration: ${formatDurationMs(durationSeconds * 1000)}\n`;
+  }
+
+  const { noteCount, todoCount } = countAnnotations(annotationsByIndex);
+  if (noteCount > 0 || todoCount > 0) {
+    out += `- Notes: ${noteCount}\n`;
+    out += `- Todos: ${todoCount}\n`;
+  }
+
+  return `${out}\n`;
+}
+
+function buildAnnotationSection(title, annotations, sentence, isTodo = false) {
+  if (annotations.length === 0) return '';
+
+  let out = `#### ${title}\n\n`;
+  annotations.forEach((annotation) => {
+    if (isTodo) {
+      const checkbox = annotation.completed ? '[x]' : '[ ]';
+      out += `- ${checkbox} ${annotation.content}${formatAnnotationSuffix(annotation, sentence)}\n`;
+      return;
+    }
+
+    out += `- ${annotation.content}${formatAnnotationSuffix(annotation, sentence)}\n`;
+  });
+
+  return `${out}\n`;
+}
+
 /* ============================================================
    Markdown Export
    ============================================================ */
 
 function buildMd(text, annotationsByIndex = {}, durationSeconds = 0) {
-  const sentences = splitSentences(text);
+  const sentences = parseTranscriptSentences(text);
   if (sentences.length === 0) return '';
 
-  let out = '# Transcription\n\n';
-  out += `*Exported on ${formatDate()}*\n\n`;
-
-  if (durationSeconds > 0) {
-    out += `**Duration:** ${formatDurationMs(durationSeconds * 1000)}\n\n`;
-  }
-
-  const annotatedCount = Object.keys(annotationsByIndex).length;
-  if (annotatedCount > 0) {
-    const noteCount = Object.values(annotationsByIndex).flat().filter((a) => a.type === 'note').length;
-    const todoCount = Object.values(annotationsByIndex).flat().filter((a) => a.type === 'todo').length;
-    out += `**Annotations:** ${noteCount} note${noteCount !== 1 ? 's' : ''}, ${todoCount} todo${todoCount !== 1 ? 's' : ''}\n\n`;
-  }
-
-  out += '---\n\n';
+  let out = '# Transcript Export\n\n';
+  out += buildTranscriptOverview(durationSeconds, annotationsByIndex);
+  out += '## Transcript\n\n';
 
   sentences.forEach((sentence, i) => {
     const annotations = annotationsByIndex[i] || [];
-    const hasAnnotations = annotations.length > 0;
 
-    if (hasAnnotations) {
-      out += `## Sentence ${i + 1}\n\n`;
+    out += formatSentenceHeading(i, sentence);
+    out += formatSentenceBody(sentence);
+
+    if (annotations.length === 0) {
+      out += '\n';
+      return;
     }
 
-    out += `> ${sentence}\n\n`;
+    const notes = annotations.filter((a) => a.type === 'note');
+    const todos = annotations.filter((a) => a.type === 'todo');
 
-    if (hasAnnotations) {
-      const notes = annotations.filter((a) => a.type === 'note');
-      const todos = annotations.filter((a) => a.type === 'todo');
-
-      if (notes.length > 0) {
-        out += '**Notes**\n\n';
-        notes.forEach((a) => {
-          out += `- ${a.content}\n`;
-        });
-        out += '\n';
-      }
-
-      if (todos.length > 0) {
-        out += '**Todos**\n\n';
-        todos.forEach((a) => {
-          const checkbox = a.completed ? '[x]' : '[ ]';
-          out += `- ${checkbox} ${a.content}\n`;
-        });
-        out += '\n';
-      }
-
-      out += '---\n\n';
-    }
+    out += buildAnnotationSection('Notes', notes, sentence);
+    out += buildAnnotationSection('Todos', todos, sentence, true);
   });
 
   return out.trim();
@@ -221,60 +273,34 @@ function buildAnnotationsMd(annotationsByIndex = {}, sentences = [], withSentenc
   const indices = Object.keys(annotationsByIndex).map(Number).sort((a, b) => a - b);
   if (indices.length === 0) return '';
 
-  let out = '# Notes & Todos\n\n';
-  out += `*Exported on ${formatDate()}*\n\n`;
+  let out = '# Transcript Notes\n\n';
+  out += buildTranscriptOverview(0, annotationsByIndex);
 
   const allAnnotations = indices.flatMap((i) => (annotationsByIndex[i] || []).map((a) => ({ ...a, sentenceIndex: i })));
-  const noteCount = allAnnotations.filter((a) => a.type === 'note').length;
-  const todoCount = allAnnotations.filter((a) => a.type === 'todo').length;
-  out += `**Summary:** ${noteCount} note${noteCount !== 1 ? 's' : ''}, ${todoCount} todo${todoCount !== 1 ? 's' : ''}\n\n`;
-  out += '---\n\n';
+  const notes = allAnnotations.filter((a) => a.type === 'note');
+  const todos = allAnnotations.filter((a) => a.type === 'todo');
 
   if (withSentences) {
-    // Group by sentence, show sentence as quote
+    out += '## Transcript\n\n';
     indices.forEach((i) => {
       const annotations = annotationsByIndex[i] || [];
       if (annotations.length === 0) return;
 
-      out += `## Sentence ${i + 1}\n\n`;
+      const sentence = sentences[i] || { text: '', timestamp: '' };
+      out += formatSentenceHeading(i, sentence);
+      out += formatSentenceBody(sentence);
 
-      if (sentences[i]) {
-        out += `> ${sentences[i]}\n\n`;
-      }
-
-      const notes = annotations.filter((a) => a.type === 'note');
-      const todos = annotations.filter((a) => a.type === 'todo');
-
-      if (notes.length > 0) {
-        out += '**Notes**\n\n';
-        notes.forEach((a) => {
-          out += `- ${a.content}\n`;
-        });
-        out += '\n';
-      }
-
-      if (todos.length > 0) {
-        out += '**Todos**\n\n';
-        todos.forEach((a) => {
-          const checkbox = a.completed ? '[x]' : '[ ]';
-          out += `- ${checkbox} ${a.content}\n`;
-        });
-        out += '\n';
-      }
-
-      out += '---\n\n';
+      out += buildAnnotationSection('Notes', annotations.filter((a) => a.type === 'note'), sentence);
+      out += buildAnnotationSection('Todos', annotations.filter((a) => a.type === 'todo'), sentence, true);
     });
   } else {
-    // Flat list without sentence context
-    const notes = allAnnotations.filter((a) => a.type === 'note');
-    const todos = allAnnotations.filter((a) => a.type === 'todo');
-
     if (notes.length > 0) {
       out += '## Notes\n\n';
       notes.forEach((a) => {
-        out += `- ${a.content}\n`;
-        if (sentences[a.sentenceIndex]) {
-          out += `  *Sentence ${a.sentenceIndex + 1}*\n`;
+        const sentence = sentences[a.sentenceIndex] || { text: a.sentence_text || '', timestamp: '' };
+        out += `- ${a.content}${formatAnnotationSuffix(a, sentence)}\n`;
+        if (sentence.text) {
+          out += `  ${sentence.text}\n`;
         }
       });
       out += '\n';
@@ -283,10 +309,11 @@ function buildAnnotationsMd(annotationsByIndex = {}, sentences = [], withSentenc
     if (todos.length > 0) {
       out += '## Todos\n\n';
       todos.forEach((a) => {
+        const sentence = sentences[a.sentenceIndex] || { text: a.sentence_text || '', timestamp: '' };
         const checkbox = a.completed ? '[x]' : '[ ]';
-        out += `- ${checkbox} ${a.content}\n`;
-        if (sentences[a.sentenceIndex]) {
-          out += `  *Sentence ${a.sentenceIndex + 1}*\n`;
+        out += `- ${checkbox} ${a.content}${formatAnnotationSuffix(a, sentence)}\n`;
+        if (sentence.text) {
+          out += `  ${sentence.text}\n`;
         }
       });
       out += '\n';
@@ -312,7 +339,7 @@ export function downloadTranscription(item, format, annotationsByIndex = {}) {
   const baseName = `transcription_${item.id?.slice(0, 8) || 'export'}`;
   const text = item.text || '';
   const duration = item.duration || 0;
-  const sentences = splitSentences(text);
+  const sentences = parseTranscriptSentences(text);
 
   switch (format) {
     case 'txt': {

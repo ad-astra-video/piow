@@ -146,9 +146,16 @@ class StreamManager {
   }
 
   // Local annotation methods (for live streams before transcription is persisted)
-  addLocalAnnotation(sentenceIndex, type, content) {
+  addLocalAnnotation(sentenceIndex, sentenceTimestamp, type, content) {
     const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const annotation = { id, sentence_index: sentenceIndex, type, content, completed: false };
+    const annotation = {
+      id,
+      sentence_index: sentenceIndex,
+      sentence_timestamp: sentenceTimestamp || '',
+      type,
+      content,
+      completed: false,
+    };
     const next = { ...this.state.localAnnotations };
     next[sentenceIndex] = [...(next[sentenceIndex] || []), annotation];
     this._setState({ localAnnotations: next });
@@ -196,6 +203,7 @@ class StreamManager {
           body: JSON.stringify({
             sentence_index: a.sentence_index,
             sentence_text: this.state.transcriptEntries[a.sentence_index]?.text || '',
+            sentence_timestamp: a.sentence_timestamp || this.state.transcriptEntries[a.sentence_index]?.timestamp || '',
             type: a.type,
             content: a.content,
             completed: a.completed,

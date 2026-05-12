@@ -129,7 +129,7 @@ export default function TranscribeStream({ accessToken }) {
           timestamp={entry.timestamp}
           annotations={localAnnotations[index] || []}
           readOnly={false}
-          onCreateAnnotation={(idx, text, ts, type, content) => addLocalAnnotation(idx, type, content)}
+          onCreateAnnotation={(idx, text, ts, type, content) => addLocalAnnotation(idx, ts, type, content)}
           onUpdateAnnotation={(id, updates) => updateLocalAnnotation(id, updates)}
           onDeleteAnnotation={(id) => deleteLocalAnnotation(id)}
           onToggleTodo={(id) => toggleLocalTodo(id)}
