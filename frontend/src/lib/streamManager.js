@@ -102,6 +102,7 @@ class StreamManager {
       errorMessage: '',
       elapsedMs: 0,
       localAnnotations: {},
+      translationEntries: [],
     };
     this.listeners = new Set();
     this.whipClient = null;
@@ -138,6 +139,10 @@ class StreamManager {
 
   getState() {
     return this.state;
+  }
+
+  getStreamId() {
+    return this.streamId;
   }
 
   // Local annotation methods (for live streams before transcription is persisted)
@@ -341,13 +346,18 @@ class StreamManager {
     this._fileMediaElement = null;
   }
 
-  async _createStreamSession() {
+  async _createStreamSession(translationConfig) {
     const headers = { 'Content-Type': 'application/json' };
     if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
+    const body = { language: 'en' };
+    if (translationConfig) {
+      body.source_language = translationConfig.source_language;
+      body.target_language = translationConfig.target_language;
+    }
     const response = await fetch(`${API_BASE}/transcribe/stream`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ language: 'en' }),
+      body: JSON.stringify(body),
     });
     if (!response.ok) {
       const errorBody = await response.text();
@@ -389,7 +399,27 @@ class StreamManager {
     }
   }
 
-  async start(accessToken, sourceConfig) {
+  async updateTranslationConfig(config) {
+    if (!this.streamId) return;
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(this.accessToken ? { 'Authorization': `Bearer ${this.accessToken}` } : {}),
+      };
+      const response = await fetch(`${API_BASE}/transcribe/stream/${this.streamId}/translation`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(config || {}),
+      });
+      if (!response.ok) {
+        console.warn('Failed to update translation config:', response.status);
+      }
+    } catch (err) {
+      console.warn('Translation config update error:', err);
+    }
+  }
+
+  async start(accessToken, sourceConfig, translationConfig = null) {
     if (this.state.isStarted) return;
     this.accessToken = accessToken || null;
 
@@ -407,6 +437,7 @@ class StreamManager {
         partialTranscript: '',
         partialTranscriptTimestamp: '',
         textTimestamps: [],
+        translationEntries: [],
         status: statusLabels[sourceType] || 'Getting user media...',
         elapsedMs: 0,
       });
@@ -417,7 +448,7 @@ class StreamManager {
 
       this._setState({ status: 'Connecting...' });
       let sessionData;
-      try { sessionData = await this._createStreamSession(); }
+      try { sessionData = await this._createStreamSession(translationConfig); }
       catch (sessionError) {
         this._setState({ status: 'Connection failed.', errorMessage: 'Could not create a streaming session.' });
         throw sessionError;
@@ -633,6 +664,20 @@ class StreamManager {
                 (typeof message.text === 'string' && message.text) ||
                 'Timestamp alignment error';
               this._setState({ errorMessage: errorText, status: 'Connected.' });
+            } else if (msgType === 'translation') {
+              const translatedText = typeof message.text === 'string' ? message.text : '';
+              const originalText = typeof message.original === 'string' ? message.original : '';
+              if (translatedText) {
+                this._setState({
+                  translationEntries: [
+                    ...this.state.translationEntries,
+                    { text: translatedText, original: originalText, status: 'done' },
+                  ],
+                });
+              }
+            } else if (msgType === 'translation.error') {
+              const errorText = typeof message.error === 'string' ? message.error : 'Translation failed';
+              this._setState({ errorMessage: errorText });
             } else if (msgType === 'status') {
               this._setState({ status: message.text });
             } else if (msgType === 'error') {
@@ -744,6 +789,7 @@ class StreamManager {
       status: !preserveStatus && wasStarted ? 'Transcription stopped.' : this.state.status,
       elapsedMs: 0,
       localAnnotations: transcriptionId ? {} : this.state.localAnnotations,
+      translationEntries: [],
     });
   }
 }

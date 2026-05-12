@@ -1,8 +1,9 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock } from 'lucide-react';
+import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages } from 'lucide-react';
 import Sentence from '../components/Sentence';
 import useLiveTranscription from '../hooks/useLiveTranscription';
 import streamManager, { formatDuration } from '../lib/streamManager';
+import { api } from '../lib/api';
 
 const SOURCE_META = {
   microphone: { Icon: Mic, label: 'Microphone' },
@@ -40,6 +41,27 @@ export default function TranscribeStream({ accessToken }) {
   const [playerHidden, setPlayerHidden] = useState(false);
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
 
+  // Translation state
+  const [languages, setLanguages] = useState([]);
+  const [translateEnabled, setTranslateEnabled] = useState(false);
+  const [sourceLang, setSourceLang] = useState('en');
+  const [targetLang, setTargetLang] = useState('');
+
+  // Fetch available languages on mount
+  useEffect(() => {
+    api.getLanguages().then(res => setLanguages(res.languages || [])).catch(() => {});
+  }, []);
+
+  // Mid-stream translation config updates
+  useEffect(() => {
+    if (isStarted && streamManager.getStreamId()) {
+      const config = translateEnabled && targetLang
+        ? { source_language: sourceLang, target_language: targetLang }
+        : null;
+      streamManager.updateTranslationConfig(config);
+    }
+  }, [isStarted, sourceLang, targetLang, translateEnabled]);
+
   const handleFileSelect = useCallback((e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -65,14 +87,15 @@ export default function TranscribeStream({ accessToken }) {
   }, [isStarted]);
 
   const handleStart = useCallback(() => {
+    const sourceConfig = { type: audioSource };
     if (audioSource === 'file') {
-      start(accessToken, { type: 'file', mediaElement: mediaRef.current });
-    } else if (audioSource === 'screen') {
-      start(accessToken, { type: 'screen' });
-    } else {
-      start(accessToken, { type: 'microphone' });
+      sourceConfig.mediaElement = mediaRef.current;
     }
-  }, [audioSource, accessToken, start]);
+    const translationConfig = translateEnabled && targetLang
+      ? { source_language: sourceLang, target_language: targetLang }
+      : null;
+    start(accessToken, sourceConfig, translationConfig);
+  }, [audioSource, accessToken, start, translateEnabled, sourceLang, targetLang]);
 
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
@@ -196,6 +219,56 @@ export default function TranscribeStream({ accessToken }) {
                 You will be prompted to choose a tab or window. Enable &quot;Share tab audio&quot; in the picker.
               </p>
             )}
+
+            {/* Translation toggle */}
+            <div className="translation-toggle">
+              {!translateEnabled ? (
+                <label className="toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={translateEnabled}
+                    onChange={(e) => {
+                      setTranslateEnabled(e.target.checked);
+                      if (e.target.checked && !targetLang) {
+                        setTargetLang(languages.find((l) => l.code !== sourceLang)?.code || 'es');
+                      }
+                    }}
+                  />
+                  <Languages size={14} /> Translate
+                </label>
+              ) : (
+                <div className="translation-config-active">
+                  <span className="config-label">Translate:</span>
+                  <div className="form-row lang-pair">
+                    <div>
+                      <label>From</label>
+                      <select value={sourceLang} onChange={(e) => setSourceLang(e.target.value)}>
+                        {languages.map((l) => (
+                          <option key={l.code} value={l.code}>{l.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label>To</label>
+                      <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
+                        {languages.map((l) => (
+                          <option key={l.code} value={l.code}>{l.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <button
+                    className="btn-text"
+                    onClick={() => {
+                      setTranslateEnabled(false);
+                      setTargetLang('');
+                    }}
+                  >
+                    Disable
+                  </button>
+                </div>
+              )}
+            </div>
 
             <div className="hero-actions">
               <button

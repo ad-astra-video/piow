@@ -10,7 +10,7 @@ export default function useLiveTranscription() {
 
   return {
     ...state,
-    start: (accessToken, sourceConfig) => streamManager.start(accessToken, sourceConfig),
+    start: (accessToken, sourceConfig, translationConfig) => streamManager.start(accessToken, sourceConfig, translationConfig),
     stop: (opts) => streamManager.stop(opts),
     addLocalAnnotation: (sentenceIndex, type, content) => streamManager.addLocalAnnotation(sentenceIndex, type, content),
     updateLocalAnnotation: (annotationId, updates) => streamManager.updateLocalAnnotation(annotationId, updates),

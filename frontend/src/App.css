@@ -2837,3 +2837,29 @@ html, body {
     opacity: 1;
   }
 }
+
+/* Translation toggle */
+.translation-toggle { margin: 0.75rem 0; }
+.toggle-label {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.85rem; color: var(--text-secondary);
+  cursor: pointer; user-select: none;
+}
+.toggle-label input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+.translation-config-active {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.65rem 0.75rem;
+  background: rgba(91,124,250,0.06);
+  border: 1px solid rgba(91,124,250,0.15);
+  border-radius: 8px;
+}
+.config-label {
+  font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);
+}
+.btn-text {
+  align-self: flex-start;
+  font-size: 0.75rem; color: var(--text-muted);
+  background: none; border: none; cursor: pointer;
+  padding: 0;
+}
+.btn-text:hover { color: var(--danger); }
