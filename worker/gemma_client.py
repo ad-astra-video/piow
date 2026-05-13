@@ -324,9 +324,16 @@ class GemmaClient:
             f"Audio format: pcm16 mono {int(sample_rate_hz)}Hz. "
             "Analyze only the provided audio chunk and report any actionable updates."
         )
-        encoded_audio = base64.b64encode(
-            self._pcm16_to_wav_bytes(audio_pcm16, sample_rate_hz)
-        ).decode("ascii")
+        wav_bytes = self._pcm16_to_wav_bytes(audio_pcm16, sample_rate_hz)
+        encoded_audio = base64.b64encode(wav_bytes).decode("ascii")
+        logger.info(
+            "Gemma analyze_audio request: mode=%s pcm16_bytes=%d wav_bytes=%d sample_rate_hz=%d prompt_len=%d",
+            mode,
+            len(audio_pcm16),
+            len(wav_bytes),
+            int(sample_rate_hz),
+            len(effective_prompt),
+        )
 
         try:
             data = await self._chat_completion([
@@ -346,6 +353,10 @@ class GemmaClient:
                 },
             ])
             if isinstance(data, dict) and data.get("error"):
+                logger.warning(
+                    "Gemma analyze_audio upstream error: %s",
+                    data.get("error"),
+                )
                 return {
                     "error": data.get("error"),
                     "analysis_text": "",
@@ -356,6 +367,7 @@ class GemmaClient:
 
             analysis_text = self._extract_content(data)
             if self._is_no_update_response(analysis_text):
+                logger.info("Gemma analyze_audio response: suppressed NO_UPDATE")
                 return {
                     "analysis_text": "",
                     "suppressed": True,

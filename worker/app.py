@@ -474,6 +474,7 @@ class LiveTranscriptionWorker:
         self._analysis_pending_audio: bytes = b""
         self._analysis_audio_samples_total: int = 0
         self._analysis_last_run_ts_ms: int = 0
+        self._analysis_audio_request_count: int = 0
 
     def _default_analysis_prompt(self, mode: str) -> str:
         return self._DEFAULT_ANALYSIS_PROMPTS.get(mode, self._DEFAULT_ANALYSIS_PROMPTS["multimodal"])
@@ -808,6 +809,15 @@ class LiveTranscriptionWorker:
         audio_chunk = self._analysis_pending_audio
         self._analysis_pending_audio = b""
         self._analysis_last_run_ts_ms = int(timestamp_ms)
+        logger.info(
+            "Audio analysis trigger: mode=%s final=%s chunk_bytes=%d chunk_ms=%d elapsed_ms=%d timestamp_ms=%d",
+            self.analysis_mode,
+            is_final,
+            len(audio_chunk),
+            chunk_ms,
+            elapsed_ms,
+            timestamp_ms,
+        )
         asyncio.create_task(self._run_live_audio_analysis_async(audio_chunk, int(timestamp_ms)))
 
     async def _run_live_analysis_async(self, text: str, timestamp_ms: Optional[int] = None) -> None:
@@ -864,6 +874,19 @@ class LiveTranscriptionWorker:
         if not self.analysis_enabled or not audio_pcm16 or processor is None:
             return
 
+        self._analysis_audio_request_count += 1
+        request_id = self._analysis_audio_request_count
+        chunk_duration_ms = int((len(audio_pcm16) // 2) * 1000 / 16000)
+        logger.info(
+            "Audio analysis request #%d: mode=%s bytes=%d duration_ms=%d timestamp_ms=%s prompt_len=%d",
+            request_id,
+            self.analysis_mode,
+            len(audio_pcm16),
+            chunk_duration_ms,
+            str(timestamp_ms),
+            len(self.analysis_prompt or ""),
+        )
+
         try:
             result = await gemma_translator.analyze_audio(
                 audio_pcm16=audio_pcm16,
@@ -873,13 +896,24 @@ class LiveTranscriptionWorker:
             )
             analysis_text = ""
             suppressed = False
+            error_text = ""
             if isinstance(result, dict):
                 analysis_text = (result.get("analysis_text") or "").strip()
                 suppressed = bool(result.get("suppressed"))
+                error_text = str(result.get("error") or "").strip()
+            logger.info(
+                "Audio analysis response #%d: text_len=%d suppressed=%s error=%s keys=%s",
+                request_id,
+                len(analysis_text),
+                suppressed,
+                bool(error_text),
+                sorted(list(result.keys())) if isinstance(result, dict) else "non-dict",
+            )
 
             if suppressed:
-                logger.debug(
-                    "Audio-direct analysis suppressed for stream output: mode=%s reason=%s",
+                logger.info(
+                    "Audio-direct analysis suppressed #%d: mode=%s reason=%s",
+                    request_id,
                     self.analysis_mode,
                     result.get("suppression_reason") if isinstance(result, dict) else "unknown",
                 )
@@ -894,12 +928,28 @@ class LiveTranscriptionWorker:
                 if isinstance(timestamp_ms, int):
                     payload["timestamp_ms"] = timestamp_ms
                 await processor.send_data(json.dumps(payload))
+                logger.info(
+                    "Audio analysis emitted #%d: text_len=%d timestamp_ms=%s",
+                    request_id,
+                    len(analysis_text),
+                    str(timestamp_ms),
+                )
             elif processor is not None and isinstance(result, dict) and result.get("error"):
+                logger.warning(
+                    "Audio analysis error #%d: %s",
+                    request_id,
+                    result.get("error"),
+                )
                 await processor.send_data(json.dumps({
                     "type": "analysis.error",
                     "error": result.get("error"),
                     "mode": self.analysis_mode,
                 }))
+            else:
+                logger.warning(
+                    "Audio analysis empty result #%d: no text, no suppression, no error",
+                    request_id,
+                )
         except Exception as exc:
             logger.error("Audio-direct live analysis failed: %s", exc)
             if processor is not None:
