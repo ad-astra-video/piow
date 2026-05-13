@@ -337,7 +337,8 @@ class LivepeerComputeProvider(BaseComputeProvider):
             "live_translation_enabled": bool(kwargs.get("live_translation_enabled", False)),
             "analysis_enabled": bool(kwargs.get("analysis_enabled", False)),
             "analysis_mode": kwargs.get("analysis_mode", "multimodal"),
-            "analysis_audio_chunk_seconds": float(kwargs.get("analysis_audio_chunk_seconds", 1.0)),
+            "analysis_audio_chunk_seconds": float(kwargs.get("analysis_audio_chunk_seconds", 10.0)),
+            "analysis_video_chunk_seconds": float(kwargs.get("analysis_video_chunk_seconds", 10.0)),
             "analysis_video_fps": int(kwargs.get("analysis_video_fps", 3)),
         }
         analysis_prompt = kwargs.get("analysis_prompt")

@@ -126,6 +126,7 @@ class TestTranscribeStreamOptions(unittest.IsolatedAsyncioTestCase):
 
         application = web.Application()
         application.router.add_put("/stream/{stream_id}/translation", self.transcribe.update_stream_translation)
+        application.router.add_put("/stream/{stream_id}/analysis", self.transcribe.update_stream_analysis)
         self.server = TestServer(application)
         self.client = TestClient(self.server)
         await self.client.start_server()
@@ -252,6 +253,77 @@ class TestTranscribeStreamOptions(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.text)
         self.assertEqual(payload["code"], "quota_exceeded")
         self.assertEqual(payload["service_type"], "transcribe_gpu")
+
+    async def test_update_stream_analysis_forwards_audio_video_windows(self):
+        sessions_module = sys.modules["sessions"]
+
+        sessions_module.session_store.get_stream_session = AsyncMock(return_value={
+            "id": "stream-2",
+            "analysis_enabled": True,
+            "analysis_mode": "audio_only",
+            "analysis_audio_chunk_seconds": 10.0,
+            "analysis_video_chunk_seconds": 10.0,
+            "analysis_video_fps": 3,
+            "analysis_prompt": "Summarize risks",
+            "provider_session": {
+                "provider": "test-provider",
+                "provider_stream_id": "provider-stream-2",
+            },
+        })
+        sessions_module.session_store.update_stream_analysis_config = AsyncMock(return_value={
+            "id": "stream-2",
+            "analysis_enabled": True,
+            "analysis_mode": "video_only",
+            "analysis_audio_chunk_seconds": 1.0,
+            "analysis_video_chunk_seconds": 30.0,
+            "analysis_video_fps": 5,
+            "analysis_prompt": "Focus on visual safety issues",
+            "provider_session": {
+                "provider": "test-provider",
+                "provider_stream_id": "provider-stream-2",
+            },
+        })
+
+        response = await self.client.put(
+            "/stream/stream-2/analysis",
+            json={
+                "analysis_enabled": True,
+                "analysis_mode": "video_only",
+                "analysis_audio_chunk_seconds": 0.2,
+                "analysis_video_chunk_seconds": 99,
+                "analysis_video_fps": 5,
+                "analysis_prompt": "Focus on visual safety issues",
+            },
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertEqual(payload["analysis_audio_chunk_seconds"], 1.0)
+        self.assertEqual(payload["analysis_video_chunk_seconds"], 30.0)
+
+        sessions_module.session_store.update_stream_analysis_config.assert_awaited_once_with(
+            stream_id="stream-2",
+            analysis_enabled=True,
+            analysis_mode="video_only",
+            analysis_audio_chunk_seconds=1.0,
+            analysis_video_chunk_seconds=30.0,
+            analysis_video_fps=5,
+            analysis_prompt="Focus on visual safety issues",
+        )
+
+        self.provider.update_streaming_session.assert_awaited_once_with(
+            provider_stream_id="provider-stream-2",
+            params={
+                "analysis_enabled": True,
+                "analysis_mode": "video_only",
+                "analysis_audio_chunk_seconds": 1.0,
+                "analysis_video_chunk_seconds": 30.0,
+                "analysis_video_fps": 5,
+                "analysis_prompt": "Focus on visual safety issues",
+            },
+            capability="live-transcription",
+            timeout_seconds=30,
+        )
 
 
 if __name__ == "__main__":

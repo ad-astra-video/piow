@@ -46,6 +46,9 @@ compute_provider_manager = ComputeProviderManager()
 compute_provider_manager.register_providers_from_definitions(PROVIDER_DEFINITIONS)
 
 MAX_REMOTE_AUDIO_BYTES = 225 * 1024 * 1024  # ~2 hours of 16 kHz mono 16-bit audio
+ANALYSIS_WINDOW_MIN_SECONDS = 1.0
+ANALYSIS_WINDOW_MAX_SECONDS = 30.0
+ANALYSIS_WINDOW_DEFAULT_SECONDS = 10.0
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -59,6 +62,15 @@ def _coerce_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {'1', 'true', 'yes', 'on'}
     return bool(value)
+
+
+def _clamp_analysis_window_seconds(value: Any, default: float = ANALYSIS_WINDOW_DEFAULT_SECONDS) -> float:
+    """Parse and clamp analysis window values into [1, 30] seconds."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = float(default)
+    return max(ANALYSIS_WINDOW_MIN_SECONDS, min(ANALYSIS_WINDOW_MAX_SECONDS, numeric))
 
 
 def _infer_audio_mime_type(file_path):
@@ -638,7 +650,12 @@ async def transcribe_stream(request):
             target_language = None
         analysis_enabled = bool(data.get('analysis_enabled', False))
         analysis_mode = str(data.get('analysis_mode') or 'multimodal')
-        analysis_audio_chunk_seconds = float(data.get('analysis_audio_chunk_seconds') or 1.0)
+        analysis_audio_chunk_seconds = _clamp_analysis_window_seconds(
+            data.get('analysis_audio_chunk_seconds', ANALYSIS_WINDOW_DEFAULT_SECONDS)
+        )
+        analysis_video_chunk_seconds = _clamp_analysis_window_seconds(
+            data.get('analysis_video_chunk_seconds', ANALYSIS_WINDOW_DEFAULT_SECONDS)
+        )
         analysis_video_fps = int(data.get('analysis_video_fps') or 3)
         analysis_prompt = data.get('analysis_prompt')
         if analysis_prompt is not None:
@@ -733,6 +750,7 @@ async def transcribe_stream(request):
                     analysis_enabled=analysis_enabled,
                     analysis_mode=analysis_mode,
                     analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
+                    analysis_video_chunk_seconds=analysis_video_chunk_seconds,
                     analysis_video_fps=analysis_video_fps,
                     analysis_prompt=analysis_prompt,
                 )
@@ -790,6 +808,7 @@ async def transcribe_stream(request):
                 analysis_enabled=analysis_enabled,
                 analysis_mode=analysis_mode,
                 analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
+                analysis_video_chunk_seconds=analysis_video_chunk_seconds,
                 analysis_video_fps=analysis_video_fps,
                 analysis_prompt=analysis_prompt,
             )
@@ -813,6 +832,7 @@ async def transcribe_stream(request):
             "analysis_enabled": analysis_enabled,
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
+            "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
         })
@@ -973,11 +993,18 @@ async def update_stream_analysis(request):
         return web.json_response({"error": "Invalid analysis_mode"}, status=400)
 
     try:
-        analysis_audio_chunk_seconds = float(
-            data.get('analysis_audio_chunk_seconds', stream_session.get('analysis_audio_chunk_seconds', 1.0))
+        analysis_audio_chunk_seconds = _clamp_analysis_window_seconds(
+            data.get('analysis_audio_chunk_seconds', stream_session.get('analysis_audio_chunk_seconds', ANALYSIS_WINDOW_DEFAULT_SECONDS))
         )
-    except (TypeError, ValueError):
+    except Exception:
         return web.json_response({"error": "Invalid analysis_audio_chunk_seconds"}, status=400)
+
+    try:
+        analysis_video_chunk_seconds = _clamp_analysis_window_seconds(
+            data.get('analysis_video_chunk_seconds', stream_session.get('analysis_video_chunk_seconds', ANALYSIS_WINDOW_DEFAULT_SECONDS))
+        )
+    except Exception:
+        return web.json_response({"error": "Invalid analysis_video_chunk_seconds"}, status=400)
 
     try:
         analysis_video_fps = int(data.get('analysis_video_fps', stream_session.get('analysis_video_fps', 3)))
@@ -995,6 +1022,7 @@ async def update_stream_analysis(request):
         analysis_enabled=analysis_enabled,
         analysis_mode=analysis_mode,
         analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
+        analysis_video_chunk_seconds=analysis_video_chunk_seconds,
         analysis_video_fps=analysis_video_fps,
         analysis_prompt=analysis_prompt,
     )
@@ -1016,6 +1044,7 @@ async def update_stream_analysis(request):
                         'analysis_enabled': analysis_enabled,
                         'analysis_mode': analysis_mode,
                         'analysis_audio_chunk_seconds': analysis_audio_chunk_seconds,
+                        'analysis_video_chunk_seconds': analysis_video_chunk_seconds,
                         'analysis_video_fps': analysis_video_fps,
                         'analysis_prompt': analysis_prompt,
                     },
@@ -1034,6 +1063,7 @@ async def update_stream_analysis(request):
         'analysis_enabled': analysis_enabled,
         'analysis_mode': analysis_mode,
         'analysis_audio_chunk_seconds': analysis_audio_chunk_seconds,
+        'analysis_video_chunk_seconds': analysis_video_chunk_seconds,
         'analysis_video_fps': analysis_video_fps,
         'analysis_prompt': analysis_prompt,
         'message': 'Stream analysis configuration updated',
