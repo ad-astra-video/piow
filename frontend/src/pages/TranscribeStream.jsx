@@ -401,22 +401,24 @@ export default function TranscribeStream({ accessToken }) {
                   <div className="analysis-mode-options">
                     {['multimodal', 'audio_only', 'video_only'].map((mode) => {
                       const disabled = !isModeSupported(mode, runtimeTrackAvailability);
+                      const reason = modeDisabledReason(mode);
                       return (
-                        <label key={mode} className={`analysis-mode-option ${disabled ? 'disabled' : ''}`}>
-                          <input
-                            type="radio"
-                            name="analysis_mode"
-                            value={mode}
-                            checked={analysisMode === mode}
-                            disabled={disabled}
-                            onChange={(e) => setAnalysisMode(e.target.value)}
-                          />
-                          <span>{getAnalysisModeLabel(mode)}</span>
-                          {disabled && <small>{modeDisabledReason(mode)}</small>}
-                        </label>
+                        <button
+                          key={mode}
+                          type="button"
+                          className={`analysis-mode-option ${analysisMode === mode ? 'active' : ''}`}
+                          disabled={disabled}
+                          title={disabled ? reason : `Switch to ${getAnalysisModeLabel(mode)}`}
+                          onClick={() => setAnalysisMode(mode)}
+                        >
+                          {getAnalysisModeLabel(mode)}
+                        </button>
                       );
                     })}
                   </div>
+                  {!isModeSupported(analysisMode, runtimeTrackAvailability) && (
+                    <small className="analysis-mode-help">{modeDisabledReason(analysisMode)}</small>
+                  )}
                   <div className="form-row analysis-prompt-row">
                     <label htmlFor="analysis_prompt">Prompt</label>
                     <textarea
