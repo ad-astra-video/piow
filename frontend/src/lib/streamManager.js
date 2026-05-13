@@ -106,6 +106,7 @@ class StreamManager {
       analysisEntries: [],
       analysisEnabled: false,
       analysisMode: 'multimodal',
+      quotaError: null,
       hasAudioTrack: false,
       hasVideoTrack: false,
     };
@@ -410,8 +411,26 @@ class StreamManager {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Stream session creation failed (${response.status}): ${errorBody}`);
+      let errorPayload = null;
+      let errorBody = '';
+      try {
+        errorPayload = await response.json();
+      } catch (_jsonErr) {
+        errorBody = await response.text().catch(() => '');
+      }
+
+      const err = new Error(
+        (errorPayload && (errorPayload.error || errorPayload.message))
+          || `Stream session creation failed (${response.status})`
+      );
+      err.status = response.status;
+      err.payload = errorPayload;
+      err.code = errorPayload?.code;
+      err.serviceType = errorPayload?.service_type;
+      err.tier = errorPayload?.tier;
+      err.quota = errorPayload?.quota;
+      err.errorBody = errorBody;
+      throw err;
     }
     const data = await response.json();
     if (!data.stream_id) throw new Error('Stream session response missing stream_id');
@@ -511,6 +530,7 @@ class StreamManager {
 
       this._setState({
         errorMessage: '',
+        quotaError: null,
         transcriptEntries: [],
         partialTranscript: '',
         partialTranscriptTimestamp: '',
@@ -550,7 +570,23 @@ class StreamManager {
       let sessionData;
       try { sessionData = await this._createStreamSession(translationConfig, analysisConfig); }
       catch (sessionError) {
-        this._setState({ status: 'Connection failed.', errorMessage: 'Could not create a streaming session.' });
+        const isQuotaExceeded = sessionError?.status === 402 && sessionError?.code === 'quota_exceeded';
+        this._setState({
+          status: 'Connection failed.',
+          errorMessage: isQuotaExceeded
+            ? 'Quota exceeded for your current plan.'
+            : 'Could not create a streaming session.',
+          quotaError: isQuotaExceeded
+            ? {
+                code: sessionError.code,
+                status: sessionError.status,
+                serviceType: sessionError.serviceType,
+                tier: sessionError.tier,
+                quota: sessionError.quota || null,
+                message: sessionError.message || 'Quota exceeded for your current plan.',
+              }
+            : null,
+        });
         throw sessionError;
       }
 
@@ -920,9 +956,14 @@ class StreamManager {
       localAnnotations: transcriptionId ? {} : this.state.localAnnotations,
       translationEntries: [],
       analysisEntries: [],
+      quotaError: null,
       hasAudioTrack: false,
       hasVideoTrack: false,
     });
+  }
+
+  dismissQuotaError() {
+    this._setState({ quotaError: null });
   }
 }
 

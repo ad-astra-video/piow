@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages, Brain } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages, Brain, X } from 'lucide-react';
 import Sentence from '../components/Sentence';
 import useLiveTranscription from '../hooks/useLiveTranscription';
 import streamManager, { formatDuration } from '../lib/streamManager';
@@ -42,6 +43,7 @@ export default function TranscribeStream({ accessToken }) {
     partialTranscript,
     partialTranscriptTimestamp,
     errorMessage,
+    quotaError,
     elapsedMs,
     localAnnotations,
     analysisEntries,
@@ -49,6 +51,7 @@ export default function TranscribeStream({ accessToken }) {
     hasVideoTrack,
     start,
     stop,
+    dismissQuotaError,
     addLocalAnnotation,
     updateLocalAnnotation,
     deleteLocalAnnotation,
@@ -56,6 +59,7 @@ export default function TranscribeStream({ accessToken }) {
   } = useLiveTranscription();
 
   const scrollRef = useRef(null);
+  const navigate = useNavigate();
   const [autoScroll, setAutoScroll] = useState(true);
 
   const [audioSource, setAudioSource] = useState('microphone');
@@ -599,6 +603,50 @@ export default function TranscribeStream({ accessToken }) {
         )}
 
       </div>
+
+      {quotaError?.code === 'quota_exceeded' && (
+        <div className="quota-modal-overlay" onClick={() => dismissQuotaError()}>
+          <div className="quota-modal panel-glass" onClick={(e) => e.stopPropagation()}>
+            <div className="quota-modal-header">
+              <h2>Stream Limit Reached</h2>
+              <button className="icon-btn" onClick={() => dismissQuotaError()} title="Close">
+                <X size={14} />
+              </button>
+            </div>
+            <p className="quota-modal-message">
+              Your current plan has reached its live streaming quota. Upgrade to a higher tier to start streaming again.
+            </p>
+            <div className="quota-modal-meta">
+              <span>Tier: <strong>{quotaError.tier || 'free'}</strong></span>
+              {quotaError.quota?.used != null && quotaError.quota?.limit != null && (
+                <span>
+                  Usage: <strong>{quotaError.quota.used}</strong> / <strong>{quotaError.quota.limit === -1 ? 'infinite' : quotaError.quota.limit}</strong>
+                </span>
+              )}
+            </div>
+            <div className="quota-modal-actions">
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  dismissQuotaError();
+                  navigate('/usage');
+                }}
+              >
+                View Usage
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => {
+                  dismissQuotaError();
+                  navigate('/billing/plans');
+                }}
+              >
+                Upgrade Plan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
