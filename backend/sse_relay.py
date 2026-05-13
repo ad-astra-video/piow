@@ -40,6 +40,8 @@ class SSERelay:
 
     # How often (seconds) to flush buffered transcription text to the DB
     FLUSH_INTERVAL_SECONDS = 10
+    # Max time to wait for in-flight translation work during stream stop.
+    TRANSLATION_STOP_WAIT_TIMEOUT_SECONDS = 15
 
     def __init__(self, data_url: str, stream_id: str, session_store=None):
         """
@@ -71,6 +73,7 @@ class SSERelay:
         self._db_last_ts_ms: int = 0
         self._db_text_buffer_start_ts_ms: int = 0
         self._translation_callback: Optional[Callable[[str], Awaitable[None]]] = None
+        self._pending_translation_tasks: Set[asyncio.Task] = set()
 
     def set_translation_callback(
         self,
@@ -111,13 +114,66 @@ class SSERelay:
                 await self._flush_task
             except asyncio.CancelledError:
                 pass
+
+        final_fragment = self._finalize_buffered_fragment_for_stop()
+        if final_fragment and self._translation_callback:
+            self._track_translation_task(
+                self._run_translation_callback(final_fragment),
+                task_name=f"sse-translate-final-fragment-{self.stream_id}",
+            )
+
         # Final flush of any remaining buffered segments
         await self._flush_pending_segments()
+        await self.wait_for_pending_translation_tasks(
+            timeout_seconds=self.TRANSLATION_STOP_WAIT_TIMEOUT_SECONDS
+        )
         if self._http_session and not self._http_session.closed:
             await self._http_session.close()
             self._http_session = None
         self.clients.clear()
         logger.info(f"Stopped SSE relay for stream {self.stream_id}")
+
+    def _track_translation_task(self, coroutine: Awaitable[None], *, task_name: str) -> None:
+        """Schedule translation-related background work and track it for graceful stop."""
+        task = asyncio.create_task(coroutine, name=task_name)
+        self._pending_translation_tasks.add(task)
+        task.add_done_callback(self._pending_translation_tasks.discard)
+
+    async def wait_for_pending_translation_tasks(self, timeout_seconds: float) -> bool:
+        """Wait for in-flight translation-related tasks to complete before stopping."""
+        tasks = list(self._pending_translation_tasks)
+        if not tasks:
+            return True
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=timeout_seconds,
+            )
+            return True
+        except asyncio.TimeoutError:
+            pending_count = sum(1 for task in tasks if not task.done())
+            logger.warning(
+                "Timed out waiting for %s translation tasks on stream %s after %.1fs",
+                pending_count,
+                self.stream_id,
+                timeout_seconds,
+            )
+            return False
+
+    def _finalize_buffered_fragment_for_stop(self) -> str:
+        """Promote any in-progress sentence fragment so stop can persist/translate it."""
+        final_fragment = self._db_text_buffer.strip()
+        if not final_fragment:
+            return ""
+
+        ts_ms = self._db_text_buffer_start_ts_ms or self._db_last_ts_ms
+        self._pending_transcription_sentences.append(
+            f"{self._format_timestamp(ts_ms)} {final_fragment}"
+        )
+        self._db_text_buffer = ""
+        self._db_text_buffer_start_ts_ms = 0
+        return final_fragment
 
     def add_client(self, ws: web.WebSocketResponse):
         """Add a WebSocket client to receive relayed events."""
@@ -334,10 +390,16 @@ class SSERelay:
                 new_sentences = self._buffer_transcription_for_db(message)
                 if new_sentences and self._translation_callback:
                     for sentence in new_sentences:
-                        asyncio.create_task(self._run_translation_callback(sentence))
+                        self._track_translation_task(
+                            self._run_translation_callback(sentence),
+                            task_name=f"sse-translate-callback-{self.stream_id}",
+                        )
 
                 if msg_type == "translation":
-                    asyncio.create_task(self._store_translation_to_db(message))
+                    self._track_translation_task(
+                        self._store_translation_to_db(message),
+                        task_name=f"sse-translate-store-{self.stream_id}",
+                    )
 
             # Relay messages to frontend as-is.
             await self._broadcast(message)

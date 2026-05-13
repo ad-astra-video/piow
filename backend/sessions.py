@@ -1810,6 +1810,20 @@ async def stop_stream_session(request):
                         "details": response_text,
                     }
 
+        # Give the relay a bounded window to process last-sentence translation work.
+        try:
+            from sse_relay import get_relay
+
+            relay = get_relay(stream_id)
+            if relay:
+                await relay.wait_for_pending_translation_tasks(timeout_seconds=15)
+        except Exception as wait_exc:
+            logger.warning(
+                "Failed while waiting for pending translation tasks on stream %s: %s",
+                stream_id,
+                wait_exc,
+            )
+
         # Update local session
         await session_store.close_stream_session(stream_id)
 

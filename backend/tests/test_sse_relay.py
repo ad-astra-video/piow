@@ -438,6 +438,97 @@ class TestSSERelayPersistence(unittest.IsolatedAsyncioTestCase):
 
         callback.assert_awaited_once_with("Hello world.")
 
+    async def test_stop_waits_for_pending_translation_callback(self):
+        from sse_relay import SSERelay
+
+        callback_gate = asyncio.Event()
+
+        async def callback(_sentence: str):
+            await callback_gate.wait()
+
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=AsyncMock(),
+        )
+        relay.set_translation_callback(callback)
+
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {"type": "response.output_text.delta", "delta": "Hello world.", "timestamp_ms": 5000},
+                "id": None,
+            }
+        )
+
+        await asyncio.sleep(0)
+
+        stop_task = asyncio.create_task(relay.stop())
+        await asyncio.sleep(0)
+        self.assertFalse(stop_task.done())
+
+        callback_gate.set()
+        await asyncio.wait_for(stop_task, timeout=1)
+
+    async def test_wait_for_pending_translation_tasks_times_out(self):
+        from sse_relay import SSERelay
+
+        callback_gate = asyncio.Event()
+
+        async def callback(_sentence: str):
+            await callback_gate.wait()
+
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=AsyncMock(),
+        )
+        relay.set_translation_callback(callback)
+
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {"type": "response.output_text.delta", "delta": "Hello world.", "timestamp_ms": 5000},
+                "id": None,
+            }
+        )
+
+        await asyncio.sleep(0)
+
+        drained = await relay.wait_for_pending_translation_tasks(timeout_seconds=0.01)
+        self.assertFalse(drained)
+
+    async def test_stop_sends_in_progress_fragment_for_translation(self):
+        from sse_relay import SSERelay
+
+        callback = AsyncMock()
+        session_store = AsyncMock()
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=session_store,
+        )
+        relay.set_translation_callback(callback)
+
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {"type": "response.output_text.delta", "delta": "Unfinished final", "timestamp_ms": 5000},
+                "id": None,
+            }
+        )
+
+        await asyncio.sleep(0)
+        callback.assert_not_awaited()
+
+        await relay.stop()
+
+        callback.assert_awaited_once_with("Unfinished final")
+        session_store.update_stream_session.assert_called_once_with(
+            "test-stream",
+            {"transcription_segment": "[00:00:05] Unfinished final"},
+        )
+
     async def test_flush_persists_sentences_from_delta_buffer(self):
         from sse_relay import SSERelay
 
