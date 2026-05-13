@@ -112,11 +112,16 @@ async def test_translate_sentence_async_emits_stream_message():
 
     original_processor = worker_app.processor
     original_gemma = worker_app.gemma_translator
+    mock_gemma = MagicMock()
+    mock_gemma.translate = AsyncMock(return_value={"translated_text": "Hola mundo"})
     worker_app.processor = mock_processor
     try:
-        worker_app.gemma_translator = MagicMock()
-        worker_app.gemma_translator.translate = AsyncMock(return_value={"translated_text": "Hola mundo"})
+        worker_app.gemma_translator = mock_gemma
         await worker._translate_sentence_async("Hello world", "en", "es")
+        mock_gemma.translate.assert_awaited_once()
+        translate_args, translate_kwargs = mock_gemma.translate.call_args
+        assert translate_args == ("Hello world", "en", "es")
+        assert "Return only the translated text" in translate_kwargs["prompt"]
     finally:
         worker_app.processor = original_processor
         worker_app.gemma_translator = original_gemma

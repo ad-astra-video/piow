@@ -747,7 +747,17 @@ class LiveTranscriptionWorker:
     ) -> None:
         """Translate a sentence and emit the result over the data channel."""
         try:
-            result = await gemma_translator.translate(sentence, source_lang, target_lang)
+            translation_prompt = (
+                f"Translate the following text from {source_lang} to {target_lang}. "
+                "Return only the translated text with no explanation, notes, or formatting.\n\n"
+                f"{sentence}"
+            )
+            result = await gemma_translator.translate(
+                sentence,
+                source_lang,
+                target_lang,
+                prompt=translation_prompt,
+            )
             translated_text = ""
             if isinstance(result, dict):
                 translated_text = (result.get("translated_text") or "").strip()

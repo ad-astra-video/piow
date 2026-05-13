@@ -93,7 +93,13 @@ class GemmaClient:
         }
         return prompts.get(mode, prompts["multimodal"])
 
-    async def translate(self, text: str, source_lang: str, target_lang: str) -> Dict[str, Any]:
+    async def translate(
+        self,
+        text: str,
+        source_lang: str,
+        target_lang: str,
+        prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Translate text using the Gemma vLLM chat-completions API."""
         start_time = time.time()
 
@@ -122,9 +128,9 @@ class GemmaClient:
         system_prompt = (
             "You are a translation engine. Translate the user's text faithfully, "
             "preserving meaning, tone, punctuation, and line breaks. Return only "
-            "the translated text."
+            "the translated text and no explanation, labels, or markdown."
         )
-        user_prompt = f"Translate from {source_lang} to {target_lang}:\n\n{text}"
+        user_prompt = prompt or f"Translate from {source_lang} to {target_lang}:\n\n{text}"
         try:
             data = await self._chat_completion([
                 {"role": "system", "content": system_prompt},
