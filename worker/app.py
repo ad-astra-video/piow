@@ -465,7 +465,9 @@ class LiveTranscriptionWorker:
     def __init__(self) -> None:
         self.analysis_enabled: bool = False
         self.analysis_mode: str = "multimodal"
-        self.analysis_audio_chunk_seconds: float = 1.0
+        self.analysis_audio_chunk_seconds: float = 10.0
+        self.analysis_video_chunk_seconds: float = 10.0
+        self.live_transcription_enabled: bool = True
         self.analysis_prompt: str = self._default_analysis_prompt(self.analysis_mode)
         self.analysis_prompt_custom: bool = False
         self._analysis_pending_text: str = ""
@@ -694,6 +696,10 @@ class LiveTranscriptionWorker:
         if analysis_enabled is not None:
             self.analysis_enabled = bool(analysis_enabled)
 
+        live_transcription_enabled = params.get("live_transcription_enabled")
+        if live_transcription_enabled is not None:
+            self.live_transcription_enabled = bool(live_transcription_enabled)
+
         analysis_mode = params.get("analysis_mode")
         if isinstance(analysis_mode, str) and analysis_mode in {"multimodal", "audio_only", "video_only"}:
             mode_changed = self.analysis_mode != analysis_mode
@@ -707,6 +713,15 @@ class LiveTranscriptionWorker:
                     self.analysis_audio_chunk_seconds = chunk_seconds
             except (TypeError, ValueError):
                 logger.warning("Ignoring invalid analysis_audio_chunk_seconds: %s", analysis_audio_chunk_seconds)
+
+        analysis_video_chunk_seconds = params.get("analysis_video_chunk_seconds")
+        if analysis_video_chunk_seconds is not None:
+            try:
+                chunk_seconds = float(analysis_video_chunk_seconds)
+                if chunk_seconds > 0:
+                    self.analysis_video_chunk_seconds = chunk_seconds
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid analysis_video_chunk_seconds: %s", analysis_video_chunk_seconds)
 
         analysis_prompt = params.get("analysis_prompt")
         if analysis_prompt is not None:
@@ -722,7 +737,7 @@ class LiveTranscriptionWorker:
 
     def _queue_live_analysis(self, text: str, timestamp_ms: int, is_final: bool) -> None:
         """Schedule analysis on final text, sentence boundaries, or elapsed chunk windows."""
-        if not self.analysis_enabled:
+        if not self.analysis_enabled or not self.live_transcription_enabled:
             return
 
         candidate = (text or "").strip()
@@ -734,7 +749,8 @@ class LiveTranscriptionWorker:
         else:
             self._analysis_pending_text = candidate
 
-        chunk_ms = max(int(self.analysis_audio_chunk_seconds * 1000), 250)
+        chunk_seconds = self.analysis_video_chunk_seconds if self.analysis_mode == "video_only" else self.analysis_audio_chunk_seconds
+        chunk_ms = max(int(chunk_seconds * 1000), 250)
         elapsed_ms = max(0, int(timestamp_ms) - int(self._analysis_last_run_ts_ms or 0))
         sentence_boundary = bool(re.search(r"[.!?]\s*$", candidate))
         should_run = is_final or sentence_boundary or elapsed_ms >= chunk_ms

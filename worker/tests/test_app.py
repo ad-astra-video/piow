@@ -175,18 +175,23 @@ async def test_apply_analysis_params_updates_worker_state():
         "analysis_enabled": True,
         "analysis_mode": "video_only",
         "analysis_audio_chunk_seconds": 0.75,
+        "analysis_video_chunk_seconds": 5,
+        "live_transcription_enabled": False,
         "analysis_prompt": "Track visual cues",
     })
 
     assert worker.analysis_enabled is True
     assert worker.analysis_mode == "video_only"
     assert worker.analysis_audio_chunk_seconds == 0.75
+    assert worker.analysis_video_chunk_seconds == 5
+    assert worker.live_transcription_enabled is False
     assert worker.analysis_prompt == "Track visual cues"
 
 
 async def test_queue_live_analysis_triggers_on_chunk_window():
     worker = worker_app.LiveTranscriptionWorker()
     worker.analysis_enabled = True
+    worker.live_transcription_enabled = True
     worker.analysis_audio_chunk_seconds = 0.5
     worker._run_live_analysis_async = AsyncMock()
 
@@ -201,3 +206,21 @@ async def test_queue_live_analysis_triggers_on_chunk_window():
         "first partial second partial",
         600,
     )
+
+
+async def test_queue_live_analysis_respects_video_window_and_transcription_flag():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.analysis_mode = "video_only"
+    worker.analysis_video_chunk_seconds = 2
+    worker.live_transcription_enabled = False
+    worker._run_live_analysis_async = AsyncMock()
+
+    worker._queue_live_analysis("visual cue", 2100, is_final=False)
+    await asyncio.sleep(0)
+    worker._run_live_analysis_async.assert_not_awaited()
+
+    worker.live_transcription_enabled = True
+    worker._queue_live_analysis("visual cue", 2100, is_final=False)
+    await asyncio.sleep(0)
+    worker._run_live_analysis_async.assert_awaited_once_with("visual cue", 2100)
