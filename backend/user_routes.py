@@ -217,11 +217,43 @@ async def get_transcription_sentences(request):
         base_sentences = result.data or []
         base_by_index = {row.get('sentence_index'): row for row in base_sentences}
 
+        # Fetch translations that have sentence_index (directly linked)
         translations_result = await (
+            supabase.table('translations')
+            .select('id, original_text, translated_text, target_language, sentence_index, created_at')
+            .eq('user_id', user_id)
+            .eq('transcription_id', transcription_id)
+            .not_('sentence_index', 'is', None)  # Only get translations with sentence_index
+            .order('created_at')
+            .execute()
+        )
+
+        # Group translations by language and sentence_index
+        translation_index_by_language: Dict[str, Dict[int, Dict[str, Any]]] = {}
+        for row in (translations_result.data or []):
+            language = row.get('target_language')
+            translated_text = row.get('translated_text')
+            sentence_index = row.get('sentence_index')
+            if not language or not translated_text or sentence_index is None:
+                continue
+
+            bucket = translation_index_by_language.setdefault(language, {})
+            base_sentence = base_by_index.get(sentence_index, {})
+            bucket[sentence_index] = {
+                'sentence_index': sentence_index,
+                'text': row.get('original_text') or base_sentence.get('text') or '',
+                'translated_text': translated_text,
+                'timestamp': base_sentence.get('timestamp'),
+            }
+
+        # For backwards compatibility, also handle legacy translations without sentence_index
+        # by doing text-based matching with a cursor algorithm
+        legacy_translations_result = await (
             supabase.table('translations')
             .select('id, original_text, translated_text, target_language, created_at')
             .eq('user_id', user_id)
             .eq('transcription_id', transcription_id)
+            .is_('sentence_index', None)  # Only get translations WITHOUT sentence_index
             .order('created_at')
             .execute()
         )
@@ -235,11 +267,10 @@ async def get_transcription_sentences(request):
                 continue
             text_to_indices.setdefault(sentence_text, []).append(sentence_index)
 
-        translation_index_by_language: Dict[str, Dict[int, Dict[str, Any]]] = {}
         text_match_cursors: Dict[str, Dict[str, int]] = {}
         fallback_cursor_by_language: Dict[str, int] = {}
 
-        for row in (translations_result.data or []):
+        for row in (legacy_translations_result.data or []):
             language = row.get('target_language')
             translated_text = row.get('translated_text')
             original_text = row.get('original_text')

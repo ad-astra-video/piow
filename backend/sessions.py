@@ -796,10 +796,19 @@ class SessionStore:
         translated_text: str,
         source_language: str,
         target_language: str,
+        sentence_index: Optional[int] = None,
     ) -> None:
         """Insert a translation row into the translations table for a live stream sentence.
 
         Linked to the stream's transcription record (if already created).
+        
+        Args:
+            stream_id: The stream session ID
+            original_text: The original (source language) text
+            translated_text: The translated (target language) text
+            source_language: Source language code
+            target_language: Target language code
+            sentence_index: Optional sentence index to link translation to specific sentence
         """
         stream_data = self._stream_sessions_cache.get(stream_id) or await self.get_stream_session(stream_id)
         if not stream_data:
@@ -828,18 +837,27 @@ class SessionStore:
             }
             if transcription_id:
                 payload["transcription_id"] = transcription_id
+            if sentence_index is not None:
+                payload["sentence_index"] = sentence_index
             await supabase.table("translations").insert(payload).execute()
+            logger.info(
+                "Stored translation for stream %s: original='%s...' target_lang=%s sentence_index=%s",
+                stream_id,
+                original_text[:50],
+                target_language,
+                sentence_index,
+            )
         except Exception as exc:
             logger.warning(
                 "Failed to store stream translation for stream %s: %s", stream_id, exc
             )
 
-        # Also update the matching transcription_sentences row with translated_text
-        if transcription_id:
+        # Also update the matching transcription_sentences row with translated_text if sentence_index is known
+        if transcription_id and sentence_index is not None:
             try:
                 await supabase.table("transcription_sentences").update({
                     "translated_text": translated_text,
-                }).eq("transcription_id", transcription_id).eq("text", original_text).execute()
+                }).eq("transcription_id", transcription_id).eq("sentence_index", sentence_index).execute()
             except Exception as exc:
                 logger.warning(
                     "Failed to update transcription_sentences translated_text for stream %s: %s",

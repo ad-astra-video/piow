@@ -74,6 +74,9 @@ class SSERelay:
         self._db_text_buffer_start_ts_ms: int = 0
         self._translation_callback: Optional[Callable[[str], Awaitable[None]]] = None
         self._pending_translation_tasks: Set[asyncio.Task] = set()
+        # Track sentence indices for matching translations to sentences
+        self._sentence_text_to_index: Dict[str, int] = {}
+        self._next_sentence_index: int = 0
 
     def set_translation_callback(
         self,
@@ -442,6 +445,11 @@ class SSERelay:
         target_language = message.get("target_language") if isinstance(message.get("target_language"), str) else ""
         if not translated_text or not original_text or not target_language:
             return
+        
+        # Look up the sentence_index for this original text
+        original_text_stripped = original_text.strip()
+        sentence_index = self._sentence_text_to_index.get(original_text_stripped)
+        
         try:
             await self._session_store.store_stream_translation(
                 self.stream_id,
@@ -449,6 +457,7 @@ class SSERelay:
                 translated_text,
                 source_language,
                 target_language,
+                sentence_index=sentence_index,
             )
         except Exception as exc:
             logger.warning(
@@ -540,6 +549,10 @@ class SSERelay:
             )
             if sentences:
                 self._pending_transcription_sentences.extend(sentences)
+                # Track sentence indices as they're created
+                for raw_sentence in raw_sentences:
+                    self._sentence_text_to_index[raw_sentence.strip()] = self._next_sentence_index
+                    self._next_sentence_index += 1
             self._db_text_buffer = remaining
             self._db_text_buffer_start_ts_ms = remaining_start_ts
             return raw_sentences
@@ -562,10 +575,17 @@ class SSERelay:
             )
             if sentences:
                 self._pending_transcription_sentences.extend(sentences)
+                # Track sentence indices as they're created
+                for raw_sentence in raw_sentences:
+                    self._sentence_text_to_index[raw_sentence.strip()] = self._next_sentence_index
+                    self._next_sentence_index += 1
             if remaining:
                 self._pending_transcription_sentences.append(
                     f"{self._format_timestamp(remaining_start_ts or ts_for_output)} {remaining}"
                 )
+                # Track remaining sentence
+                self._sentence_text_to_index[remaining.strip()] = self._next_sentence_index
+                self._next_sentence_index += 1
                 raw_sentences.append(remaining)
             self._db_text_buffer = ""
             self._db_text_buffer_start_ts_ms = 0
@@ -588,11 +608,18 @@ class SSERelay:
             )
             if sentences:
                 self._pending_transcription_sentences.extend(sentences)
+                # Track sentence indices as they're created
+                for raw_sentence in raw_sentences:
+                    self._sentence_text_to_index[raw_sentence.strip()] = self._next_sentence_index
+                    self._next_sentence_index += 1
 
             if is_final and remaining:
                 self._pending_transcription_sentences.append(
                     f"{self._format_timestamp(remaining_start_ts or ts_for_output)} {remaining}"
                 )
+                # Track remaining sentence
+                self._sentence_text_to_index[remaining.strip()] = self._next_sentence_index
+                self._next_sentence_index += 1
                 raw_sentences.append(remaining)
                 self._db_text_buffer = ""
                 self._db_text_buffer_start_ts_ms = 0
