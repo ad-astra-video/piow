@@ -826,19 +826,20 @@ class SessionStore:
 
         transcription_id: Optional[str] = stream_data.get("transcription_id")
 
+        payload: Dict[str, Any] = {
+            "user_id": user_id,
+            "original_text": original_text,
+            "translated_text": translated_text,
+            "source_language": source_language,
+            "target_language": target_language,
+            "mode": "stream",
+        }
+        if transcription_id:
+            payload["transcription_id"] = transcription_id
+        if sentence_index is not None:
+            payload["sentence_index"] = sentence_index
+
         try:
-            payload: Dict[str, Any] = {
-                "user_id": user_id,
-                "original_text": original_text,
-                "translated_text": translated_text,
-                "source_language": source_language,
-                "target_language": target_language,
-                "mode": "stream",
-            }
-            if transcription_id:
-                payload["transcription_id"] = transcription_id
-            if sentence_index is not None:
-                payload["sentence_index"] = sentence_index
             await supabase.table("translations").insert(payload).execute()
             logger.info(
                 "Stored translation for stream %s: original='%s...' target_lang=%s sentence_index=%s",
@@ -848,9 +849,29 @@ class SessionStore:
                 sentence_index,
             )
         except Exception as exc:
-            logger.warning(
-                "Failed to store stream translation for stream %s: %s", stream_id, exc
-            )
+            # Backward compatibility when DB migration has not been applied yet.
+            # If sentence_index is unknown to the schema, retry without it.
+            err_text = str(exc).lower()
+            if sentence_index is not None and "sentence_index" in err_text and (
+                "column" in err_text or "schema cache" in err_text
+            ):
+                payload.pop("sentence_index", None)
+                try:
+                    await supabase.table("translations").insert(payload).execute()
+                    logger.warning(
+                        "Stored translation for stream %s without sentence_index; migration likely pending",
+                        stream_id,
+                    )
+                except Exception as retry_exc:
+                    logger.warning(
+                        "Failed to store stream translation for stream %s after fallback: %s",
+                        stream_id,
+                        retry_exc,
+                    )
+            else:
+                logger.warning(
+                    "Failed to store stream translation for stream %s: %s", stream_id, exc
+                )
 
         # Also update the matching transcription_sentences row with translated_text if sentence_index is known
         if transcription_id and sentence_index is not None:
