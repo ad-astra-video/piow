@@ -731,6 +731,29 @@ html, body {
   resize: vertical;
 }
 
+.analysis-window-row {
+  margin-top: 0.15rem;
+}
+
+.analysis-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.analysis-window-controls input[type="range"] {
+  flex: 1;
+}
+
+.analysis-window-controls input[type="number"] {
+  width: 68px;
+}
+
+.analysis-window-controls span {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
 /* Audio source selector */
 .source-selector {
   display: flex;

@@ -29,6 +29,16 @@ const getAnalysisModeLabel = (mode) => (
   ANALYSIS_MODE_CONFIG[mode]?.label || mode
 );
 
+const ANALYSIS_WINDOW_MIN_SECONDS = 1;
+const ANALYSIS_WINDOW_MAX_SECONDS = 30;
+const ANALYSIS_WINDOW_DEFAULT_SECONDS = 10;
+
+const clampAnalysisWindowSeconds = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return ANALYSIS_WINDOW_DEFAULT_SECONDS;
+  return Math.min(ANALYSIS_WINDOW_MAX_SECONDS, Math.max(ANALYSIS_WINDOW_MIN_SECONDS, Math.round(numeric)));
+};
+
 const SOURCE_META = {
   microphone: { Icon: Mic, label: 'Microphone' },
   screen: { Icon: Monitor, label: 'Screen Share' },
@@ -80,6 +90,8 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   const [targetLang, setTargetLang] = useState('');
   const [analysisEnabled, setAnalysisEnabled] = useState(false);
   const [analysisMode, setAnalysisMode] = useState('multimodal');
+  const [analysisAudioWindowSeconds, setAnalysisAudioWindowSeconds] = useState(ANALYSIS_WINDOW_DEFAULT_SECONDS);
+  const [analysisVideoWindowSeconds, setAnalysisVideoWindowSeconds] = useState(ANALYSIS_WINDOW_DEFAULT_SECONDS);
   const [analysisPrompt, setAnalysisPrompt] = useState(getDefaultAnalysisPrompt('multimodal'));
   const [analysisPromptTouched, setAnalysisPromptTouched] = useState(false);
   const [fileHasVideo, setFileHasVideo] = useState(false);
@@ -136,11 +148,19 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     streamManager.updateAnalysisConfig({
       analysis_enabled: effectiveAnalysisEnabled,
       analysis_mode: analysisMode,
-      analysis_audio_chunk_seconds: 1.0,
+      analysis_audio_chunk_seconds: clampAnalysisWindowSeconds(analysisAudioWindowSeconds),
+      analysis_video_chunk_seconds: clampAnalysisWindowSeconds(analysisVideoWindowSeconds),
       analysis_video_fps: 3,
       analysis_prompt: analysisPrompt,
     });
-  }, [isStarted, effectiveAnalysisEnabled, analysisMode, analysisPrompt]);
+  }, [
+    isStarted,
+    effectiveAnalysisEnabled,
+    analysisMode,
+    analysisAudioWindowSeconds,
+    analysisVideoWindowSeconds,
+    analysisPrompt,
+  ]);
 
   useEffect(() => {
     if (wasStartedRef.current && !isStarted) {
@@ -219,7 +239,8 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     const analysisConfig = {
       analysis_enabled: effectiveAnalysisEnabled,
       analysis_mode: analysisMode,
-      analysis_audio_chunk_seconds: 1.0,
+      analysis_audio_chunk_seconds: clampAnalysisWindowSeconds(analysisAudioWindowSeconds),
+      analysis_video_chunk_seconds: clampAnalysisWindowSeconds(analysisVideoWindowSeconds),
       analysis_video_fps: 3,
       analysis_prompt: analysisPrompt,
     };
@@ -239,6 +260,8 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     transcriptionServiceEnabled,
     effectiveAnalysisEnabled,
     analysisMode,
+    analysisAudioWindowSeconds,
+    analysisVideoWindowSeconds,
     analysisPrompt,
   ]);
 
@@ -548,6 +571,56 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                       }}
                       placeholder="Describe what analysis you want to see in real time."
                     />
+                  </div>
+                  <div className="form-row analysis-window-row">
+                    <label htmlFor="analysis_audio_window_seconds">
+                      Audio analysis window ({ANALYSIS_WINDOW_MIN_SECONDS}-{ANALYSIS_WINDOW_MAX_SECONDS}s)
+                    </label>
+                    <div className="analysis-window-controls">
+                      <input
+                        id="analysis_audio_window_seconds"
+                        type="range"
+                        min={ANALYSIS_WINDOW_MIN_SECONDS}
+                        max={ANALYSIS_WINDOW_MAX_SECONDS}
+                        step={1}
+                        value={clampAnalysisWindowSeconds(analysisAudioWindowSeconds)}
+                        onChange={(e) => setAnalysisAudioWindowSeconds(clampAnalysisWindowSeconds(e.target.value))}
+                      />
+                      <input
+                        type="number"
+                        min={ANALYSIS_WINDOW_MIN_SECONDS}
+                        max={ANALYSIS_WINDOW_MAX_SECONDS}
+                        step={1}
+                        value={clampAnalysisWindowSeconds(analysisAudioWindowSeconds)}
+                        onChange={(e) => setAnalysisAudioWindowSeconds(clampAnalysisWindowSeconds(e.target.value))}
+                      />
+                      <span>s</span>
+                    </div>
+                  </div>
+                  <div className="form-row analysis-window-row">
+                    <label htmlFor="analysis_video_window_seconds">
+                      Video analysis window ({ANALYSIS_WINDOW_MIN_SECONDS}-{ANALYSIS_WINDOW_MAX_SECONDS}s)
+                    </label>
+                    <div className="analysis-window-controls">
+                      <input
+                        id="analysis_video_window_seconds"
+                        type="range"
+                        min={ANALYSIS_WINDOW_MIN_SECONDS}
+                        max={ANALYSIS_WINDOW_MAX_SECONDS}
+                        step={1}
+                        value={clampAnalysisWindowSeconds(analysisVideoWindowSeconds)}
+                        onChange={(e) => setAnalysisVideoWindowSeconds(clampAnalysisWindowSeconds(e.target.value))}
+                      />
+                      <input
+                        type="number"
+                        min={ANALYSIS_WINDOW_MIN_SECONDS}
+                        max={ANALYSIS_WINDOW_MAX_SECONDS}
+                        step={1}
+                        value={clampAnalysisWindowSeconds(analysisVideoWindowSeconds)}
+                        onChange={(e) => setAnalysisVideoWindowSeconds(clampAnalysisWindowSeconds(e.target.value))}
+                      />
+                      <span>s</span>
+                    </div>
                   </div>
                 </div>
                 )}

@@ -472,6 +472,9 @@ class StreamManager {
       if (typeof analysisConfig.analysis_audio_chunk_seconds === 'number') {
         body.analysis_audio_chunk_seconds = analysisConfig.analysis_audio_chunk_seconds;
       }
+      if (typeof analysisConfig.analysis_video_chunk_seconds === 'number') {
+        body.analysis_video_chunk_seconds = analysisConfig.analysis_video_chunk_seconds;
+      }
       if (typeof analysisConfig.analysis_video_fps === 'number') {
         body.analysis_video_fps = analysisConfig.analysis_video_fps;
       }
