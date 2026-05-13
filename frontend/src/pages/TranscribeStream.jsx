@@ -676,47 +676,48 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
 
         {/* Transcript and analysis panels — shown only when session is active */}
         {isStarted && (
+            <div>
+          {/* Compact session bar — shown whenever session is active, regardless of services */}
+          <div className="transcript-session-bar">
+            <div className="session-bar-left">
+              <div className="session-bar-source">
+                <SourceIcon size={14} />
+                <span>{sourceLabel}</span>
+              </div>
+              {audioSource === 'file' && (
+                <div className="session-bar-player-controls">
+                  <button
+                    className="icon-btn-sm"
+                    onClick={() => { setPlayerHidden(v => !v); setPlayerFullscreen(false); }}
+                    title={playerHidden ? 'Show player' : 'Hide player'}
+                  >
+                    {playerHidden ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                    {playerHidden ? 'Show' : 'Hide'}
+                  </button>
+                  <button
+                    className="icon-btn-sm"
+                    onClick={() => { setPlayerFullscreen(true); setPlayerHidden(false); }}
+                    title="Fullscreen with transcript overlay"
+                  >
+                    <Maximize2 size={14} /> Fullscreen
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="session-bar-right">
+              <div className="stream-timer">
+                <Clock size={14} />
+                <span>{formatDuration(elapsedMs)}</span>
+              </div>
+              <button className="secondary-button session-stop-btn" onClick={() => stop()}>
+                <MicOff size={14} /> Stop
+              </button>
+            </div>
+          </div>
+
             <div className={`stream-live-panels ${analysisEnabled ? 'analysis-open' : ''}`}>
           {activeTranscriptionEnabled && (
           <section className="panel-glass transcript-panel">
-            {/* Compact session bar */}
-            <div className="transcript-session-bar">
-              <div className="session-bar-left">
-                <div className="session-bar-source">
-                  <SourceIcon size={14} />
-                  <span>{sourceLabel}</span>
-                </div>
-                {audioSource === 'file' && (
-                  <div className="session-bar-player-controls">
-                    <button
-                      className="icon-btn-sm"
-                      onClick={() => { setPlayerHidden(v => !v); setPlayerFullscreen(false); }}
-                      title={playerHidden ? 'Show player' : 'Hide player'}
-                    >
-                      {playerHidden ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                      {playerHidden ? 'Show' : 'Hide'}
-                    </button>
-                    <button
-                      className="icon-btn-sm"
-                      onClick={() => { setPlayerFullscreen(true); setPlayerHidden(false); }}
-                      title="Fullscreen with transcript overlay"
-                    >
-                      <Maximize2 size={14} /> Fullscreen
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="session-bar-right">
-                <div className="stream-timer">
-                  <Clock size={14} />
-                  <span>{formatDuration(elapsedMs)}</span>
-                </div>
-                <button className="secondary-button session-stop-btn" onClick={() => stop()}>
-                  <MicOff size={14} /> Stop
-                </button>
-              </div>
-            </div>
-
             {errorMessage && !hasQuotaExceededSignal && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
 
             <div className="panel-heading transcript-heading">
