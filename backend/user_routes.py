@@ -8,11 +8,14 @@ All requests go through the backend (no direct Supabase/Stripe from frontend).
 import aiohttp.web as web
 import logging
 from datetime import datetime, timedelta
+from typing import List, Dict, Any
 
 from auth import require_user_auth
 from supabase_client import async_supabase as supabase
 
 logger = logging.getLogger(__name__)
+
+_USAGE_PAGE_SIZE = 1000
 
 
 def setup_routes(app):
@@ -28,6 +31,37 @@ def _get_user_id(request):
     if user:
         return str(user.id) if hasattr(user, 'id') else str(user.get('id', ''))
     return None
+
+
+async def _fetch_usage_rows_paged(table_name: str, user_id: str, since: str) -> List[Dict[str, Any]]:
+    """Fetch all usage rows for a user in pages to avoid Supabase row caps."""
+    rows: List[Dict[str, Any]] = []
+    page = 0
+
+    while True:
+        start = page * _USAGE_PAGE_SIZE
+        end = start + _USAGE_PAGE_SIZE - 1
+        result = await (
+            supabase.table(table_name)
+            .select('*')
+            .eq('user_id', user_id)
+            .gte('created_at', since)
+            .order('created_at', desc=True)
+            .range(start, end)
+            .execute()
+        )
+
+        batch = result.data or []
+        if not batch:
+            break
+
+        rows.extend(batch)
+        if len(batch) < _USAGE_PAGE_SIZE:
+            break
+
+        page += 1
+
+    return rows
 
 
 @require_user_auth
@@ -145,13 +179,9 @@ async def get_usage_details(request):
         days = int(request.query.get('days', '30'))
         since = (datetime.utcnow() - timedelta(days=days)).isoformat()
 
-        # Transcription usage
-        t_usage_result = await supabase.table('transcription_usage').select('*').eq('user_id', user_id).gte('created_at', since).order('created_at', desc=True).execute()
-        t_usage = t_usage_result.data or []
-
-        # Translation usage
-        tr_usage_result = await supabase.table('translation_usage').select('*').eq('user_id', user_id).gte('created_at', since).order('created_at', desc=True).execute()
-        tr_usage = tr_usage_result.data or []
+        # Usage rows are minute-level for streams, so page through all rows.
+        t_usage = await _fetch_usage_rows_paged('transcription_usage', user_id, since)
+        tr_usage = await _fetch_usage_rows_paged('translation_usage', user_id, since)
 
         # Actual job counts (from transcriptions/translations tables, not usage rows)
         t_jobs_result = await supabase.table('transcriptions').select('id', count='exact').eq('user_id', user_id).gte('created_at', since).execute()
