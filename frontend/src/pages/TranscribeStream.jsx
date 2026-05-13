@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages } from 'lucide-react';
+import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages, Brain } from 'lucide-react';
 import Sentence from '../components/Sentence';
 import useLiveTranscription from '../hooks/useLiveTranscription';
 import streamManager, { formatDuration } from '../lib/streamManager';
@@ -21,6 +21,9 @@ export default function TranscribeStream({ accessToken }) {
     errorMessage,
     elapsedMs,
     localAnnotations,
+    analysisEntries,
+    hasAudioTrack,
+    hasVideoTrack,
     start,
     stop,
     addLocalAnnotation,
@@ -46,6 +49,9 @@ export default function TranscribeStream({ accessToken }) {
   const [translateEnabled, setTranslateEnabled] = useState(false);
   const [sourceLang, setSourceLang] = useState('en');
   const [targetLang, setTargetLang] = useState('');
+  const [analysisEnabled, setAnalysisEnabled] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState('multimodal');
+  const [fileHasVideo, setFileHasVideo] = useState(false);
 
   // Fetch available languages on mount
   useEffect(() => {
@@ -61,6 +67,35 @@ export default function TranscribeStream({ accessToken }) {
       streamManager.updateTranslationConfig(config);
     }
   }, [isStarted, sourceLang, targetLang, translateEnabled]);
+
+  const setupTrackAvailability = (() => {
+    if (audioSource === 'microphone') return { hasAudio: true, hasVideo: false };
+    if (audioSource === 'screen') return { hasAudio: true, hasVideo: true };
+    return { hasAudio: !!fileObjectUrl, hasVideo: !!fileHasVideo };
+  })();
+
+  const runtimeTrackAvailability = {
+    hasAudio: isStarted ? !!hasAudioTrack : setupTrackAvailability.hasAudio,
+    hasVideo: isStarted ? !!hasVideoTrack : setupTrackAvailability.hasVideo,
+  };
+
+  const isModeSupported = useCallback((mode, tracks) => {
+    if (mode === 'audio_only') return !!tracks.hasAudio;
+    if (mode === 'video_only') return !!tracks.hasVideo;
+    return !!tracks.hasAudio && !!tracks.hasVideo;
+  }, []);
+
+  const effectiveAnalysisEnabled = analysisEnabled && isModeSupported(analysisMode, runtimeTrackAvailability);
+
+  useEffect(() => {
+    if (!isStarted || !streamManager.getStreamId()) return;
+    streamManager.updateAnalysisConfig({
+      analysis_enabled: effectiveAnalysisEnabled,
+      analysis_mode: analysisMode,
+      analysis_audio_chunk_seconds: 1.0,
+      analysis_video_fps: 3,
+    });
+  }, [isStarted, effectiveAnalysisEnabled, analysisMode]);
 
   const handleFileSelect = useCallback((e) => {
     const file = e.target.files[0];
@@ -78,6 +113,24 @@ export default function TranscribeStream({ accessToken }) {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!mediaRef.current || !fileObjectUrl) {
+      setFileHasVideo(false);
+      return;
+    }
+
+    const mediaEl = mediaRef.current;
+    const handleLoadedMetadata = () => {
+      setFileHasVideo((mediaEl.videoWidth || 0) > 0 && (mediaEl.videoHeight || 0) > 0);
+    };
+
+    mediaEl.addEventListener('loadedmetadata', handleLoadedMetadata);
+    handleLoadedMetadata();
+    return () => {
+      mediaEl.removeEventListener('loadedmetadata', handleLoadedMetadata);
+    };
+  }, [fileObjectUrl]);
+
   // Reset player state when session ends
   useEffect(() => {
     if (!isStarted) {
@@ -94,8 +147,36 @@ export default function TranscribeStream({ accessToken }) {
     const translationConfig = translateEnabled && targetLang
       ? { source_language: sourceLang, target_language: targetLang }
       : null;
-    start(accessToken, sourceConfig, translationConfig);
-  }, [audioSource, accessToken, start, translateEnabled, sourceLang, targetLang]);
+    const analysisConfig = {
+      analysis_enabled: effectiveAnalysisEnabled,
+      analysis_mode: analysisMode,
+      analysis_audio_chunk_seconds: 1.0,
+      analysis_video_fps: 3,
+    };
+    start(accessToken, sourceConfig, translationConfig, analysisConfig);
+  }, [
+    audioSource,
+    accessToken,
+    start,
+    translateEnabled,
+    sourceLang,
+    targetLang,
+    effectiveAnalysisEnabled,
+    analysisMode,
+  ]);
+
+  const modeDisabledReason = (mode) => {
+    if (mode === 'multimodal' && !(runtimeTrackAvailability.hasAudio && runtimeTrackAvailability.hasVideo)) {
+      return 'Needs microphone/audio and video tracks.';
+    }
+    if (mode === 'audio_only' && !runtimeTrackAvailability.hasAudio) {
+      return 'No microphone or audio track detected.';
+    }
+    if (mode === 'video_only' && !runtimeTrackAvailability.hasVideo) {
+      return 'No camera/screen video track detected.';
+    }
+    return '';
+  };
 
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
@@ -270,6 +351,42 @@ export default function TranscribeStream({ accessToken }) {
               )}
             </div>
 
+            <div className="analysis-toggle">
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={analysisEnabled}
+                  onChange={(e) => setAnalysisEnabled(e.target.checked)}
+                />
+                <Brain size={14} /> Live Analysis (Beta)
+              </label>
+
+              {analysisEnabled && (
+                <div className="analysis-config-active">
+                  <span className="config-label">Mode</span>
+                  <div className="analysis-mode-options">
+                    {['multimodal', 'audio_only', 'video_only'].map((mode) => {
+                      const disabled = !isModeSupported(mode, runtimeTrackAvailability);
+                      return (
+                        <label key={mode} className={`analysis-mode-option ${disabled ? 'disabled' : ''}`}>
+                          <input
+                            type="radio"
+                            name="analysis_mode"
+                            value={mode}
+                            checked={analysisMode === mode}
+                            disabled={disabled}
+                            onChange={(e) => setAnalysisMode(e.target.value)}
+                          />
+                          <span>{mode}</span>
+                          {disabled && <small>{modeDisabledReason(mode)}</small>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="hero-actions">
               <button
                 className="primary-button"
@@ -313,8 +430,9 @@ export default function TranscribeStream({ accessToken }) {
           </div>
         )}
 
-        {/* Transcript — shown only when session is active */}
+        {/* Transcript and analysis panels — shown only when session is active */}
         {isStarted && (
+          <div className={`stream-live-panels ${analysisEnabled ? 'analysis-open' : ''}`}>
           <section className="panel-glass transcript-panel">
             {/* Compact session bar */}
             <div className="transcript-session-bar">
@@ -372,6 +490,43 @@ export default function TranscribeStream({ accessToken }) {
               {transcriptContent}
             </div>
           </section>
+
+          {analysisEnabled && (
+            <section className="panel-glass analysis-panel">
+              <div className="analysis-panel-header">
+                <h2>Live Analysis</h2>
+                <span className="analysis-mode-badge">{analysisMode}</span>
+              </div>
+
+              {!effectiveAnalysisEnabled && (
+                <div className="analysis-degraded-banner">
+                  <AlertCircle size={14} />
+                  <span>{modeDisabledReason(analysisMode)}</span>
+                </div>
+              )}
+
+              <div className="analysis-scroll">
+                {analysisEntries.length === 0 ? (
+                  <div className="empty-state compact">
+                    <p>No analysis events yet.</p>
+                    <span>Events will appear here once analysis is active.</span>
+                  </div>
+                ) : (
+                  analysisEntries.map((entry) => (
+                    <article key={entry.id} className={`analysis-entry ${entry.type === 'analysis.error' ? 'error' : ''}`}>
+                      <div className="analysis-entry-meta">
+                        <span className="analysis-entry-type">{entry.type.replace('analysis.', '')}</span>
+                        <span className="analysis-entry-mode">{entry.mode}</span>
+                        <span className="analysis-entry-ts">{formatDuration(entry.timestampMs || 0)}</span>
+                      </div>
+                      <p>{entry.text}</p>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+          )}
+          </div>
         )}
 
       </div>

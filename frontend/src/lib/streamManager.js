@@ -103,6 +103,11 @@ class StreamManager {
       elapsedMs: 0,
       localAnnotations: {},
       translationEntries: [],
+      analysisEntries: [],
+      analysisEnabled: false,
+      analysisMode: 'multimodal',
+      hasAudioTrack: false,
+      hasVideoTrack: false,
     };
     this.listeners = new Set();
     this.whipClient = null;
@@ -354,13 +359,23 @@ class StreamManager {
     this._fileMediaElement = null;
   }
 
-  async _createStreamSession(translationConfig) {
+  async _createStreamSession(translationConfig, analysisConfig = null) {
     const headers = { 'Content-Type': 'application/json' };
     if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
     const body = { language: 'en' };
     if (translationConfig) {
       body.source_language = translationConfig.source_language;
       body.target_language = translationConfig.target_language;
+    }
+    if (analysisConfig) {
+      body.analysis_enabled = !!analysisConfig.analysis_enabled;
+      body.analysis_mode = analysisConfig.analysis_mode || 'multimodal';
+      if (typeof analysisConfig.analysis_audio_chunk_seconds === 'number') {
+        body.analysis_audio_chunk_seconds = analysisConfig.analysis_audio_chunk_seconds;
+      }
+      if (typeof analysisConfig.analysis_video_fps === 'number') {
+        body.analysis_video_fps = analysisConfig.analysis_video_fps;
+      }
     }
     const response = await fetch(`${API_BASE}/transcribe/stream`, {
       method: 'POST',
@@ -427,7 +442,27 @@ class StreamManager {
     }
   }
 
-  async start(accessToken, sourceConfig, translationConfig = null) {
+  async updateAnalysisConfig(config) {
+    if (!this.streamId) return;
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(this.accessToken ? { 'Authorization': `Bearer ${this.accessToken}` } : {}),
+      };
+      const response = await fetch(`${API_BASE}/transcribe/stream/${this.streamId}/analysis`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(config || {}),
+      });
+      if (!response.ok) {
+        console.warn('Failed to update analysis config:', response.status);
+      }
+    } catch (err) {
+      console.warn('Analysis config update error:', err);
+    }
+  }
+
+  async start(accessToken, sourceConfig, translationConfig = null, analysisConfig = null) {
     if (this.state.isStarted) return;
     this.accessToken = accessToken || null;
 
@@ -439,6 +474,14 @@ class StreamManager {
     };
 
     try {
+      const sourceTracks = {
+        hasAudioTrack: true,
+        hasVideoTrack: sourceType === 'screen',
+      };
+      if (sourceType === 'microphone') {
+        sourceTracks.hasVideoTrack = false;
+      }
+
       this._setState({
         errorMessage: '',
         transcriptEntries: [],
@@ -446,6 +489,11 @@ class StreamManager {
         partialTranscriptTimestamp: '',
         textTimestamps: [],
         translationEntries: [],
+        analysisEntries: [],
+        analysisEnabled: !!analysisConfig?.analysis_enabled,
+        analysisMode: analysisConfig?.analysis_mode || 'multimodal',
+        hasAudioTrack: sourceTracks.hasAudioTrack,
+        hasVideoTrack: sourceTracks.hasVideoTrack,
         status: statusLabels[sourceType] || 'Getting user media...',
         elapsedMs: 0,
       });
@@ -456,7 +504,7 @@ class StreamManager {
 
       this._setState({ status: 'Connecting...' });
       let sessionData;
-      try { sessionData = await this._createStreamSession(translationConfig); }
+      try { sessionData = await this._createStreamSession(translationConfig, analysisConfig); }
       catch (sessionError) {
         this._setState({ status: 'Connection failed.', errorMessage: 'Could not create a streaming session.' });
         throw sessionError;
@@ -686,6 +734,31 @@ class StreamManager {
             } else if (msgType === 'translation.error') {
               const errorText = typeof message.error === 'string' ? message.error : 'Translation failed';
               this._setState({ errorMessage: errorText });
+            } else if (msgType === 'analysis.delta' || msgType === 'analysis.done') {
+              const entry = {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                type: msgType,
+                mode: typeof message.mode === 'string' ? message.mode : this.state.analysisMode,
+                text: typeof message.text === 'string'
+                  ? message.text
+                  : (typeof message.summary === 'string' ? message.summary : ''),
+                timestampMs: typeof message.timestamp_ms === 'number'
+                  ? message.timestamp_ms
+                  : (typeof message.window_end_ms === 'number' ? message.window_end_ms : this.state.elapsedMs),
+              };
+              if (entry.text) {
+                this._setState({
+                  analysisEntries: [...this.state.analysisEntries, entry].slice(-200),
+                });
+              }
+            } else if (msgType === 'analysis.status') {
+              const statusText = typeof message.text === 'string' ? message.text : '';
+              if (statusText) {
+                this._setState({ status: statusText });
+              }
+            } else if (msgType === 'analysis.error') {
+              const errorText = typeof message.error === 'string' ? message.error : 'Analysis failed';
+              this._setState({ errorMessage: errorText });
             } else if (msgType === 'status') {
               this._setState({ status: message.text });
             } else if (msgType === 'error') {
@@ -798,6 +871,9 @@ class StreamManager {
       elapsedMs: 0,
       localAnnotations: transcriptionId ? {} : this.state.localAnnotations,
       translationEntries: [],
+      analysisEntries: [],
+      hasAudioTrack: false,
+      hasVideoTrack: false,
     });
   }
 }
