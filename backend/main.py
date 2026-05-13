@@ -213,6 +213,15 @@ async def _handle_start_stream(ws: web.WebSocketResponse, stream_id: str):
         else metadata.get("live_translation_enabled", False)
     )
 
+    logger.info(
+        "Resolved translation setup for stream %s: enabled=%s target_language=%s provider=%s provider_stream_id=%s",
+        stream_id,
+        live_translation_enabled,
+        bool(target_language),
+        bool(provider_name),
+        bool(provider_stream_id),
+    )
+
     relay.set_translation_callback(None)
     if live_translation_enabled and target_language and provider_name and provider_stream_id:
         provider = compute_provider_manager.get_provider(provider_name)

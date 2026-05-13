@@ -851,6 +851,13 @@ async def update_stream_translation(request):
     )
     target_language = data.get('target_language') or None
 
+    logger.info(
+        "Translation config update requested: stream_id=%s source_language=%s target_language=%s",
+        stream_id,
+        source_language,
+        target_language,
+    )
+
     updated_session = await session_store.update_stream_translation_config(
         stream_id=stream_id,
         source_language=source_language,
@@ -859,6 +866,7 @@ async def update_stream_translation(request):
 
     relay = get_relay(stream_id)
     if relay:
+        logger.info("Clearing translation callback before reconfiguration: stream_id=%s", stream_id)
         relay.set_translation_callback(None)
 
         provider_session = (updated_session or stream_session).get('provider_session', {})
@@ -906,6 +914,29 @@ async def update_stream_translation(request):
                         )
 
                 relay.set_translation_callback(_translate_sentence)
+                logger.info(
+                    "Translation callback reconfigured: stream_id=%s provider=%s provider_stream_id=%s source_language=%s target_language=%s",
+                    stream_id,
+                    provider_name,
+                    provider_stream_id,
+                    effective_source_language,
+                    effective_target_language,
+                )
+            else:
+                logger.warning(
+                    "Unable to reconfigure translation callback: stream_id=%s provider=%s has_update_streaming_session=%s",
+                    stream_id,
+                    provider_name,
+                    False,
+                )
+        else:
+            logger.warning(
+                "Translation callback remains disabled after update: stream_id=%s effective_target_language=%s provider=%s provider_stream_id=%s",
+                stream_id,
+                bool(effective_target_language),
+                bool(provider_name),
+                bool(provider_stream_id),
+            )
 
     return web.json_response({
         'stream_id': stream_id,

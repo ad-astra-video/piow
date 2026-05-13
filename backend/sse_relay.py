@@ -74,6 +74,9 @@ class SSERelay:
         self._db_text_buffer_start_ts_ms: int = 0
         self._translation_callback: Optional[Callable[[str], Awaitable[None]]] = None
         self._pending_translation_tasks: Set[asyncio.Task] = set()
+        self._translation_no_callback_drops: int = 0
+        self._translation_callback_successes: int = 0
+        self._translation_callback_failures: int = 0
         # Track sentence indices for matching translations to sentences
         self._sentence_text_to_index: Dict[str, int] = {}
         self._next_sentence_index: int = 0
@@ -83,7 +86,15 @@ class SSERelay:
         callback: Optional[Callable[[str], Awaitable[None]]],
     ) -> None:
         """Set or clear the callback used for sentence-level live translation."""
+        had_callback = self._translation_callback is not None
+        has_callback = callback is not None
         self._translation_callback = callback
+        if had_callback != has_callback:
+            logger.info(
+                "Translation callback state changed for stream %s: enabled=%s",
+                self.stream_id,
+                has_callback,
+            )
 
     async def start(self):
         """Start the SSE relay task."""
@@ -399,11 +410,25 @@ class SSERelay:
 
             if self._session_store is not None and isinstance(message, dict):
                 new_sentences = self._buffer_transcription_for_db(message)
-                if new_sentences and self._translation_callback:
-                    for sentence in new_sentences:
-                        self._track_translation_task(
-                            self._run_translation_callback(sentence),
-                            task_name=f"sse-translate-callback-{self.stream_id}",
+                if new_sentences:
+                    if self._translation_callback:
+                        logger.info(
+                            "Scheduling %d translation callback sentence(s) for stream %s",
+                            len(new_sentences),
+                            self.stream_id,
+                        )
+                        for sentence in new_sentences:
+                            self._track_translation_task(
+                                self._run_translation_callback(sentence),
+                                task_name=f"sse-translate-callback-{self.stream_id}",
+                            )
+                    else:
+                        self._translation_no_callback_drops += len(new_sentences)
+                        logger.warning(
+                            "Dropped %d sentence(s) for translation on stream %s because callback is unset (total_dropped=%d)",
+                            len(new_sentences),
+                            self.stream_id,
+                            self._translation_no_callback_drops,
                         )
 
                 if msg_type == "translation":
@@ -428,10 +453,19 @@ class SSERelay:
             return
         try:
             await self._translation_callback(sentence)
+            self._translation_callback_successes += 1
+            if self._translation_callback_successes == 1 or self._translation_callback_successes % 25 == 0:
+                logger.info(
+                    "Translation callback success for stream %s (count=%d)",
+                    self.stream_id,
+                    self._translation_callback_successes,
+                )
         except Exception as exc:
+            self._translation_callback_failures += 1
             logger.warning(
-                "Translation callback failed for stream %s: %s",
+                "Translation callback failed for stream %s (failures=%d): %s",
                 self.stream_id,
+                self._translation_callback_failures,
                 exc,
             )
 
