@@ -250,3 +250,72 @@ async def test_queue_live_analysis_respects_video_window_and_transcription_flag(
     worker._queue_live_analysis("visual cue", 2100, is_final=False)
     await asyncio.sleep(0)
     worker._run_live_analysis_async.assert_awaited_once_with("visual cue", 2100)
+
+
+async def test_queue_live_audio_analysis_triggers_without_transcription():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.analysis_mode = "audio_only"
+    worker.live_transcription_enabled = False
+    worker.analysis_audio_chunk_seconds = 0.5
+    worker._run_live_audio_analysis_async = AsyncMock()
+
+    # 3200 bytes = 100ms @ 16kHz PCM16 mono
+    worker._queue_live_audio_analysis(b"\x00" * 3200)
+    await asyncio.sleep(0)
+    worker._run_live_audio_analysis_async.assert_not_awaited()
+
+    # Add 12800 bytes (400ms) for total 500ms window.
+    worker._queue_live_audio_analysis(b"\x00" * 12800)
+    await asyncio.sleep(0)
+
+    worker._run_live_audio_analysis_async.assert_awaited_once()
+    run_args = worker._run_live_audio_analysis_async.call_args.args
+    assert len(run_args[0]) == 16000
+    assert run_args[1] == 500
+
+
+async def test_run_live_audio_analysis_async_emits_stream_message():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.analysis_mode = "audio_only"
+    worker.live_transcription_enabled = False
+    worker.analysis_prompt = "Track decision changes"
+
+    mock_processor = MagicMock()
+    mock_processor.send_data = AsyncMock()
+
+    original_processor = worker_app.processor
+    original_gemma = worker_app.gemma_translator
+    worker_app.processor = mock_processor
+    try:
+        worker_app.gemma_translator = MagicMock()
+        worker_app.gemma_translator.analyze_audio = AsyncMock(return_value={"analysis_text": "Decision reversed"})
+        await worker._run_live_audio_analysis_async(b"\x00\x00\x01\x01", 320)
+    finally:
+        worker_app.processor = original_processor
+        worker_app.gemma_translator = original_gemma
+
+    mock_processor.send_data.assert_awaited_once()
+    payload = json.loads(mock_processor.send_data.call_args[0][0])
+    assert payload == {
+        "type": "analysis.done",
+        "mode": "audio_only",
+        "text": "Decision reversed",
+        "timestamp_ms": 320,
+    }
+
+
+async def test_queue_live_audio_analysis_flushes_on_final():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.analysis_mode = "audio_only"
+    worker.live_transcription_enabled = False
+    worker._analysis_pending_audio = b"\x00\x00\x01\x01"
+    worker._analysis_audio_samples_total = 2
+    worker._run_live_audio_analysis_async = AsyncMock()
+
+    worker._queue_live_audio_analysis(b"", is_final=True)
+    await asyncio.sleep(0)
+
+    worker._run_live_audio_analysis_async.assert_awaited_once_with(b"\x00\x00\x01\x01", 0)

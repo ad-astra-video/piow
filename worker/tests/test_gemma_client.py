@@ -62,3 +62,39 @@ class TestGemmaClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["analysis_text"], "")
         self.assertTrue(result["suppressed"])
         self.assertEqual(result["suppression_reason"], "no_update")
+
+    @patch.dict(os.environ, {"GEMMA_AUDIO_ANALYSIS_ENABLED": "true"}, clear=False)
+    @patch.object(GemmaClient, "_chat_completion", new_callable=AsyncMock)
+    async def test_analyze_audio_sends_multimodal_payload(self, mock_chat_completion):
+        client = GemmaClient(base_url="http://example.com", model="test-model")
+        mock_chat_completion.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Speaker agreed on rollback plan",
+                    }
+                }
+            ]
+        }
+
+        result = await client.analyze_audio(
+            audio_pcm16=b"\x01\x02\x03\x04",
+            sample_rate_hz=16000,
+            mode="audio_only",
+            prompt="Call out critical decisions",
+        )
+
+        self.assertEqual(result["analysis_text"], "Speaker agreed on rollback plan")
+        mock_chat_completion.assert_awaited_once()
+        messages = mock_chat_completion.call_args.args[0]
+        self.assertEqual(messages[1]["role"], "user")
+        user_content = messages[1]["content"]
+        self.assertIsInstance(user_content, list)
+        self.assertEqual(user_content[1]["type"], "input_audio")
+        self.assertEqual(user_content[1]["input_audio"]["format"], "pcm16")
+
+    @patch.dict(os.environ, {}, clear=True)
+    async def test_analyze_audio_fails_fast_when_capability_disabled(self):
+        client = GemmaClient(base_url="http://example.com", model="test-model")
+        result = await client.analyze_audio(audio_pcm16=b"\x01\x02")
+        self.assertIn("does not support audio-direct analysis", result["error"])

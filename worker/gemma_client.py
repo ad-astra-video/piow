@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import time
+import base64
 from typing import Any, Dict, Optional
 
 import aiohttp
@@ -38,7 +39,12 @@ class GemmaClient:
     def is_configured(self) -> bool:
         return bool(self.base_url and self.model)
 
-    async def _chat_completion(self, messages: list[dict[str, str]]) -> Dict[str, Any]:
+    @property
+    def audio_analysis_supported(self) -> bool:
+        """Gate audio-direct analysis until the runtime supports audio payloads."""
+        return os.environ.get("GEMMA_AUDIO_ANALYSIS_ENABLED", "false").lower() in ("1", "true", "yes")
+
+    async def _chat_completion(self, messages: list[dict[str, Any]]) -> Dict[str, Any]:
         payload = {
             "model": self.model,
             "messages": messages,
@@ -250,6 +256,107 @@ class GemmaClient:
             }
         except Exception as exc:
             logger.exception("Gemma analysis request failed")
+            return {
+                "error": str(exc),
+                "analysis_text": "",
+                "model": self.model,
+                "backend": "gemma-vllm",
+            }
+
+    async def analyze_audio(
+        self,
+        audio_pcm16: bytes,
+        sample_rate_hz: int = 16000,
+        prompt: Optional[str] = None,
+        mode: str = "audio_only",
+    ) -> Dict[str, Any]:
+        """Run live analysis directly from PCM16 audio payloads."""
+        start_time = time.time()
+
+        if not audio_pcm16:
+            return {
+                "error": "Missing audio",
+                "analysis_text": "",
+                "model": self.model,
+                "backend": "gemma-vllm",
+            }
+
+        if not self.is_configured:
+            return {
+                "error": "Gemma runtime is not configured",
+                "analysis_text": "",
+                "model": self.model,
+                "backend": "gemma-vllm",
+            }
+
+        if not self.audio_analysis_supported:
+            return {
+                "error": "Gemma runtime does not support audio-direct analysis (enable GEMMA_AUDIO_ANALYSIS_ENABLED=true).",
+                "analysis_text": "",
+                "model": self.model,
+                "backend": "gemma-vllm",
+            }
+
+        default_prompt = self._default_analysis_prompt(mode)
+        effective_prompt = (prompt or default_prompt).strip()
+        system_prompt = (
+            "You are a real-time analyst. Return concise, actionable observations only. "
+            "If there is no new actionable update (no meaningful action, decision, or risk), "
+            "return exactly NO_UPDATE and nothing else."
+        )
+        user_text = (
+            f"Mode: {mode}\\n"
+            f"Instructions: {effective_prompt}\\n\\n"
+            f"Audio format: pcm16 mono {int(sample_rate_hz)}Hz. "
+            "Analyze only the provided audio chunk and report any actionable updates."
+        )
+        encoded_audio = base64.b64encode(audio_pcm16).decode("ascii")
+
+        try:
+            data = await self._chat_completion([
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": encoded_audio,
+                                "format": "pcm16",
+                            },
+                        },
+                    ],
+                },
+            ])
+            if isinstance(data, dict) and data.get("error"):
+                return {
+                    "error": data.get("error"),
+                    "analysis_text": "",
+                    "model": self.model,
+                    "backend": "gemma-vllm",
+                    "response": data.get("response", ""),
+                }
+
+            analysis_text = self._extract_content(data)
+            if self._is_no_update_response(analysis_text):
+                return {
+                    "analysis_text": "",
+                    "suppressed": True,
+                    "suppression_reason": "no_update",
+                    "model": self.model,
+                    "backend": "gemma-vllm",
+                }
+
+            processing_time = time.time() - start_time
+            return {
+                "analysis_text": analysis_text,
+                "model": self.model,
+                "backend": "gemma-vllm",
+                "processing_time": processing_time,
+            }
+        except Exception as exc:
+            logger.exception("Gemma audio analysis request failed")
             return {
                 "error": str(exc),
                 "analysis_text": "",

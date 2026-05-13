@@ -471,6 +471,8 @@ class LiveTranscriptionWorker:
         self.analysis_prompt: str = self._default_analysis_prompt(self.analysis_mode)
         self.analysis_prompt_custom: bool = False
         self._analysis_pending_text: str = ""
+        self._analysis_pending_audio: bytes = b""
+        self._analysis_audio_samples_total: int = 0
         self._analysis_last_run_ts_ms: int = 0
 
     def _default_analysis_prompt(self, mode: str) -> str:
@@ -499,6 +501,8 @@ class LiveTranscriptionWorker:
         LiveTranscriptionWorker._audio_frame_count = 0
         LiveTranscriptionWorker._audio_buffer = b""
         self._analysis_pending_text = ""
+        self._analysis_pending_audio = b""
+        self._analysis_audio_samples_total = 0
         self._analysis_last_run_ts_ms = 0
         self._apply_analysis_params(params)
 
@@ -528,6 +532,9 @@ class LiveTranscriptionWorker:
             """
             nonlocal _delta_count
             if processor is None:
+                return
+
+            if not self.live_transcription_enabled:
                 return
 
             if isinstance(message, dict):
@@ -569,11 +576,12 @@ class LiveTranscriptionWorker:
 
         vllm_client.set_text_callback(_on_transcription)
 
-        try:
-            await vllm_client.connect()
-            logger.info("VLLM client connected successfully")
-        except Exception as exc:
-            logger.warning(f"Could not connect to VLLM on stream start: {exc}")
+        if self.live_transcription_enabled:
+            try:
+                await vllm_client.connect()
+                logger.info("VLLM client connected successfully")
+            except Exception as exc:
+                logger.warning(f"Could not connect to VLLM on stream start: {exc}")
 
     @video_handler
     async def handle_video(self, frame: VideoFrame) -> VideoFrame:
@@ -584,28 +592,31 @@ class LiveTranscriptionWorker:
     async def handle_audio(self, frame: AudioFrame) -> List[AudioFrame]:
         """Forward audio frames to the VLLM realtime websocket."""
         LiveTranscriptionWorker._audio_frame_count += 1
-        if vllm_client and vllm_client.is_connected:
-            try:
-                samples = frame.samples  # shape (channels, samples), dtype float32
-                # Log sample rate periodically
-                if LiveTranscriptionWorker._audio_frame_count % 100 == 1:
-                    logger.info(
-                        f"handle_audio: frame={LiveTranscriptionWorker._audio_frame_count}, "
-                        f"sample_rate={getattr(frame, 'rate', 'unknown')}Hz, "
-                        f"shape={samples.shape}, dtype={samples.dtype}"
-                    )
-                # Resample to 16kHz mono PCM16 using PyAV
-                n_channels = samples.shape[0] if samples.ndim > 1 else 1
-                layout = 'stereo' if n_channels == 2 else 'mono'
-                av_frame = av.AudioFrame.from_ndarray(
-                    samples if samples.ndim > 1 else samples[np.newaxis, :],
-                    format='fltp',
-                    layout=layout,
+        try:
+            samples = frame.samples  # shape (channels, samples), dtype float32
+            # Log sample rate periodically
+            if LiveTranscriptionWorker._audio_frame_count % 100 == 1:
+                logger.info(
+                    f"handle_audio: frame={LiveTranscriptionWorker._audio_frame_count}, "
+                    f"sample_rate={getattr(frame, 'rate', 'unknown')}Hz, "
+                    f"shape={samples.shape}, dtype={samples.dtype}"
                 )
-                av_frame.sample_rate = getattr(frame, 'rate', 48000)
-                resampled_frames = LiveTranscriptionWorker._resampler.resample(av_frame)
-                audio_bytes = b''.join(bytes(rf.planes[0]) for rf in resampled_frames)
-                if audio_bytes:
+            # Resample to 16kHz mono PCM16 using PyAV
+            n_channels = samples.shape[0] if samples.ndim > 1 else 1
+            layout = 'stereo' if n_channels == 2 else 'mono'
+            av_frame = av.AudioFrame.from_ndarray(
+                samples if samples.ndim > 1 else samples[np.newaxis, :],
+                format='fltp',
+                layout=layout,
+            )
+            av_frame.sample_rate = getattr(frame, 'rate', 48000)
+            resampled_frames = LiveTranscriptionWorker._resampler.resample(av_frame)
+            audio_bytes = b''.join(bytes(rf.planes[0]) for rf in resampled_frames)
+            if audio_bytes:
+                if self._should_use_audio_direct_analysis():
+                    self._queue_live_audio_analysis(audio_bytes)
+
+                if self.live_transcription_enabled and vllm_client and vllm_client.is_connected:
                     LiveTranscriptionWorker._audio_buffer += audio_bytes
                     while len(LiveTranscriptionWorker._audio_buffer) >= LiveTranscriptionWorker._SEND_CHUNK_BYTES:
                         chunk = LiveTranscriptionWorker._audio_buffer[:LiveTranscriptionWorker._SEND_CHUNK_BYTES]
@@ -630,8 +641,8 @@ class LiveTranscriptionWorker:
                             remaining = LiveTranscriptionWorker._audio_buffer
                             LiveTranscriptionWorker._audio_buffer = b""
                             await self._cycle_vllm_connection(remaining)
-            except Exception as exc:
-                logger.warning(f"VLLM send_audio error: {exc}")
+        except Exception as exc:
+            logger.warning(f"VLLM send_audio error: {exc}")
         return [frame]
 
     async def _cycle_vllm_connection(self, remaining_audio: bytes) -> None:
@@ -766,6 +777,39 @@ class LiveTranscriptionWorker:
         self._analysis_last_run_ts_ms = int(timestamp_ms)
         asyncio.create_task(self._run_live_analysis_async(prompt_text, int(timestamp_ms)))
 
+    def _should_use_audio_direct_analysis(self) -> bool:
+        """Audio-direct analysis runs only when transcription is off and mode uses audio."""
+        if not self.analysis_enabled or self.live_transcription_enabled:
+            return False
+        return self.analysis_mode in {"audio_only", "multimodal"}
+
+    def _queue_live_audio_analysis(self, audio_pcm16: bytes, is_final: bool = False) -> None:
+        """Schedule audio-direct analysis on elapsed audio windows or final flush."""
+        if not self._should_use_audio_direct_analysis():
+            return
+
+        if not audio_pcm16 and not is_final:
+            return
+
+        if audio_pcm16:
+            self._analysis_pending_audio += audio_pcm16
+            self._analysis_audio_samples_total += len(audio_pcm16) // 2
+
+        if not self._analysis_pending_audio:
+            return
+
+        timestamp_ms = int((self._analysis_audio_samples_total * 1000) / 16000)
+        chunk_ms = max(int(self.analysis_audio_chunk_seconds * 1000), 250)
+        elapsed_ms = max(0, timestamp_ms - int(self._analysis_last_run_ts_ms or 0))
+        should_run = is_final or elapsed_ms >= chunk_ms
+        if not should_run:
+            return
+
+        audio_chunk = self._analysis_pending_audio
+        self._analysis_pending_audio = b""
+        self._analysis_last_run_ts_ms = int(timestamp_ms)
+        asyncio.create_task(self._run_live_audio_analysis_async(audio_chunk, int(timestamp_ms)))
+
     async def _run_live_analysis_async(self, text: str, timestamp_ms: Optional[int] = None) -> None:
         """Call Gemma with the current analysis prompt and emit analysis events."""
         if not self.analysis_enabled or not text or processor is None:
@@ -808,6 +852,56 @@ class LiveTranscriptionWorker:
                 }))
         except Exception as exc:
             logger.error("Live analysis failed: %s", exc)
+            if processor is not None:
+                await processor.send_data(json.dumps({
+                    "type": "analysis.error",
+                    "error": str(exc),
+                    "mode": self.analysis_mode,
+                }))
+
+    async def _run_live_audio_analysis_async(self, audio_pcm16: bytes, timestamp_ms: Optional[int] = None) -> None:
+        """Call Gemma with buffered PCM16 audio and emit analysis events."""
+        if not self.analysis_enabled or not audio_pcm16 or processor is None:
+            return
+
+        try:
+            result = await gemma_translator.analyze_audio(
+                audio_pcm16=audio_pcm16,
+                sample_rate_hz=16000,
+                prompt=self.analysis_prompt,
+                mode=self.analysis_mode,
+            )
+            analysis_text = ""
+            suppressed = False
+            if isinstance(result, dict):
+                analysis_text = (result.get("analysis_text") or "").strip()
+                suppressed = bool(result.get("suppressed"))
+
+            if suppressed:
+                logger.debug(
+                    "Audio-direct analysis suppressed for stream output: mode=%s reason=%s",
+                    self.analysis_mode,
+                    result.get("suppression_reason") if isinstance(result, dict) else "unknown",
+                )
+                return
+
+            if analysis_text and processor is not None:
+                payload = {
+                    "type": "analysis.done",
+                    "mode": self.analysis_mode,
+                    "text": analysis_text,
+                }
+                if isinstance(timestamp_ms, int):
+                    payload["timestamp_ms"] = timestamp_ms
+                await processor.send_data(json.dumps(payload))
+            elif processor is not None and isinstance(result, dict) and result.get("error"):
+                await processor.send_data(json.dumps({
+                    "type": "analysis.error",
+                    "error": result.get("error"),
+                    "mode": self.analysis_mode,
+                }))
+        except Exception as exc:
+            logger.error("Audio-direct live analysis failed: %s", exc)
             if processor is not None:
                 await processor.send_data(json.dumps({
                     "type": "analysis.error",
@@ -872,6 +966,13 @@ class LiveTranscriptionWorker:
         realtime websocket so the next stream gets a fresh session."""
         global vllm_client
         logger.info("Stream stopped")
+
+        if self._should_use_audio_direct_analysis() and self._analysis_pending_audio:
+            audio_chunk = self._analysis_pending_audio
+            self._analysis_pending_audio = b""
+            timestamp_ms = int((self._analysis_audio_samples_total * 1000) / 16000)
+            self._analysis_last_run_ts_ms = timestamp_ms
+            await self._run_live_audio_analysis_async(audio_chunk, timestamp_ms)
 
         if vllm_client is not None:
             try:
