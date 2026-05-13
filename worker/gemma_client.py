@@ -11,6 +11,8 @@ import os
 import re
 import time
 import base64
+import io
+import wave
 from typing import Any, Dict, Optional
 
 import aiohttp
@@ -108,6 +110,17 @@ class GemmaClient:
         if not normalized:
             return False
         return bool(re.fullmatch(r"NO[_\s-]?UPDATE\.?", normalized, flags=re.IGNORECASE))
+
+    @staticmethod
+    def _pcm16_to_wav_bytes(audio_pcm16: bytes, sample_rate_hz: int) -> bytes:
+        """Wrap raw PCM16 mono bytes into a WAV container for vLLM audio decoding."""
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(int(sample_rate_hz))
+            wav_file.writeframes(audio_pcm16)
+        return wav_buffer.getvalue()
 
     async def translate(
         self,
@@ -311,7 +324,9 @@ class GemmaClient:
             f"Audio format: pcm16 mono {int(sample_rate_hz)}Hz. "
             "Analyze only the provided audio chunk and report any actionable updates."
         )
-        encoded_audio = base64.b64encode(audio_pcm16).decode("ascii")
+        encoded_audio = base64.b64encode(
+            self._pcm16_to_wav_bytes(audio_pcm16, sample_rate_hz)
+        ).decode("ascii")
 
         try:
             data = await self._chat_completion([
@@ -324,7 +339,7 @@ class GemmaClient:
                             "type": "input_audio",
                             "input_audio": {
                                 "data": encoded_audio,
-                                "format": "pcm16",
+                                "format": "wav",
                             },
                         },
                     ],

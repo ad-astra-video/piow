@@ -4,6 +4,7 @@
 import os
 import sys
 import unittest
+import base64
 from unittest.mock import AsyncMock, patch
 
 # Add the worker directory to the path
@@ -90,7 +91,9 @@ class TestGemmaClient(unittest.IsolatedAsyncioTestCase):
         user_content = messages[1]["content"]
         self.assertIsInstance(user_content, list)
         self.assertEqual(user_content[1]["type"], "input_audio")
-        self.assertEqual(user_content[1]["input_audio"]["format"], "pcm16")
+        self.assertEqual(user_content[1]["input_audio"]["format"], "wav")
+        wav_bytes = base64.b64decode(user_content[1]["input_audio"]["data"])
+        self.assertTrue(wav_bytes.startswith(b"RIFF"))
 
     @patch.dict(os.environ, {"GEMMA_AUDIO_ANALYSIS_ENABLED": "false"}, clear=False)
     async def test_analyze_audio_fails_fast_when_explicitly_disabled(self):
