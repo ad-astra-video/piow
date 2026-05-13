@@ -616,21 +616,22 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
         <div className="quota-modal-overlay" onClick={() => dismissQuotaError()}>
           <div className="quota-modal panel-glass" onClick={(e) => e.stopPropagation()}>
             <div className="quota-modal-header">
-              <h2>Stream Limit Reached</h2>
-              <button className="icon-btn" onClick={() => dismissQuotaError()} title="Close">
-                <X size={14} />
-              </button>
+              <h2>Quota Exceeded</h2>
             </div>
             <p className="quota-modal-message">
-              Your current plan has reached its live streaming quota. Upgrade to a higher tier to start streaming again.
+              Your <strong>{quotaError.tier || 'free'}</strong> plan has reached its transcription quota limit.
             </p>
-            <div className="quota-modal-meta">
-              <span>Tier: <strong>{quotaError.tier || 'free'}</strong></span>
-              {quotaError.quota?.used != null && quotaError.quota?.limit != null && (
+            {quotaError.quota?.used != null && quotaError.quota?.limit != null && (
+              <div className="quota-modal-meta">
                 <span>
-                  Usage: <strong>{quotaError.quota.used}</strong> / <strong>{quotaError.quota.limit === -1 ? 'infinite' : quotaError.quota.limit}</strong>
+                  <strong>{quotaError.quota.used}</strong> / <strong>{quotaError.quota.limit === -1 ? '∞' : quotaError.quota.limit}</strong> minutes used
                 </span>
-              )}
+              </div>
+            )}
+            <div style={{ padding: '0 1rem 1rem' }}>
+              <p style={{ marginTop: '0.5rem', marginBottom: '1rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                Upgrade your plan to continue using live transcription with higher limits.
+              </p>
             </div>
             <div className="quota-modal-actions">
               <button
@@ -640,7 +641,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                   navigate('/usage');
                 }}
               >
-                View Usage
+                View Usage Details
               </button>
               <button
                 className="primary-button"
@@ -648,6 +649,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                   dismissQuotaError();
                   navigate('/billing/plans');
                 }}
+                style={{ backgroundColor: '#ff6b6b', borderColor: '#ff6b6b' }}
               >
                 Upgrade Plan
               </button>

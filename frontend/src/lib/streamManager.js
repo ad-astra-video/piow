@@ -572,10 +572,8 @@ class StreamManager {
       catch (sessionError) {
         const isQuotaExceeded = sessionError?.status === 402 && sessionError?.code === 'quota_exceeded';
         this._setState({
-          status: 'Connection failed.',
-          errorMessage: isQuotaExceeded
-            ? 'Quota exceeded for your current plan.'
-            : 'Could not create a streaming session.',
+          status: isQuotaExceeded ? 'Ready.' : 'Connection failed.',
+          errorMessage: isQuotaExceeded ? '' : 'Could not create a streaming session.',
           quotaError: isQuotaExceeded
             ? {
                 code: sessionError.code,
