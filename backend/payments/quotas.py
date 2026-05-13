@@ -92,15 +92,31 @@ async def check_quota(user_id: str, service_type: str, tier: str = 'free') -> Tu
     thirty_days_ago = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() - 30 * 24 * 60 * 60))
 
     try:
-        result = await (
-            supabase.table(table)
-            .select(column)
-            .eq('user_id', user_id)
-            .gte('created_at', thirty_days_ago)
-            .execute()
-        )
+        # Supabase/PostgREST may cap unpaged SELECT results (commonly 1000 rows).
+        # Stream usage is written once per minute, so we must page through all rows.
+        used_raw = 0
+        page_size = 1000
+        page = 0
+        while True:
+            start = page * page_size
+            end = start + page_size - 1
+            result = await (
+                supabase.table(table)
+                .select(column)
+                .eq('user_id', user_id)
+                .gte('created_at', thirty_days_ago)
+                .range(start, end)
+                .execute()
+            )
 
-        used_raw = sum(row.get(column, 0) or 0 for row in (result.data or []))
+            rows = result.data or []
+            if not rows:
+                break
+
+            used_raw += sum(row.get(column, 0) or 0 for row in rows)
+            if len(rows) < page_size:
+                break
+            page += 1
 
         # Convert to quota units
         if 'minutes' in quota_key:
