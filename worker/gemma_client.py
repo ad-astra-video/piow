@@ -41,8 +41,9 @@ class GemmaClient:
 
     @property
     def audio_analysis_supported(self) -> bool:
-        """Gate audio-direct analysis until the runtime supports audio payloads."""
-        return os.environ.get("GEMMA_AUDIO_ANALYSIS_ENABLED", "false").lower() in ("1", "true", "yes")
+        """Audio analysis is enabled by default, with an explicit env opt-out."""
+        raw = os.environ.get("GEMMA_AUDIO_ANALYSIS_ENABLED", "true").strip().lower()
+        return raw not in ("0", "false", "no", "off")
 
     async def _chat_completion(self, messages: list[dict[str, Any]]) -> Dict[str, Any]:
         payload = {
@@ -291,7 +292,7 @@ class GemmaClient:
 
         if not self.audio_analysis_supported:
             return {
-                "error": "Gemma runtime does not support audio-direct analysis (enable GEMMA_AUDIO_ANALYSIS_ENABLED=true).",
+                "error": "Gemma audio-direct analysis disabled via GEMMA_AUDIO_ANALYSIS_ENABLED=false.",
                 "analysis_text": "",
                 "model": self.model,
                 "backend": "gemma-vllm",
