@@ -75,6 +75,24 @@ class GemmaClient:
                 return str(message.get("content") or "").strip()
         return ""
 
+    @staticmethod
+    def _default_analysis_prompt(mode: str) -> str:
+        prompts = {
+            "multimodal": (
+                "Analyze the live conversation using both audio and video context. "
+                "Summarize key actions, decisions, and risks."
+            ),
+            "audio_only": (
+                "Analyze only the spoken audio from the live conversation. "
+                "Summarize key actions, decisions, and risks."
+            ),
+            "video_only": (
+                "Analyze only the visual video context from the live conversation. "
+                "Summarize key actions, decisions, and risks."
+            ),
+        }
+        return prompts.get(mode, prompts["multimodal"])
+
     async def translate(self, text: str, source_lang: str, target_lang: str) -> Dict[str, Any]:
         """Translate text using the Gemma vLLM chat-completions API."""
         start_time = time.time()
@@ -168,7 +186,7 @@ class GemmaClient:
                 "backend": "gemma-vllm",
             }
 
-        default_prompt = "Summarize key actions, decisions, and risks from the live conversation."
+        default_prompt = self._default_analysis_prompt(mode)
         effective_prompt = (prompt or default_prompt).strip()
         system_prompt = "You are a real-time analyst. Return concise, actionable observations only."
         user_prompt = (

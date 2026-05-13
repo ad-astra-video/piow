@@ -446,14 +446,29 @@ class LiveTranscriptionWorker:
     # Cycle the VLLM WebSocket connection every 15 minutes to avoid
     # long-lived connection issues (stale state, memory growth, etc.).
     _CONNECTION_MAX_AGE_SECONDS: int = 15 * 60
-    _DEFAULT_ANALYSIS_PROMPT: str = (
-        "Summarize key actions, decisions, and risks from the live conversation."
-    )
+    _DEFAULT_ANALYSIS_PROMPTS: Dict[str, str] = {
+        "multimodal": (
+            "Analyze the live conversation using both audio and video context. "
+            "Summarize key actions, decisions, and risks."
+        ),
+        "audio_only": (
+            "Analyze only the spoken audio from the live conversation. "
+            "Summarize key actions, decisions, and risks."
+        ),
+        "video_only": (
+            "Analyze only the visual video context from the live conversation. "
+            "Summarize key actions, decisions, and risks."
+        ),
+    }
 
     def __init__(self) -> None:
         self.analysis_enabled: bool = False
         self.analysis_mode: str = "multimodal"
-        self.analysis_prompt: str = self._DEFAULT_ANALYSIS_PROMPT
+        self.analysis_prompt: str = self._default_analysis_prompt(self.analysis_mode)
+        self.analysis_prompt_custom: bool = False
+
+    def _default_analysis_prompt(self, mode: str) -> str:
+        return self._DEFAULT_ANALYSIS_PROMPTS.get(mode, self._DEFAULT_ANALYSIS_PROMPTS["multimodal"])
 
     @model_loader
     async def load(self, **kwargs: dict) -> None:
@@ -663,18 +678,27 @@ class LiveTranscriptionWorker:
         if not isinstance(params, dict):
             return
 
+        mode_changed = False
         analysis_enabled = params.get("analysis_enabled")
         if analysis_enabled is not None:
             self.analysis_enabled = bool(analysis_enabled)
 
         analysis_mode = params.get("analysis_mode")
         if isinstance(analysis_mode, str) and analysis_mode in {"multimodal", "audio_only", "video_only"}:
+            mode_changed = self.analysis_mode != analysis_mode
             self.analysis_mode = analysis_mode
 
         analysis_prompt = params.get("analysis_prompt")
         if analysis_prompt is not None:
             prompt_text = str(analysis_prompt).strip()
-            self.analysis_prompt = prompt_text or self._DEFAULT_ANALYSIS_PROMPT
+            if prompt_text:
+                self.analysis_prompt = prompt_text
+                self.analysis_prompt_custom = True
+            else:
+                self.analysis_prompt = self._default_analysis_prompt(self.analysis_mode)
+                self.analysis_prompt_custom = False
+        elif mode_changed and not self.analysis_prompt_custom:
+            self.analysis_prompt = self._default_analysis_prompt(self.analysis_mode)
 
     async def _run_live_analysis_async(self, text: str, timestamp_ms: Optional[int] = None) -> None:
         """Call Gemma with the current analysis prompt and emit analysis events."""

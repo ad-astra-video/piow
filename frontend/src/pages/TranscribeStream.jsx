@@ -5,7 +5,28 @@ import useLiveTranscription from '../hooks/useLiveTranscription';
 import streamManager, { formatDuration } from '../lib/streamManager';
 import { api } from '../lib/api';
 
-const DEFAULT_ANALYSIS_PROMPT = 'Summarize key actions, decisions, and risks from the live conversation.';
+const ANALYSIS_MODE_CONFIG = {
+  multimodal: {
+    label: 'video and audio',
+    defaultPrompt: 'Analyze the live conversation using both audio and video context. Summarize key actions, decisions, and risks.',
+  },
+  audio_only: {
+    label: 'audio',
+    defaultPrompt: 'Analyze only the spoken audio from the live conversation. Summarize key actions, decisions, and risks.',
+  },
+  video_only: {
+    label: 'video',
+    defaultPrompt: 'Analyze only the visual video context from the live conversation. Summarize key actions, decisions, and risks.',
+  },
+};
+
+const getDefaultAnalysisPrompt = (mode) => (
+  ANALYSIS_MODE_CONFIG[mode]?.defaultPrompt || ANALYSIS_MODE_CONFIG.multimodal.defaultPrompt
+);
+
+const getAnalysisModeLabel = (mode) => (
+  ANALYSIS_MODE_CONFIG[mode]?.label || mode
+);
 
 const SOURCE_META = {
   microphone: { Icon: Mic, label: 'Microphone' },
@@ -53,7 +74,8 @@ export default function TranscribeStream({ accessToken }) {
   const [targetLang, setTargetLang] = useState('');
   const [analysisEnabled, setAnalysisEnabled] = useState(false);
   const [analysisMode, setAnalysisMode] = useState('multimodal');
-  const [analysisPrompt, setAnalysisPrompt] = useState(DEFAULT_ANALYSIS_PROMPT);
+  const [analysisPrompt, setAnalysisPrompt] = useState(getDefaultAnalysisPrompt('multimodal'));
+  const [analysisPromptTouched, setAnalysisPromptTouched] = useState(false);
   const [fileHasVideo, setFileHasVideo] = useState(false);
 
   // Fetch available languages on mount
@@ -89,6 +111,12 @@ export default function TranscribeStream({ accessToken }) {
   }, []);
 
   const effectiveAnalysisEnabled = analysisEnabled && isModeSupported(analysisMode, runtimeTrackAvailability);
+
+  useEffect(() => {
+    if (!analysisPromptTouched) {
+      setAnalysisPrompt(getDefaultAnalysisPrompt(analysisMode));
+    }
+  }, [analysisMode, analysisPromptTouched]);
 
   useEffect(() => {
     if (!isStarted || !streamManager.getStreamId()) return;
@@ -383,7 +411,7 @@ export default function TranscribeStream({ accessToken }) {
                             disabled={disabled}
                             onChange={(e) => setAnalysisMode(e.target.value)}
                           />
-                          <span>{mode}</span>
+                          <span>{getAnalysisModeLabel(mode)}</span>
                           {disabled && <small>{modeDisabledReason(mode)}</small>}
                         </label>
                       );
@@ -395,7 +423,10 @@ export default function TranscribeStream({ accessToken }) {
                       id="analysis_prompt"
                       rows={3}
                       value={analysisPrompt}
-                      onChange={(e) => setAnalysisPrompt(e.target.value)}
+                      onChange={(e) => {
+                        setAnalysisPromptTouched(true);
+                        setAnalysisPrompt(e.target.value);
+                      }}
                       placeholder="Describe what analysis you want to see in real time."
                     />
                   </div>
@@ -511,7 +542,7 @@ export default function TranscribeStream({ accessToken }) {
             <section className="panel-glass analysis-panel">
               <div className="analysis-panel-header">
                 <h2>Live Analysis</h2>
-                <span className="analysis-mode-badge">{analysisMode}</span>
+                <span className="analysis-mode-badge">{getAnalysisModeLabel(analysisMode)}</span>
               </div>
 
               {!effectiveAnalysisEnabled && (
@@ -532,7 +563,7 @@ export default function TranscribeStream({ accessToken }) {
                     <article key={entry.id} className={`analysis-entry ${entry.type === 'analysis.error' ? 'error' : ''}`}>
                       <div className="analysis-entry-meta">
                         <span className="analysis-entry-type">{entry.type.replace('analysis.', '')}</span>
-                        <span className="analysis-entry-mode">{entry.mode}</span>
+                        <span className="analysis-entry-mode">{getAnalysisModeLabel(entry.mode)}</span>
                         <span className="analysis-entry-ts">{formatDuration(entry.timestampMs || 0)}</span>
                       </div>
                       <p>{entry.text}</p>

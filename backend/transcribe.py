@@ -645,6 +645,41 @@ async def transcribe_stream(request):
         user_id = _get_user_id(request)
         stream_request_id = uuid.uuid4().hex[:12]
 
+        # Enforce transcription quota before provisioning provider resources.
+        # x402/subscription auth already ran via decorator; this check enforces
+        # rolling-window plan limits for authenticated user sessions.
+        user = request.get('user')
+        if user and user_id:
+            from payments.quotas import check_quota
+            from supabase_client import async_supabase as supabase
+
+            tier = 'free'
+            try:
+                sub_result = await (
+                    supabase.table('subscriptions')
+                    .select('plan,status')
+                    .eq('user_id', user_id)
+                    .execute()
+                )
+                if sub_result.data and sub_result.data[0].get('status') in ('active', 'trialing'):
+                    tier = sub_result.data[0].get('plan', 'free')
+            except Exception as sub_exc:
+                logger.warning(
+                    "Could not determine subscription tier for stream quota check: user_id=%s error=%s",
+                    user_id,
+                    sub_exc,
+                )
+
+            allowed, quota_info = await check_quota(user_id, 'transcribe_gpu', tier)
+            if not allowed:
+                return web.json_response({
+                    'error': 'Transcription quota exceeded for current plan',
+                    'code': 'quota_exceeded',
+                    'service_type': 'transcribe_gpu',
+                    'tier': tier,
+                    'quota': quota_info,
+                }, status=402)
+
         # Get ranked list of providers for failover
         ranked_providers = compute_provider_manager.select_providers(
             job_type="transcribe_stream", requirements={"language": language}

@@ -43,10 +43,18 @@ def _install_transcribe_stubs():
     sys.modules["auth"] = auth_module
 
     payments_package = types.ModuleType("payments")
+    setattr(payments_package, "__path__", [])
     payment_strategy_module = types.ModuleType("payments.payment_strategy")
     setattr(payment_strategy_module, "x402_or_subscription", _identity_decorator)
+    quotas_module = types.ModuleType("payments.quotas")
+
+    async def _default_check_quota(*_args, **_kwargs):
+        return True, {"remaining": -1, "limit": -1, "used": 0, "unlimited": True}
+
+    setattr(quotas_module, "check_quota", _default_check_quota)
     sys.modules["payments"] = payments_package
     sys.modules["payments.payment_strategy"] = payment_strategy_module
+    sys.modules["payments.quotas"] = quotas_module
 
     supabase_module = types.ModuleType("supabase_client")
     setattr(supabase_module, "supabase", MagicMock())
@@ -246,3 +254,44 @@ class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(call.kwargs["with_word_timestamps"])
         self.assertEqual(payload["words"], [{"word": "hello", "start": 0.0, "end": 0.5}])
         self.assertEqual(payload["speakers"], [{"speaker": 1, "text": "hello"}])
+
+    async def test_transcribe_stream_blocks_when_quota_exceeded(self):
+        self.transcribe.compute_provider_manager.select_providers = MagicMock(return_value=[])
+
+        class _MockSupabaseTable:
+            def __init__(self):
+                self._select = self
+                self._eq = self
+
+            def select(self, *_args, **_kwargs):
+                return self._select
+
+            def eq(self, *_args, **_kwargs):
+                return self._eq
+
+            async def execute(self):
+                return types.SimpleNamespace(data=[{"plan": "free", "status": "active"}])
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = _MockSupabaseTable()
+
+        mock_request = MagicMock()
+        mock_request.json = AsyncMock(return_value={"language": "en"})
+        mock_request.get.side_effect = lambda key, default=None: {
+            "user": types.SimpleNamespace(id="user-1"),
+            "agent": None,
+        }.get(key, default)
+
+                with patch.object(self.transcribe, "supabase", mock_supabase), \
+                         patch("payments.quotas.check_quota", AsyncMock(return_value=(False, {
+                                 "remaining": 0,
+                                 "limit": 1800,
+                                 "used": 1800,
+                                 "unlimited": False,
+                         }))):
+            response = await self.transcribe.transcribe_stream(mock_request)
+
+        self.assertEqual(response.status, 402)
+        payload = json.loads(response.text)
+        self.assertEqual(payload["code"], "quota_exceeded")
+        self.assertEqual(payload["service_type"], "transcribe_gpu")
