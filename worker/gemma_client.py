@@ -126,10 +126,13 @@ class GemmaClient:
             }
 
         system_prompt = (
-            "You are a translation engine. Translate the user's text faithfully, "
-            "preserving meaning, tone, punctuation, and line breaks. Return only "
-            "the translated text and no explanation, labels, or markdown."
-        )
+			"You are a professional translation engine. Translate the user's text into "
+			"natural, fluent target-language text while preserving the original meaning, "
+			"tone, intent, punctuation, and line breaks. Use idiomatic expressions when "
+			"appropriate and avoid word-for-word translation. Preserve incomplete "
+			"sentences and conversational transcript style naturally. Return only the "
+			"translated text with no explanations, labels, or markdown."
+		)
         user_prompt = prompt or f"Translate from {source_lang} to {target_lang}:\n\n{text}"
         try:
             data = await self._chat_completion([
