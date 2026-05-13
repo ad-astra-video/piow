@@ -203,12 +203,24 @@ export default function TranscribeStream({ accessToken }) {
 
   const modeDisabledReason = (mode) => {
     if (mode === 'multimodal' && !(runtimeTrackAvailability.hasAudio && runtimeTrackAvailability.hasVideo)) {
+      if (audioSource === 'microphone') {
+        return 'Microphone source has no video track.';
+      }
+      if (audioSource === 'file' && fileObjectUrl && !fileHasVideo) {
+        return 'Uploaded file has no video track.';
+      }
       return 'Needs microphone/audio and video tracks.';
     }
     if (mode === 'audio_only' && !runtimeTrackAvailability.hasAudio) {
       return 'No microphone or audio track detected.';
     }
     if (mode === 'video_only' && !runtimeTrackAvailability.hasVideo) {
+      if (audioSource === 'microphone') {
+        return 'Microphone source has no video track.';
+      }
+      if (audioSource === 'file' && fileObjectUrl && !fileHasVideo) {
+        return 'Uploaded file has no video track.';
+      }
       return 'No camera/screen video track detected.';
     }
     return '';
@@ -404,11 +416,17 @@ export default function TranscribeStream({ accessToken }) {
                     {['multimodal', 'audio_only', 'video_only'].map((mode) => {
                       const disabled = !isModeSupported(mode, runtimeTrackAvailability);
                       const reason = modeDisabledReason(mode);
+                      const isVideoMissingState = disabled
+                        && (mode === 'video_only' || mode === 'multimodal')
+                        && (
+                          audioSource === 'microphone'
+                          || (audioSource === 'file' && fileObjectUrl && !fileHasVideo)
+                        );
                       return (
                         <button
                           key={mode}
                           type="button"
-                          className={`analysis-mode-option ${analysisMode === mode ? 'active' : ''}`}
+                          className={`analysis-mode-option ${analysisMode === mode ? 'active' : ''} ${isVideoMissingState ? 'video-unavailable' : ''}`}
                           disabled={disabled}
                           title={disabled ? reason : `Switch to ${getAnalysisModeLabel(mode)}`}
                           onClick={() => setAnalysisMode(mode)}
