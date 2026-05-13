@@ -445,6 +445,22 @@ class SSERelay:
         target_language = message.get("target_language") if isinstance(message.get("target_language"), str) else ""
         if not translated_text or not original_text or not target_language:
             return
+
+        # Early stream translations can arrive before the first periodic flush,
+        # which means no transcription_id exists yet. Flush now so the first
+        # translation rows are linked to the transcription header row.
+        try:
+            stream_data = self._session_store._stream_sessions_cache.get(self.stream_id)  # type: ignore[attr-defined]
+            if not stream_data:
+                stream_data = await self._session_store.get_stream_session(self.stream_id)
+            if stream_data and not stream_data.get("transcription_id") and self._pending_transcription_sentences:
+                await self._flush_pending_segments()
+        except Exception as exc:
+            logger.warning(
+                "Pre-translation flush failed for stream %s: %s",
+                self.stream_id,
+                exc,
+            )
         
         # Look up the sentence_index for this original text
         original_text_stripped = original_text.strip()
