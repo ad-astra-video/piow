@@ -787,6 +787,10 @@ html, body {
   line-height: 1.4;
 }
 
+.source-hint + .service-toggle-grid {
+  margin-top: 0.55rem;
+}
+
 .stat-strip { display: flex; gap: 0.75rem; }
 .stat-strip article {
   flex: 1;
