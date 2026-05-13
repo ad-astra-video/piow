@@ -594,6 +594,16 @@ html, body {
   opacity: 0.55;
 }
 
+.analysis-prompt-row {
+  margin-top: 0.2rem;
+  margin-bottom: 0;
+}
+
+.analysis-prompt-row textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
 /* Audio source selector */
 .source-selector {
   display: flex;

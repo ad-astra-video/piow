@@ -91,7 +91,7 @@ _live_price_per_unit = LIVE_CAPABILITY_PRICE_PER_UNIT
 # ---------------------------------------------------------------------------
 # Component singletons
 # ---------------------------------------------------------------------------
-gemma_client = GemmaClient()
+gemma_translator = GemmaClient()
 vllm_client: Optional[VLLMRealtimeClient] = None
 processor: Any = None
 granite_transcriber: Any = None
@@ -446,6 +446,14 @@ class LiveTranscriptionWorker:
     # Cycle the VLLM WebSocket connection every 15 minutes to avoid
     # long-lived connection issues (stale state, memory growth, etc.).
     _CONNECTION_MAX_AGE_SECONDS: int = 15 * 60
+    _DEFAULT_ANALYSIS_PROMPT: str = (
+        "Summarize key actions, decisions, and risks from the live conversation."
+    )
+
+    def __init__(self) -> None:
+        self.analysis_enabled: bool = False
+        self.analysis_mode: str = "multimodal"
+        self.analysis_prompt: str = self._DEFAULT_ANALYSIS_PROMPT
 
     @model_loader
     async def load(self, **kwargs: dict) -> None:
@@ -469,6 +477,7 @@ class LiveTranscriptionWorker:
         # Reset per-stream audio buffering state
         LiveTranscriptionWorker._audio_frame_count = 0
         LiveTranscriptionWorker._audio_buffer = b""
+        self._apply_analysis_params(params)
 
         # Close any stale client from a previous stream just in case
         if vllm_client is not None:
@@ -527,6 +536,8 @@ class LiveTranscriptionWorker:
                 f"Sending transcription on data channel: is_final={is_final}, len={len(text)}"
             )
             await processor.send_data(payload)
+            if is_final and self.analysis_enabled:
+                asyncio.create_task(self._run_live_analysis_async(text.strip(), _delta_count * 80))
 
         vllm_client.set_text_callback(_on_transcription)
 
@@ -637,6 +648,8 @@ class LiveTranscriptionWorker:
     @param_updater
     async def update_params(self, params: Dict[str, Any]) -> None:
         """Handle mid-stream parameter updates delivered via the stream update route."""
+        self._apply_analysis_params(params)
+
         sentence = params.get("translate_sentence")
         if not isinstance(sentence, str) or not sentence.strip() or processor is None:
             return
@@ -644,6 +657,63 @@ class LiveTranscriptionWorker:
         source_lang = params.get("source_language", "en")
         target_lang = params.get("target_language", "es")
         asyncio.create_task(self._translate_sentence_async(sentence.strip(), source_lang, target_lang))
+
+    def _apply_analysis_params(self, params: Dict[str, Any]) -> None:
+        """Apply analysis settings from stream start/update params."""
+        if not isinstance(params, dict):
+            return
+
+        analysis_enabled = params.get("analysis_enabled")
+        if analysis_enabled is not None:
+            self.analysis_enabled = bool(analysis_enabled)
+
+        analysis_mode = params.get("analysis_mode")
+        if isinstance(analysis_mode, str) and analysis_mode in {"multimodal", "audio_only", "video_only"}:
+            self.analysis_mode = analysis_mode
+
+        analysis_prompt = params.get("analysis_prompt")
+        if analysis_prompt is not None:
+            prompt_text = str(analysis_prompt).strip()
+            self.analysis_prompt = prompt_text or self._DEFAULT_ANALYSIS_PROMPT
+
+    async def _run_live_analysis_async(self, text: str, timestamp_ms: Optional[int] = None) -> None:
+        """Call Gemma with the current analysis prompt and emit analysis events."""
+        if not self.analysis_enabled or not text or processor is None:
+            return
+
+        try:
+            result = await gemma_translator.analyze(
+                text=text,
+                prompt=self.analysis_prompt,
+                mode=self.analysis_mode,
+            )
+            analysis_text = ""
+            if isinstance(result, dict):
+                analysis_text = (result.get("analysis_text") or "").strip()
+
+            if analysis_text and processor is not None:
+                payload = {
+                    "type": "analysis.done",
+                    "mode": self.analysis_mode,
+                    "text": analysis_text,
+                }
+                if isinstance(timestamp_ms, int):
+                    payload["timestamp_ms"] = timestamp_ms
+                await processor.send_data(json.dumps(payload))
+            elif processor is not None and isinstance(result, dict) and result.get("error"):
+                await processor.send_data(json.dumps({
+                    "type": "analysis.error",
+                    "error": result.get("error"),
+                    "mode": self.analysis_mode,
+                }))
+        except Exception as exc:
+            logger.error("Live analysis failed: %s", exc)
+            if processor is not None:
+                await processor.send_data(json.dumps({
+                    "type": "analysis.error",
+                    "error": str(exc),
+                    "mode": self.analysis_mode,
+                }))
 
     async def _translate_sentence_async(
         self,

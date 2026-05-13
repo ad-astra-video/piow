@@ -636,6 +636,9 @@ async def transcribe_stream(request):
         analysis_mode = str(data.get('analysis_mode') or 'multimodal')
         analysis_audio_chunk_seconds = float(data.get('analysis_audio_chunk_seconds') or 1.0)
         analysis_video_fps = int(data.get('analysis_video_fps') or 3)
+        analysis_prompt = data.get('analysis_prompt')
+        if analysis_prompt is not None:
+            analysis_prompt = str(analysis_prompt).strip() or None
 
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -678,6 +681,7 @@ async def transcribe_stream(request):
                     analysis_mode=analysis_mode,
                     analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
                     analysis_video_fps=analysis_video_fps,
+                    analysis_prompt=analysis_prompt,
                 )
                 if _is_valid_streaming_session(session_result):
                     logger.info(
@@ -732,6 +736,7 @@ async def transcribe_stream(request):
                 analysis_mode=analysis_mode,
                 analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
                 analysis_video_fps=analysis_video_fps,
+                analysis_prompt=analysis_prompt,
             )
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=403)
@@ -752,6 +757,7 @@ async def transcribe_stream(request):
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
+            "analysis_prompt": analysis_prompt,
         })
 
     except Exception as e:
@@ -890,12 +896,19 @@ async def update_stream_analysis(request):
     except (TypeError, ValueError):
         return web.json_response({"error": "Invalid analysis_video_fps"}, status=400)
 
+    analysis_prompt = data.get('analysis_prompt')
+    if analysis_prompt is None:
+        analysis_prompt = stream_session.get('analysis_prompt')
+    if analysis_prompt is not None:
+        analysis_prompt = str(analysis_prompt).strip() or None
+
     updated_session = await session_store.update_stream_analysis_config(
         stream_id=stream_id,
         analysis_enabled=analysis_enabled,
         analysis_mode=analysis_mode,
         analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
         analysis_video_fps=analysis_video_fps,
+        analysis_prompt=analysis_prompt,
     )
 
     provider_session = (updated_session or stream_session).get('provider_session', {})
@@ -916,6 +929,7 @@ async def update_stream_analysis(request):
                         'analysis_mode': analysis_mode,
                         'analysis_audio_chunk_seconds': analysis_audio_chunk_seconds,
                         'analysis_video_fps': analysis_video_fps,
+                        'analysis_prompt': analysis_prompt,
                     },
                     capability='live-transcription',
                     timeout_seconds=30,
@@ -933,6 +947,7 @@ async def update_stream_analysis(request):
         'analysis_mode': analysis_mode,
         'analysis_audio_chunk_seconds': analysis_audio_chunk_seconds,
         'analysis_video_fps': analysis_video_fps,
+        'analysis_prompt': analysis_prompt,
         'message': 'Stream analysis configuration updated',
     })
 

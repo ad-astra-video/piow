@@ -337,6 +337,7 @@ class SessionStore:
         analysis_mode: str = "multimodal",
         analysis_audio_chunk_seconds: float = 1.0,
         analysis_video_fps: int = 3,
+        analysis_prompt: Optional[str] = None,
     ) -> str:
         """
         Create a new stream session with provider data.
@@ -356,10 +357,12 @@ class SessionStore:
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
+            "analysis_prompt": analysis_prompt,
         })
         provider_session_payload["metadata"] = metadata
         provider_session_payload.setdefault("source_language", effective_source_language)
         provider_session_payload.setdefault("target_language", target_language)
+        provider_session_payload.setdefault("analysis_prompt", analysis_prompt)
         stream_data = {
             "id": stream_id,
             "session_id": session_id,
@@ -370,6 +373,7 @@ class SessionStore:
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
+            "analysis_prompt": analysis_prompt,
             "status": "active",
             "created_at": now,
             "updated_at": now,
@@ -553,6 +557,7 @@ class SessionStore:
         analysis_mode: str,
         analysis_audio_chunk_seconds: float,
         analysis_video_fps: int,
+        analysis_prompt: Optional[str],
     ) -> Optional[Dict[str, Any]]:
         """Persist live analysis configuration on the stream session."""
         stream_session = self._stream_sessions_cache.get(stream_id) or await self.get_stream_session(stream_id)
@@ -570,17 +575,20 @@ class SessionStore:
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
+            "analysis_prompt": analysis_prompt,
         })
         provider_session["metadata"] = metadata
         provider_session["analysis_enabled"] = bool(analysis_enabled)
         provider_session["analysis_mode"] = analysis_mode
         provider_session["analysis_audio_chunk_seconds"] = analysis_audio_chunk_seconds
         provider_session["analysis_video_fps"] = analysis_video_fps
+        provider_session["analysis_prompt"] = analysis_prompt
 
         stream_session["analysis_enabled"] = bool(analysis_enabled)
         stream_session["analysis_mode"] = analysis_mode
         stream_session["analysis_audio_chunk_seconds"] = analysis_audio_chunk_seconds
         stream_session["analysis_video_fps"] = analysis_video_fps
+        stream_session["analysis_prompt"] = analysis_prompt
         stream_session["provider_session"] = provider_session
         stream_session["updated_at"] = now
         self._stream_sessions_cache[stream_id] = stream_session
@@ -844,6 +852,12 @@ class SessionStore:
             or metadata.get("analysis_video_fps")
             or 3
         )
+        analysis_prompt = (
+            row.get("analysis_prompt")
+            or (provider_session.get("analysis_prompt") if isinstance(provider_session, dict) else None)
+            or metadata.get("analysis_prompt")
+            or None
+        )
         return {
             "id": row["id"],
             "session_id": row.get("user_session_id"),
@@ -854,6 +868,7 @@ class SessionStore:
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
+            "analysis_prompt": analysis_prompt,
             "status": row.get("status", "active"),
             "created_at": row.get("created_at", time.time()),
             "updated_at": row.get("updated_at", time.time()),

@@ -37,6 +37,44 @@ class GemmaClient:
     def is_configured(self) -> bool:
         return bool(self.base_url and self.model)
 
+    async def _chat_completion(self, messages: list[dict[str, str]]) -> Dict[str, Any]:
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+
+        timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                f"{self.base_url}/v1/chat/completions",
+                json=payload,
+            ) as response:
+                response_text = await response.text()
+                if response.status >= 400:
+                    return {
+                        "error": f"Gemma request failed: HTTP {response.status}",
+                        "response": response_text[:500],
+                    }
+                try:
+                    return await response.json()
+                except Exception:
+                    return {
+                        "error": "Gemma response was not valid JSON",
+                        "response": response_text[:500],
+                    }
+
+    @staticmethod
+    def _extract_content(data: Any) -> str:
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if isinstance(choices, list) and choices:
+            message = choices[0].get("message") if isinstance(choices[0], dict) else None
+            if isinstance(message, dict):
+                return str(message.get("content") or "").strip()
+        return ""
+
     async def translate(self, text: str, source_lang: str, target_lang: str) -> Dict[str, Any]:
         """Translate text using the Gemma vLLM chat-completions API."""
         start_time = time.time()
@@ -69,57 +107,24 @@ class GemmaClient:
             "the translated text."
         )
         user_prompt = f"Translate from {source_lang} to {target_lang}:\n\n{text}"
-        payload = {
-            "model": self.model,
-            "messages": [
+        try:
+            data = await self._chat_completion([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
-            ],
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "stream": False,
-        }
+            ])
+            if isinstance(data, dict) and data.get("error"):
+                return {
+                    "error": data.get("error"),
+                    "original_text": text,
+                    "translated_text": "",
+                    "source_language": source_lang,
+                    "target_language": target_lang,
+                    "model": self.model,
+                    "backend": "gemma-vllm",
+                    "response": data.get("response", ""),
+                }
 
-        try:
-            timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    f"{self.base_url}/v1/chat/completions",
-                    json=payload,
-                ) as response:
-                    response_text = await response.text()
-                    if response.status >= 400:
-                        return {
-                            "error": f"Gemma translation request failed: HTTP {response.status}",
-                            "original_text": text,
-                            "translated_text": "",
-                            "source_language": source_lang,
-                            "target_language": target_lang,
-                            "model": self.model,
-                            "backend": "gemma-vllm",
-                            "response": response_text[:500],
-                        }
-
-                    try:
-                        data = await response.json()
-                    except Exception:
-                        return {
-                            "error": "Gemma translation response was not valid JSON",
-                            "original_text": text,
-                            "translated_text": "",
-                            "source_language": source_lang,
-                            "target_language": target_lang,
-                            "model": self.model,
-                            "backend": "gemma-vllm",
-                            "response": response_text[:500],
-                        }
-
-            choices = data.get("choices") if isinstance(data, dict) else None
-            translated_text = ""
-            if isinstance(choices, list) and choices:
-                message = choices[0].get("message") if isinstance(choices[0], dict) else None
-                if isinstance(message, dict):
-                    translated_text = str(message.get("content") or "").strip()
+            translated_text = self._extract_content(data)
 
             processing_time = time.time() - start_time
             return {
@@ -139,6 +144,65 @@ class GemmaClient:
                 "translated_text": "",
                 "source_language": source_lang,
                 "target_language": target_lang,
+                "model": self.model,
+                "backend": "gemma-vllm",
+            }
+
+    async def analyze(self, text: str, prompt: Optional[str] = None, mode: str = "multimodal") -> Dict[str, Any]:
+        """Run live-analysis text generation on the Gemma runtime."""
+        start_time = time.time()
+
+        if not text or not text.strip():
+            return {
+                "error": "Missing text",
+                "analysis_text": "",
+                "model": self.model,
+                "backend": "gemma-vllm",
+            }
+
+        if not self.is_configured:
+            return {
+                "error": "Gemma runtime is not configured",
+                "analysis_text": "",
+                "model": self.model,
+                "backend": "gemma-vllm",
+            }
+
+        default_prompt = "Summarize key actions, decisions, and risks from the live conversation."
+        effective_prompt = (prompt or default_prompt).strip()
+        system_prompt = "You are a real-time analyst. Return concise, actionable observations only."
+        user_prompt = (
+            f"Mode: {mode}\n"
+            f"Instructions: {effective_prompt}\n\n"
+            f"Transcript:\n{text}"
+        )
+
+        try:
+            data = await self._chat_completion([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ])
+            if isinstance(data, dict) and data.get("error"):
+                return {
+                    "error": data.get("error"),
+                    "analysis_text": "",
+                    "model": self.model,
+                    "backend": "gemma-vllm",
+                    "response": data.get("response", ""),
+                }
+
+            processing_time = time.time() - start_time
+            return {
+                "analysis_text": self._extract_content(data),
+                "model": self.model,
+                "backend": "gemma-vllm",
+                "processing_time": processing_time,
+            }
+        except Exception as exc:
+            logger.exception("Gemma analysis request failed")
+            return {
+                "error": str(exc),
+                "analysis_text": "",
                 "model": self.model,
                 "backend": "gemma-vllm",
             }

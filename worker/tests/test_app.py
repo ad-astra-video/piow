@@ -130,3 +130,47 @@ async def test_translate_sentence_async_emits_stream_message():
         "source_language": "en",
         "target_language": "es",
     }
+
+
+async def test_run_live_analysis_async_emits_stream_message():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.analysis_mode = "audio_only"
+    worker.analysis_prompt = "Call out key risks"
+
+    mock_processor = MagicMock()
+    mock_processor.send_data = AsyncMock()
+
+    original_processor = worker_app.processor
+    original_gemma = worker_app.gemma_translator
+    worker_app.processor = mock_processor
+    try:
+        worker_app.gemma_translator = MagicMock()
+        worker_app.gemma_translator.analyze = AsyncMock(return_value={"analysis_text": "Potential outage risk"})
+        await worker._run_live_analysis_async("We have a deploy pending", 640)
+    finally:
+        worker_app.processor = original_processor
+        worker_app.gemma_translator = original_gemma
+
+    mock_processor.send_data.assert_awaited_once()
+    payload = json.loads(mock_processor.send_data.call_args[0][0])
+    assert payload == {
+        "type": "analysis.done",
+        "mode": "audio_only",
+        "text": "Potential outage risk",
+        "timestamp_ms": 640,
+    }
+
+
+async def test_apply_analysis_params_updates_worker_state():
+    worker = worker_app.LiveTranscriptionWorker()
+
+    worker._apply_analysis_params({
+        "analysis_enabled": True,
+        "analysis_mode": "video_only",
+        "analysis_prompt": "Track visual cues",
+    })
+
+    assert worker.analysis_enabled is True
+    assert worker.analysis_mode == "video_only"
+    assert worker.analysis_prompt == "Track visual cues"

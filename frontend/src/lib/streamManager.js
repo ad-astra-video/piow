@@ -376,6 +376,9 @@ class StreamManager {
       if (typeof analysisConfig.analysis_video_fps === 'number') {
         body.analysis_video_fps = analysisConfig.analysis_video_fps;
       }
+      if (typeof analysisConfig.analysis_prompt === 'string') {
+        body.analysis_prompt = analysisConfig.analysis_prompt;
+      }
     }
     const response = await fetch(`${API_BASE}/transcribe/stream`, {
       method: 'POST',

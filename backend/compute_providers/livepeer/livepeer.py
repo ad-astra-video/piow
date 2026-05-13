@@ -333,7 +333,14 @@ class LivepeerComputeProvider(BaseComputeProvider):
         worker_params = {
             "language": language,
             "model": model,
+            "analysis_enabled": bool(kwargs.get("analysis_enabled", False)),
+            "analysis_mode": kwargs.get("analysis_mode", "multimodal"),
+            "analysis_audio_chunk_seconds": float(kwargs.get("analysis_audio_chunk_seconds", 1.0)),
+            "analysis_video_fps": int(kwargs.get("analysis_video_fps", 3)),
         }
+        analysis_prompt = kwargs.get("analysis_prompt")
+        if analysis_prompt is not None:
+            worker_params["analysis_prompt"] = str(analysis_prompt)
         source_language = kwargs.get("source_language")
         target_language = kwargs.get("target_language")
         if source_language:

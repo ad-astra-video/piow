@@ -5,6 +5,8 @@ import useLiveTranscription from '../hooks/useLiveTranscription';
 import streamManager, { formatDuration } from '../lib/streamManager';
 import { api } from '../lib/api';
 
+const DEFAULT_ANALYSIS_PROMPT = 'Summarize key actions, decisions, and risks from the live conversation.';
+
 const SOURCE_META = {
   microphone: { Icon: Mic, label: 'Microphone' },
   screen: { Icon: Monitor, label: 'Screen Share' },
@@ -51,6 +53,7 @@ export default function TranscribeStream({ accessToken }) {
   const [targetLang, setTargetLang] = useState('');
   const [analysisEnabled, setAnalysisEnabled] = useState(false);
   const [analysisMode, setAnalysisMode] = useState('multimodal');
+  const [analysisPrompt, setAnalysisPrompt] = useState(DEFAULT_ANALYSIS_PROMPT);
   const [fileHasVideo, setFileHasVideo] = useState(false);
 
   // Fetch available languages on mount
@@ -94,8 +97,9 @@ export default function TranscribeStream({ accessToken }) {
       analysis_mode: analysisMode,
       analysis_audio_chunk_seconds: 1.0,
       analysis_video_fps: 3,
+      analysis_prompt: analysisPrompt,
     });
-  }, [isStarted, effectiveAnalysisEnabled, analysisMode]);
+  }, [isStarted, effectiveAnalysisEnabled, analysisMode, analysisPrompt]);
 
   const handleFileSelect = useCallback((e) => {
     const file = e.target.files[0];
@@ -152,6 +156,7 @@ export default function TranscribeStream({ accessToken }) {
       analysis_mode: analysisMode,
       analysis_audio_chunk_seconds: 1.0,
       analysis_video_fps: 3,
+      analysis_prompt: analysisPrompt,
     };
     start(accessToken, sourceConfig, translationConfig, analysisConfig);
   }, [
@@ -163,6 +168,7 @@ export default function TranscribeStream({ accessToken }) {
     targetLang,
     effectiveAnalysisEnabled,
     analysisMode,
+    analysisPrompt,
   ]);
 
   const modeDisabledReason = (mode) => {
@@ -382,6 +388,16 @@ export default function TranscribeStream({ accessToken }) {
                         </label>
                       );
                     })}
+                  </div>
+                  <div className="form-row analysis-prompt-row">
+                    <label htmlFor="analysis_prompt">Prompt</label>
+                    <textarea
+                      id="analysis_prompt"
+                      rows={3}
+                      value={analysisPrompt}
+                      onChange={(e) => setAnalysisPrompt(e.target.value)}
+                      placeholder="Describe what analysis you want to see in real time."
+                    />
                   </div>
                 </div>
               )}
