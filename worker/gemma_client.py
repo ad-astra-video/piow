@@ -8,6 +8,7 @@ shape.
 
 import logging
 import os
+import re
 import time
 from typing import Any, Dict, Optional
 
@@ -92,6 +93,14 @@ class GemmaClient:
             ),
         }
         return prompts.get(mode, prompts["multimodal"])
+
+    @staticmethod
+    def _is_no_update_response(text: str) -> bool:
+        """Return True when model output requests suppression via NO_UPDATE contract."""
+        normalized = (text or "").strip()
+        if not normalized:
+            return False
+        return bool(re.fullmatch(r"NO[_\s-]?UPDATE\.?", normalized, flags=re.IGNORECASE))
 
     async def translate(
         self,
@@ -197,7 +206,11 @@ class GemmaClient:
 
         default_prompt = self._default_analysis_prompt(mode)
         effective_prompt = (prompt or default_prompt).strip()
-        system_prompt = "You are a real-time analyst. Return concise, actionable observations only."
+        system_prompt = (
+            "You are a real-time analyst. Return concise, actionable observations only. "
+            "If there is no new actionable update (no meaningful action, decision, or risk), "
+            "return exactly NO_UPDATE and nothing else."
+        )
         user_prompt = (
             f"Mode: {mode}\n"
             f"Instructions: {effective_prompt}\n\n"
@@ -218,9 +231,19 @@ class GemmaClient:
                     "response": data.get("response", ""),
                 }
 
+            analysis_text = self._extract_content(data)
+            if self._is_no_update_response(analysis_text):
+                return {
+                    "analysis_text": "",
+                    "suppressed": True,
+                    "suppression_reason": "no_update",
+                    "model": self.model,
+                    "backend": "gemma-vllm",
+                }
+
             processing_time = time.time() - start_time
             return {
-                "analysis_text": self._extract_content(data),
+                "analysis_text": analysis_text,
                 "model": self.model,
                 "backend": "gemma-vllm",
                 "processing_time": processing_time,

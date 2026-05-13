@@ -248,7 +248,25 @@ class TestVLLMRealtimeClient(unittest.TestCase):
         """Test closing the connection"""
         mock_websocket = AsyncMock()
         mock_connect.return_value = mock_websocket
-        mock_listener_task = AsyncMock()
+
+        class _MockTask:
+            def __init__(self):
+                self.cancel_called = False
+                self._done = False
+
+            def done(self):
+                return self._done
+
+            def cancel(self):
+                self.cancel_called = True
+                self._done = True
+
+            def __await__(self):
+                async def _noop():
+                    return None
+                return _noop().__await__()
+
+        mock_listener_task = _MockTask()
         
         client = VLLMRealtimeClient(
             ws_url=self.ws_url,
@@ -263,7 +281,7 @@ class TestVLLMRealtimeClient(unittest.TestCase):
         asyncio.run(client.close())
         
         # Check that listener task was cancelled
-        mock_listener_task.cancel.assert_called_once()
+        self.assertTrue(mock_listener_task.cancel_called)
         
         # Check that websocket was closed
         mock_websocket.close.assert_called_once()
@@ -310,6 +328,47 @@ class TestVLLMRealtimeClient(unittest.TestCase):
         asyncio.run(client._handle_vllm_message(event))
 
         text_callback.assert_called_once_with(event)
+
+    def test_response_text_done_is_not_forwarded_as_transcription(self):
+        """response.text.done should not be emitted as transcript text."""
+        client = VLLMRealtimeClient(
+            ws_url=self.ws_url,
+            source_lang=self.source_lang,
+            target_lang=self.target_lang,
+        )
+
+        text_callback = MagicMock()
+        client.set_text_callback(text_callback)
+
+        asyncio.run(client._handle_vllm_message({"type": "response.text.done", "text": "Audio is too brief."}))
+
+        text_callback.assert_not_called()
+
+    def test_response_done_text_is_not_forwarded_as_transcription(self):
+        """response.done assistant text should not be emitted as transcript text."""
+        client = VLLMRealtimeClient(
+            ws_url=self.ws_url,
+            source_lang=self.source_lang,
+            target_lang=self.target_lang,
+        )
+
+        text_callback = MagicMock()
+        client.set_text_callback(text_callback)
+
+        event = {
+            "type": "response.done",
+            "response": {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "text", "text": "No discernible action."}],
+                    }
+                ]
+            },
+        }
+        asyncio.run(client._handle_vllm_message(event))
+
+        text_callback.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

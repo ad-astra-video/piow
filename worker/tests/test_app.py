@@ -168,6 +168,32 @@ async def test_run_live_analysis_async_emits_stream_message():
     }
 
 
+async def test_run_live_analysis_async_suppresses_no_update_output():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.analysis_mode = "audio_only"
+
+    mock_processor = MagicMock()
+    mock_processor.send_data = AsyncMock()
+
+    original_processor = worker_app.processor
+    original_gemma = worker_app.gemma_translator
+    worker_app.processor = mock_processor
+    try:
+        worker_app.gemma_translator = MagicMock()
+        worker_app.gemma_translator.analyze = AsyncMock(return_value={
+            "analysis_text": "",
+            "suppressed": True,
+            "suppression_reason": "no_update",
+        })
+        await worker._run_live_analysis_async("No clear action", 720)
+    finally:
+        worker_app.processor = original_processor
+        worker_app.gemma_translator = original_gemma
+
+    mock_processor.send_data.assert_not_awaited()
+
+
 async def test_apply_analysis_params_updates_worker_state():
     worker = worker_app.LiveTranscriptionWorker()
 

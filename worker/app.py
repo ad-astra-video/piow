@@ -778,8 +778,18 @@ class LiveTranscriptionWorker:
                 mode=self.analysis_mode,
             )
             analysis_text = ""
+            suppressed = False
             if isinstance(result, dict):
                 analysis_text = (result.get("analysis_text") or "").strip()
+                suppressed = bool(result.get("suppressed"))
+
+            if suppressed:
+                logger.debug(
+                    "Live analysis suppressed for stream output: mode=%s reason=%s",
+                    self.analysis_mode,
+                    result.get("suppression_reason") if isinstance(result, dict) else "unknown",
+                )
+                return
 
             if analysis_text and processor is not None:
                 payload = {

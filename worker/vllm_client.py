@@ -287,30 +287,19 @@ class VLLMRealtimeClient:
 
         elif msg_type == "response.text.delta":
             delta = data.get("delta", "")
-            #logger.info(f"VLLM response.text.delta: '{delta}'")
             if delta:
-                await self._call_text_callback(delta)
+                logger.debug("Ignoring response.text.delta for transcription routing")
 
         elif msg_type == "response.text.done":
             text = data.get("text", "")
-            #logger.info(f"RESULT response.text.done: '{text}'")
             self._transcription_completed.set()
             if text:
-                await self._call_text_callback(text, is_final=True)
+                logger.info("Ignoring response.text.done for transcription routing")
 
         elif msg_type == "response.done":
-            #logger.info(f"RESULT response.done: {data}")
+            # Mark completion but do not route generic assistant text as transcription.
             self._transcription_completed.set()
-            response = data.get("response", {})
-            output = response.get("output", [])
-            for item in output:
-                if item.get("type") == "message":
-                    for content in item.get("content", []):
-                        if content.get("type") == "text":
-                            text = content.get("text", "")
-                            if text:
-                                logger.info(f"RESULT response.done message text: '{text[:200]}'")
-                                await self._call_text_callback(text, is_final=True)
+            logger.debug("Ignoring response.done text content for transcription routing")
                 
         elif msg_type == "error":
             logger.error(f"VLLM error: {data}")
