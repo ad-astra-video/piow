@@ -773,6 +773,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               </div>
             </section>
           )}
+            </div>
           </div>
         )}
 
