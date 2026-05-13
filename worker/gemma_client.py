@@ -343,10 +343,9 @@ class GemmaClient:
                     "content": [
                         {"type": "text", "text": user_text},
                         {
-                            "type": "input_audio",
-                            "input_audio": {
-                                "data": encoded_audio,
-                                "format": "wav",
+                            "type": "audio_url",
+                            "audio_url": {
+                                "url": f"data:audio/wav;base64,{encoded_audio}",
                             },
                         },
                     ],

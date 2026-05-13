@@ -90,9 +90,10 @@ class TestGemmaClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages[1]["role"], "user")
         user_content = messages[1]["content"]
         self.assertIsInstance(user_content, list)
-        self.assertEqual(user_content[1]["type"], "input_audio")
-        self.assertEqual(user_content[1]["input_audio"]["format"], "wav")
-        wav_bytes = base64.b64decode(user_content[1]["input_audio"]["data"])
+        self.assertEqual(user_content[1]["type"], "audio_url")
+        audio_url = user_content[1]["audio_url"]["url"]
+        self.assertTrue(audio_url.startswith("data:audio/wav;base64,"))
+        wav_bytes = base64.b64decode(audio_url.split(",", 1)[1])
         self.assertTrue(wav_bytes.startswith(b"RIFF"))
 
     @patch.dict(os.environ, {"GEMMA_AUDIO_ANALYSIS_ENABLED": "false"}, clear=False)

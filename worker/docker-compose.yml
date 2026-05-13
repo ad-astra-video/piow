@@ -48,6 +48,8 @@ services:
       - "${GEMMA_VLLM_GPU_MEMORY_UTILIZATION}"
       - "--max-model-len"
       - "${GEMMA_VLLM_MAX_MODEL_LEN}"
+      - "--limit-mm-per-prompt"
+      - '{"image": 30, "audio": 5}'
       - "--trust-remote-code"
     volumes:
       - vllm_models:/root/.cache
