@@ -101,19 +101,6 @@ async def _store_translation_result(request, job_result, original_text, source_l
         logger.warning("Skipping translation usage log: translation record was not persisted")
         return None
 
-    try:
-        total_text_sent_chars = _get_total_text_sent_chars(original_text)
-        await supabase.table('translation_usage').insert({
-            'user_id': user_id,
-            'characters_translated': total_text_sent_chars,
-            'source_language': job_result.get('source_language', source_language),
-            'target_language': job_result.get('target_language', target_language),
-            'model': job_result.get('model', 'unknown'),
-            'hardware': job_result.get('hardware', 'unknown'),
-        }).execute()
-    except Exception as usage_error:
-        logger.warning(f"Failed to record translation usage: {usage_error}")
-
     return translation_id
 
 

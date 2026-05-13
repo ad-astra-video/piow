@@ -21,32 +21,27 @@ PLAN_PRICES = {
 
 # Plan limits (rolling 30-day window)
 # transcription_minutes: combined CPU+GPU transcription pool (1 hr/day = 1800 min/30 days)
-# translation_characters: character limit for translation service (-1 = unlimited)
 PLAN_LIMITS = {
     'free': {
         'transcription_minutes': 1800,       # 1 hr/day
-        'translation_characters': 5000,
         'queue_delay': True,                 # Free tier has queue delays
         'priority': 'low',                   # Lower priority processing
         'watermark': True,                   # Export watermark
     },
     'starter': {
         'transcription_minutes': 5400,       # 3 hr/day
-        'translation_characters': 100000,
         'queue_delay': False,
         'priority': 'normal',
         'watermark': False,
     },
     'pro': {
         'transcription_minutes': 14400,      # 8 hr/day
-        'translation_characters': -1,        # unlimited
         'queue_delay': False,
         'priority': 'high',
         'watermark': False,
     },
     'enterprise': {
         'transcription_minutes': -1,         # unlimited (24 hr/day)
-        'translation_characters': -1,        # unlimited
         'queue_delay': False,
         'priority': 'highest',
         'watermark': False,
@@ -58,7 +53,6 @@ PLAN_LIMITS = {
 QUOTA_MAPPING = {
     'transcribe_cpu': ('transcription_minutes', 'transcription_usage', 'duration_seconds'),
     'transcribe_gpu': ('transcription_minutes', 'transcription_usage', 'duration_seconds'),
-    'translate': ('translation_characters', 'translation_usage', 'characters_translated'),
 }
 
 
@@ -67,7 +61,7 @@ async def check_quota(user_id: str, service_type: str, tier: str = 'free') -> Tu
 
     Args:
         user_id: The user or agent ID to check quota for
-        service_type: Type of service ('transcribe_cpu', 'transcribe_gpu', 'translate')
+        service_type: Type of service ('transcribe_cpu', 'transcribe_gpu')
         tier: Subscription tier ('free', 'starter', 'pro', 'enterprise')
 
     Returns:

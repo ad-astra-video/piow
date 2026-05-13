@@ -630,8 +630,12 @@ async def transcribe_stream(request):
         data = await request.json()
         session_id = data.get('session_id')
         language = data.get('language', 'en')
+        live_transcription_enabled = bool(data.get('live_transcription_enabled', True))
+        live_translation_enabled = bool(data.get('live_translation_enabled', bool(data.get('target_language'))))
         source_language = data.get('source_language') or language
         target_language = data.get('target_language') or None
+        if not live_translation_enabled:
+            target_language = None
         analysis_enabled = bool(data.get('analysis_enabled', False))
         analysis_mode = str(data.get('analysis_mode') or 'multimodal')
         analysis_audio_chunk_seconds = float(data.get('analysis_audio_chunk_seconds') or 1.0)
@@ -639,6 +643,18 @@ async def transcribe_stream(request):
         analysis_prompt = data.get('analysis_prompt')
         if analysis_prompt is not None:
             analysis_prompt = str(analysis_prompt).strip() or None
+
+        if not live_transcription_enabled and not analysis_enabled:
+            return web.json_response({
+                'error': 'At least one live service must be enabled (transcription or analysis).',
+                'code': 'invalid_service_selection',
+            }, status=400)
+
+        if live_translation_enabled and not live_transcription_enabled:
+            return web.json_response({
+                'error': 'Live translation requires live transcription to be enabled.',
+                'code': 'invalid_service_selection',
+            }, status=400)
 
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -710,6 +726,8 @@ async def transcribe_stream(request):
                     session_id=session_id,
                     language=language,
                     stream_request_id=stream_request_id,
+                    live_transcription_enabled=live_transcription_enabled,
+                    live_translation_enabled=live_translation_enabled,
                     source_language=source_language,
                     target_language=target_language,
                     analysis_enabled=analysis_enabled,
@@ -765,6 +783,8 @@ async def transcribe_stream(request):
                 language=language,
                 provider_session_data=session_result,
                 user_id=user_id,
+                live_transcription_enabled=live_transcription_enabled,
+                live_translation_enabled=live_translation_enabled,
                 source_language=source_language,
                 target_language=target_language,
                 analysis_enabled=analysis_enabled,
@@ -788,6 +808,8 @@ async def transcribe_stream(request):
             "stop_url": session_result.get("stop_url"),
             "provider_stream_id": session_result.get("provider_stream_id"),
             "provider": session_result.get("provider"),
+            "live_transcription_enabled": live_transcription_enabled,
+            "live_translation_enabled": live_translation_enabled,
             "analysis_enabled": analysis_enabled,
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,

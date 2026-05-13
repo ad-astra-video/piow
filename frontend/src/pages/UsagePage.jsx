@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
-import { Clock, FileAudio, Globe, BarChart3, Calendar } from 'lucide-react';
+import { Clock, FileAudio, BarChart3, Calendar } from 'lucide-react';
 import { api } from '../lib/api';
 
 export default function UsagePage() {
@@ -32,7 +32,6 @@ export default function UsagePage() {
   const chartData = usage?.daily_breakdown?.map((d) => ({
     date: d.date.slice(5),
     Transcription: d.transcription_seconds,
-    Translation: d.translation_chars,
   })) || [];
 
   const formatDuration = (sec) => {
@@ -79,17 +78,10 @@ export default function UsagePage() {
               </div>
             </div>
             <div className="stat-card panel-glass">
-              <Globe size={22} />
-              <div>
-                <span className="stat-value">{(usage.translation?.total_characters || 0).toLocaleString()}</span>
-                <span className="stat-label">Chars Translated</span>
-              </div>
-            </div>
-            <div className="stat-card panel-glass">
               <BarChart3 size={22} />
               <div>
-                <span className="stat-value">{usage.translation?.job_count || 0}</span>
-                <span className="stat-label">Translation Jobs</span>
+                <span className="stat-value">{usage.transcription?.total_words?.toLocaleString?.() || 0}</span>
+                <span className="stat-label">Words Transcribed</span>
               </div>
             </div>
           </div>
@@ -114,20 +106,6 @@ export default function UsagePage() {
                     <span>{billingUsage.usage.transcription.used} / {billingUsage.usage.transcription.limit === -1 ? '∞' : billingUsage.usage.transcription.limit}</span>
                   </div>
                 )}
-                {billingUsage.usage?.translation && (
-                  <div className="quota-item">
-                    <span>Translation</span>
-                    <div className="quota-bar-wrap">
-                      <div
-                        className="quota-bar"
-                        style={{
-                          width: `${Math.min(100, (billingUsage.usage.translation.used / (billingUsage.usage.translation.limit || 1)) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                    <span>{billingUsage.usage.translation.used} / {billingUsage.usage.translation.limit === -1 ? '∞' : billingUsage.usage.translation.limit}</span>
-                  </div>
-                )}
               </div>
             </section>
           )}
@@ -147,7 +125,6 @@ export default function UsagePage() {
                   />
                   <Legend />
                   <Bar dataKey="Transcription" fill="#60a5fa" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Translation" fill="#34d399" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </section>

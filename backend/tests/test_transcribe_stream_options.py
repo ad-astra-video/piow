@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Regression tests for batch transcription option forwarding."""
+"""Regression tests for stream transcription options and quota behavior."""
 
 import importlib
+import json
 import sys
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from aiohttp import FormData, web
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 
@@ -111,7 +112,7 @@ def _install_transcribe_stubs():
     sys.modules["sse_relay"] = sse_relay_module
 
 
-class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
+class TestTranscribeStreamOptions(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         _install_transcribe_stubs()
         sys.modules.pop("transcribe", None)
@@ -119,27 +120,11 @@ class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
 
         self.provider = MagicMock()
         self.provider.provider_name = "test-provider"
-        self.provider.create_transcription_job = AsyncMock(return_value={
-            "job_id": "job-123",
-            "status": "completed",
-            "text": "hello",
-            "language": "en",
-            "segments": [{"text": "hello", "start": 0.0, "end": 1.0}],
-            "words": [{"word": "hello", "start": 0.0, "end": 0.5}],
-            "speakers": [{"speaker": 1, "text": "hello"}],
-            "word_count": 1,
-            "provider": "test-provider",
-        })
+        self.provider.update_streaming_session = AsyncMock()
         self.transcribe.compute_provider_manager.select_providers = MagicMock(return_value=[self.provider])
         self.transcribe.compute_provider_manager.get_provider = MagicMock(return_value=self.provider)
-        self.store_patch = patch.object(self.transcribe, "_store_transcription_result", AsyncMock(return_value="tx-123"))
-        self.store_patch.start()
-        self.duration_patch = patch.object(self.transcribe, "_probe_duration_from_bytes", return_value=None)
-        self.duration_patch.start()
 
         application = web.Application()
-        application.router.add_post("/file", self.transcribe.transcribe_file)
-        application.router.add_post("/url", self.transcribe.transcribe_url)
         application.router.add_put("/stream/{stream_id}/translation", self.transcribe.update_stream_translation)
         self.server = TestServer(application)
         self.client = TestClient(self.server)
@@ -147,26 +132,23 @@ class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.close()
-        self.duration_patch.stop()
-        self.store_patch.stop()
-        sys.modules.pop("transcribe", None)
-
-    async def test_transcribe_file_forwards_speaker_and_timestamp_flags(self):
-        form = FormData()
-        form.add_field("file", b"RIFFdata", filename="sample.wav", content_type="audio/wav")
-        form.add_field("language", "en")
-        form.add_field("with_speakers", "true")
-        form.add_field("with_word_timestamps", "true")
-
-        response = await self.client.post("/file", data=form)
-
-        self.assertEqual(response.status, 200)
-        payload = await response.json()
-        call = self.provider.create_transcription_job.await_args
-        self.assertTrue(call.kwargs["with_speakers"])
-        self.assertTrue(call.kwargs["with_word_timestamps"])
-        self.assertEqual(payload["words"], [{"word": "hello", "start": 0.0, "end": 0.5}])
-        self.assertEqual(payload["speakers"], [{"speaker": 1, "text": "hello"}])
+        for name in (
+            "transcribe",
+            "auth",
+            "payments",
+            "payments.payment_strategy",
+            "payments.quotas",
+            "supabase_client",
+            "compute_providers.provider_manager",
+            "compute_providers.livepeer.livepeer",
+            "compute_providers.provider_definitions",
+            "agents",
+            "languages",
+            "translate",
+            "sessions",
+            "sse_relay",
+        ):
+            sys.modules.pop(name, None)
 
     async def test_update_stream_translation_registers_relay_callback(self):
         sessions_module = sys.modules["sessions"]
@@ -200,7 +182,6 @@ class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
         relay = MagicMock()
         relay.set_translation_callback = MagicMock()
         sse_relay_module.get_relay.return_value = relay
-        self.provider.update_streaming_session = AsyncMock()
 
         response = await self.client.put(
             "/stream/stream-1/translation",
@@ -231,30 +212,6 @@ class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=30,
         )
 
-    async def test_transcribe_url_forwards_speaker_and_timestamp_flags(self):
-        with patch.object(
-            self.transcribe,
-            "_safe_download_audio_bytes",
-            AsyncMock(return_value=(b"RIFFdata", "remote.wav")),
-        ):
-            response = await self.client.post(
-                "/url",
-                json={
-                    "audio_url": "https://example.com/audio.wav",
-                    "language": "en",
-                    "with_speakers": True,
-                    "with_word_timestamps": True,
-                },
-            )
-
-        self.assertEqual(response.status, 200)
-        payload = await response.json()
-        call = self.provider.create_transcription_job.await_args
-        self.assertTrue(call.kwargs["with_speakers"])
-        self.assertTrue(call.kwargs["with_word_timestamps"])
-        self.assertEqual(payload["words"], [{"word": "hello", "start": 0.0, "end": 0.5}])
-        self.assertEqual(payload["speakers"], [{"speaker": 1, "text": "hello"}])
-
     async def test_transcribe_stream_blocks_when_quota_exceeded(self):
         self.transcribe.compute_provider_manager.select_providers = MagicMock(return_value=[])
 
@@ -282,16 +239,20 @@ class TestTranscribeBatchOptions(unittest.IsolatedAsyncioTestCase):
             "agent": None,
         }.get(key, default)
 
-                with patch.object(self.transcribe, "supabase", mock_supabase), \
-                         patch("payments.quotas.check_quota", AsyncMock(return_value=(False, {
-                                 "remaining": 0,
-                                 "limit": 1800,
-                                 "used": 1800,
-                                 "unlimited": False,
-                         }))):
+        with patch.object(self.transcribe, "supabase", mock_supabase), \
+             patch("payments.quotas.check_quota", AsyncMock(return_value=(False, {
+                 "remaining": 0,
+                 "limit": 1800,
+                 "used": 1800,
+                 "unlimited": False,
+             }))):
             response = await self.transcribe.transcribe_stream(mock_request)
 
         self.assertEqual(response.status, 402)
         payload = json.loads(response.text)
         self.assertEqual(payload["code"], "quota_exceeded")
         self.assertEqual(payload["service_type"], "transcribe_gpu")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Mic, Globe, Clock, BarChart3, FileAudio, ArrowRight, Download } from 'lucide-react';
+import { Mic, Clock, BarChart3, FileAudio, ArrowRight, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
 
@@ -78,17 +78,10 @@ export default function Dashboard({ usageSnapshot }) {
               </div>
             </div>
             <div className="stat-card panel-glass">
-              <Globe size={22} />
-              <div>
-                <span className="stat-value">{(usageSnapshot.translation?.total_characters || 0).toLocaleString()}</span>
-                <span className="stat-label">Chars Translated</span>
-              </div>
-            </div>
-            <div className="stat-card panel-glass">
               <BarChart3 size={22} />
               <div>
-                <span className="stat-value">{usageSnapshot.translation?.job_count || 0}</span>
-                <span className="stat-label">Translation Jobs</span>
+                <span className="stat-value">{usageSnapshot.transcription?.total_words?.toLocaleString?.() || 0}</span>
+                <span className="stat-label">Words Transcribed</span>
               </div>
             </div>
           </div>

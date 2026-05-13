@@ -118,27 +118,6 @@ export default function BillingPage({ billingUsage, accountDataLoading, onRefres
               })()}
             </div>
 
-            {/* Translation */}
-            <div className="usage-item">
-              <label>Translation</label>
-              {(() => {
-                const translate = formatQuota(billingUsage.usage?.translation);
-                if (translate === '—' || typeof translate === 'string') return <span>{translate}</span>;
-                return (
-                  <div className="usage-bar-container">
-                    <div className="usage-bar">
-                      <div
-                        className="usage-fill translate"
-                        style={{ width: `${Math.min(translate.pct, 100)}%` }}
-                      />
-                    </div>
-                    <span className="usage-text">
-                      {translate.used.toFixed(0)} / {translate.limit === -1 ? '∞' : translate.limit} chars ({translate.pct}%)
-                    </span>
-                  </div>
-                );
-              })()}
-            </div>
           </div>
         </div>
       )}
@@ -162,13 +141,6 @@ export default function BillingPage({ billingUsage, accountDataLoading, onRefres
               <td>1 hr/day (30 hr/mo)</td>
               <td>3 hr/day (90 hr/mo)</td>
               <td>8 hr/day (240 hr/mo)</td>
-              <td>Unlimited</td>
-            </tr>
-            <tr>
-              <td>Translation</td>
-              <td>5K chars</td>
-              <td>100K chars</td>
-              <td>Unlimited</td>
               <td>Unlimited</td>
             </tr>
             <tr>

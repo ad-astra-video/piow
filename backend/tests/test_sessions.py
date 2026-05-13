@@ -174,6 +174,54 @@ class TestSessionStoreStreamPersistence(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["hardware"], "gpu")
         self.assertEqual(payload["model"], "voxtral-realtime")
 
+    async def test_record_stream_usage_doubles_minutes_for_transcription_plus_analysis(self):
+        sessions = self._import_sessions_with_stubbed_supabase()
+
+        store = sessions.SessionStore()
+        session_id = "session-1"
+        stream_id = "stream-1"
+
+        store._sessions_cache[session_id] = {
+            "id": session_id,
+            "user_id": "user-1",
+            "created_at": 0,
+            "last_activity": 0,
+            "transcriptions": [],
+            "stream_sessions": [stream_id],
+            "settings": {"default_language": "en", "translate_to": []},
+        }
+        store._stream_sessions_cache[stream_id] = {
+            "id": stream_id,
+            "session_id": session_id,
+            "language": "en",
+            "live_transcription_enabled": True,
+            "analysis_enabled": True,
+            "status": "active",
+            "created_at": 100.0,
+            "updated_at": 160.0,
+            "provider_session": {"model": "voxtral-realtime", "hardware": "gpu"},
+            "total_audio_bytes": 0,
+            "transcription_segments": [],
+            "final_text": "",
+        }
+
+        usage_table = MagicMock()
+        usage_table.insert.return_value.execute = AsyncMock(return_value=SimpleNamespace(data=[]))
+
+        supabase_mock = MagicMock()
+        supabase_mock.table.side_effect = lambda table_name: usage_table if table_name == "transcription_usage" else (_ for _ in ()).throw(AssertionError(f"Unexpected table: {table_name}"))
+
+        with patch.object(sessions, "supabase", supabase_mock):
+            billed = await store._record_stream_usage(
+                stream_data=store._stream_sessions_cache[stream_id],
+                duration_seconds=60,
+                final_text="hello world from stream",
+            )
+
+        self.assertTrue(billed)
+        payload = usage_table.insert.call_args[0][0]
+        self.assertEqual(payload["duration_seconds"], 120)
+
     async def test_close_stream_session_only_updates_status(self):
         sessions = self._import_sessions_with_stubbed_supabase()
 

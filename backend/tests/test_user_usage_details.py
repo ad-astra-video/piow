@@ -86,9 +86,7 @@ class TestUserUsageDetailsPagination(unittest.IsolatedAsyncioTestCase):
 
         supabase_stub = _SupabaseStub({
             "transcription_usage": [first_page, second_page],
-            "translation_usage": [],
             "transcriptions": [],
-            "translations": [],
         })
 
         class _Request:
@@ -105,34 +103,6 @@ class TestUserUsageDetailsPagination(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         payload = json.loads(response.text)
         self.assertEqual(payload["transcription"]["total_seconds"], 63000)
-
-    async def test_usage_details_sums_all_translation_pages(self):
-        user_routes = self._import_user_routes()
-
-        first_page = [{"characters_translated": 2000, "created_at": "2026-05-01T00:00:00Z"}] * 1000
-        second_page = [{"characters_translated": 2000, "created_at": "2026-05-01T00:10:00Z"}] * 10
-
-        supabase_stub = _SupabaseStub({
-            "transcription_usage": [],
-            "translation_usage": [first_page, second_page],
-            "transcriptions": [],
-            "translations": [],
-        })
-
-        class _Request:
-            query = {"days": "30"}
-
-            def get(self, key):
-                if key == "user":
-                    return SimpleNamespace(id="user-1")
-                return None
-
-        with patch.object(user_routes, "supabase", supabase_stub):
-            response = await user_routes.get_usage_details(_Request())
-
-        self.assertEqual(response.status, 200)
-        payload = json.loads(response.text)
-        self.assertEqual(payload["translation"]["total_characters"], 2020000)
 
 
 if __name__ == "__main__":

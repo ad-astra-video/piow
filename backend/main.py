@@ -205,9 +205,16 @@ async def _handle_start_stream(ws: web.WebSocketResponse, stream_id: str):
         or provider_session.get("target_language")
         or metadata.get("target_language")
     )
+    live_translation_enabled = bool(
+        stream_session.get("live_translation_enabled")
+        if stream_session.get("live_translation_enabled") is not None
+        else provider_session.get("live_translation_enabled")
+        if provider_session.get("live_translation_enabled") is not None
+        else metadata.get("live_translation_enabled", False)
+    )
 
     relay.set_translation_callback(None)
-    if target_language and provider_name and provider_stream_id:
+    if live_translation_enabled and target_language and provider_name and provider_stream_id:
         provider = compute_provider_manager.get_provider(provider_name)
         update_streaming_session: Optional[Callable[..., Awaitable[Any]]] = (
             getattr(provider, "update_streaming_session", None) if provider else None

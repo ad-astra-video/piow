@@ -104,6 +104,7 @@ class StreamManager {
       localAnnotations: {},
       translationEntries: [],
       analysisEntries: [],
+      transcriptionEnabled: true,
       analysisEnabled: false,
       analysisMode: 'multimodal',
       quotaError: null,
@@ -384,10 +385,14 @@ class StreamManager {
     this._fileVideoStream = null;
   }
 
-  async _createStreamSession(translationConfig, analysisConfig = null) {
+  async _createStreamSession(translationConfig, analysisConfig = null, serviceConfig = null) {
     const headers = { 'Content-Type': 'application/json' };
     if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
     const body = { language: 'en' };
+    if (serviceConfig) {
+      body.live_transcription_enabled = serviceConfig.live_transcription_enabled !== false;
+      body.live_translation_enabled = !!serviceConfig.live_translation_enabled;
+    }
     if (translationConfig) {
       body.source_language = translationConfig.source_language;
       body.target_language = translationConfig.target_language;
@@ -508,11 +513,15 @@ class StreamManager {
     }
   }
 
-  async start(accessToken, sourceConfig, translationConfig = null, analysisConfig = null) {
+  async start(accessToken, sourceConfig, translationConfig = null, analysisConfig = null, serviceConfig = null) {
     if (this.state.isStarted) return;
     this.accessToken = accessToken || null;
 
     const sourceType = sourceConfig?.type || 'microphone';
+    const transcriptionEnabled = serviceConfig?.live_transcription_enabled !== false;
+    const analysisRequested = !!analysisConfig?.analysis_enabled;
+    const analysisMode = analysisConfig?.analysis_mode || 'multimodal';
+    const shouldSendRealVideoTrack = analysisRequested && (analysisMode === 'multimodal' || analysisMode === 'video_only');
     const statusLabels = {
       microphone: 'Starting...',
       screen: 'Starting...',
@@ -522,7 +531,7 @@ class StreamManager {
     try {
       const sourceTracks = {
         hasAudioTrack: true,
-        hasVideoTrack: sourceType === 'screen' || (sourceType === 'file' && !!sourceConfig?.hasVideo),
+        hasVideoTrack: shouldSendRealVideoTrack && (sourceType === 'screen' || (sourceType === 'file' && !!sourceConfig?.hasVideo)),
       };
       if (sourceType === 'microphone') {
         sourceTracks.hasVideoTrack = false;
@@ -537,6 +546,7 @@ class StreamManager {
         textTimestamps: [],
         translationEntries: [],
         analysisEntries: [],
+        transcriptionEnabled,
         analysisEnabled: !!analysisConfig?.analysis_enabled,
         analysisMode: analysisConfig?.analysis_mode || 'multimodal',
         hasAudioTrack: sourceTracks.hasAudioTrack,
@@ -548,7 +558,14 @@ class StreamManager {
       const audioTrack = await this._getAudioTrack(sourceConfig);
       let videoTrack = null;
 
-      if (sourceType === 'file' && sourceTracks.hasVideoTrack) {
+      if (shouldSendRealVideoTrack && sourceType === 'screen') {
+        videoTrack = this._screenVideoTracks[0] || null;
+        if (!videoTrack) {
+          sourceTracks.hasVideoTrack = false;
+        }
+      }
+
+      if (shouldSendRealVideoTrack && sourceType === 'file' && sourceTracks.hasVideoTrack) {
         videoTrack = this._getFileVideoTrack(sourceConfig);
         if (!videoTrack) {
           sourceTracks.hasVideoTrack = false;
@@ -568,7 +585,7 @@ class StreamManager {
 
       this._setState({ status: 'Connecting...' });
       let sessionData;
-      try { sessionData = await this._createStreamSession(translationConfig, analysisConfig); }
+      try { sessionData = await this._createStreamSession(translationConfig, analysisConfig, serviceConfig); }
       catch (sessionError) {
         const isQuotaExceeded = sessionError?.status === 402 && sessionError?.code === 'quota_exceeded';
         this._setState({
@@ -649,6 +666,26 @@ class StreamManager {
               const remainingStartMs = remaining ? sentenceStartMs : null;
               return { sentences, remaining, remainingStartMs };
             };
+
+            if (
+              !this.state.transcriptionEnabled && (
+                msgType === 'transcription.delta' ||
+                msgType === 'conversation.item.input_audio_transcription.delta' ||
+                msgType === 'response.output_text.delta' ||
+                msgType === 'response.output_audio_transcript.delta' ||
+                msgType === 'response.text.delta' ||
+                msgType === 'response.audio_transcript.delta' ||
+                msgType === 'transcription.done' ||
+                msgType === 'conversation.item.input_audio_transcription.completed' ||
+                msgType === 'response.output_text.done' ||
+                msgType === 'response.output_audio_transcript.done' ||
+                msgType === 'response.text.done' ||
+                msgType === 'response.audio_transcript.done' ||
+                msgType === 'transcription'
+              )
+            ) {
+              return;
+            }
 
             if (
               msgType === 'transcription.delta' ||

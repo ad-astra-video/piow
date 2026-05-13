@@ -181,33 +181,22 @@ async def get_usage_details(request):
 
         # Usage rows are minute-level for streams, so page through all rows.
         t_usage = await _fetch_usage_rows_paged('transcription_usage', user_id, since)
-        tr_usage = await _fetch_usage_rows_paged('translation_usage', user_id, since)
-
         # Actual job counts (from transcriptions/translations tables, not usage rows)
         t_jobs_result = await supabase.table('transcriptions').select('id', count='exact').eq('user_id', user_id).gte('created_at', since).execute()
-        tr_jobs_result = await supabase.table('translations').select('id', count='exact').eq('user_id', user_id).gte('created_at', since).execute()
         transcription_job_count = t_jobs_result.count if hasattr(t_jobs_result, 'count') else len(t_jobs_result.data or [])
-        translation_job_count = tr_jobs_result.count if hasattr(tr_jobs_result, 'count') else len(tr_jobs_result.data or [])
 
         # Aggregates
         total_transcription_seconds = sum(u.get('duration_seconds', 0) for u in t_usage)
         total_transcription_words = sum(u.get('word_count', 0) for u in t_usage)
-        total_translation_chars = sum(u.get('characters_translated', 0) for u in tr_usage)
 
         # Daily breakdown
         daily = {}
         for u in t_usage:
             day = u.get('created_at', '')[:10]
             if day not in daily:
-                daily[day] = {'transcription_seconds': 0, 'transcription_words': 0, 'translation_chars': 0}
+                daily[day] = {'transcription_seconds': 0, 'transcription_words': 0}
             daily[day]['transcription_seconds'] += u.get('duration_seconds', 0)
             daily[day]['transcription_words'] += u.get('word_count', 0)
-
-        for u in tr_usage:
-            day = u.get('created_at', '')[:10]
-            if day not in daily:
-                daily[day] = {'transcription_seconds': 0, 'transcription_words': 0, 'translation_chars': 0}
-            daily[day]['translation_chars'] += u.get('characters_translated', 0)
 
         daily_breakdown = [
             {'date': d, **v} for d, v in sorted(daily.items())
@@ -227,13 +216,8 @@ async def get_usage_details(request):
                 'job_count': transcription_job_count,
                 'source_breakdown': source_breakdown,
             },
-            'translation': {
-                'total_characters': total_translation_chars,
-                'job_count': translation_job_count,
-            },
             'daily_breakdown': daily_breakdown,
             'raw_transcription_usage': t_usage,
-            'raw_translation_usage': tr_usage,
         })
 
     except Exception as e:

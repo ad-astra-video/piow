@@ -157,11 +157,13 @@ class SessionStore:
         model = provider_session.get("model") or "voxtral-realtime"
         hardware = provider_session.get("hardware") or "gpu"
         source_language = stream_data.get("language") or "en"
+        usage_multiplier = _get_stream_usage_multiplier(stream_data)
+        billed_duration_seconds = int(duration_seconds * usage_multiplier)
 
         try:
             await supabase.table("transcription_usage").insert({
                 "user_id": user_id,
-                "duration_seconds": duration_seconds,
+                "duration_seconds": billed_duration_seconds,
                 "word_count": word_count,
                 "source_language": source_language,
                 "model": model,
@@ -331,6 +333,8 @@ class SessionStore:
         language: str,
         provider_session_data: Any,
         user_id: Optional[str] = None,
+        live_transcription_enabled: bool = True,
+        live_translation_enabled: bool = False,
         source_language: Optional[str] = None,
         target_language: Optional[str] = None,
         analysis_enabled: bool = False,
@@ -351,6 +355,8 @@ class SessionStore:
         if not isinstance(metadata, dict):
             metadata = {}
         metadata.update({
+            "live_transcription_enabled": bool(live_transcription_enabled),
+            "live_translation_enabled": bool(live_translation_enabled),
             "source_language": effective_source_language,
             "target_language": target_language,
             "analysis_enabled": analysis_enabled,
@@ -360,6 +366,8 @@ class SessionStore:
             "analysis_prompt": analysis_prompt,
         })
         provider_session_payload["metadata"] = metadata
+        provider_session_payload["live_transcription_enabled"] = bool(live_transcription_enabled)
+        provider_session_payload["live_translation_enabled"] = bool(live_translation_enabled)
         provider_session_payload.setdefault("source_language", effective_source_language)
         provider_session_payload.setdefault("target_language", target_language)
         provider_session_payload.setdefault("analysis_prompt", analysis_prompt)
@@ -367,6 +375,8 @@ class SessionStore:
             "id": stream_id,
             "session_id": session_id,
             "language": language,
+            "live_transcription_enabled": bool(live_transcription_enabled),
+            "live_translation_enabled": bool(live_translation_enabled),
             "source_language": effective_source_language,
             "target_language": target_language,
             "analysis_enabled": analysis_enabled,
@@ -529,13 +539,16 @@ class SessionStore:
         metadata.update({
             "source_language": source_language,
             "target_language": target_language,
+            "live_translation_enabled": bool(target_language),
         })
         provider_session["metadata"] = metadata
         provider_session["source_language"] = source_language
         provider_session["target_language"] = target_language
+        provider_session["live_translation_enabled"] = bool(target_language)
 
         stream_session["source_language"] = source_language
         stream_session["target_language"] = target_language
+        stream_session["live_translation_enabled"] = bool(target_language)
         stream_session["provider_session"] = provider_session
         stream_session["updated_at"] = now
         self._stream_sessions_cache[stream_id] = stream_session
@@ -816,6 +829,20 @@ class SessionStore:
         metadata = provider_session.get("metadata") if isinstance(provider_session, dict) else {}
         if not isinstance(metadata, dict):
             metadata = {}
+        live_transcription_enabled = bool(
+            row.get("live_transcription_enabled")
+            if row.get("live_transcription_enabled") is not None
+            else (provider_session.get("live_transcription_enabled") if isinstance(provider_session, dict) else None)
+            if (provider_session.get("live_transcription_enabled") if isinstance(provider_session, dict) else None) is not None
+            else metadata.get("live_transcription_enabled", True)
+        )
+        live_translation_enabled = bool(
+            row.get("live_translation_enabled")
+            if row.get("live_translation_enabled") is not None
+            else (provider_session.get("live_translation_enabled") if isinstance(provider_session, dict) else None)
+            if (provider_session.get("live_translation_enabled") if isinstance(provider_session, dict) else None) is not None
+            else metadata.get("live_translation_enabled", False)
+        )
         source_language = (
             row.get("source_language")
             or (provider_session.get("source_language") if isinstance(provider_session, dict) else None)
@@ -862,6 +889,8 @@ class SessionStore:
             "id": row["id"],
             "session_id": row.get("user_session_id"),
             "language": row.get("language", "en"),
+            "live_transcription_enabled": live_transcription_enabled,
+            "live_translation_enabled": live_translation_enabled,
             "source_language": source_language,
             "target_language": target_language,
             "analysis_enabled": analysis_enabled,
@@ -970,6 +999,17 @@ def _stream_has_billable_activity(row: Dict[str, Any]) -> bool:
 
     segments = row.get("transcription_segments") or []
     return bool(segments)
+
+
+def _get_stream_usage_multiplier(stream_data: Dict[str, Any]) -> int:
+    """Usage multiplier: 2x only when transcription and analysis are both enabled."""
+    if not stream_data:
+        return 1
+
+    if bool(stream_data.get("live_transcription_enabled", True)) and bool(stream_data.get("analysis_enabled", False)):
+        return 2
+
+    return 1
 
 
 async def _bill_active_stream_minutes() -> None:

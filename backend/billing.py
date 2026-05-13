@@ -289,6 +289,8 @@ async def get_usage(request):
         from supabase_client import async_supabase as supabase
         from payments.quotas import check_quota, PLAN_LIMITS
         user_id = str(user.id) if hasattr(user, 'id') else None
+        if not user_id:
+            return web.json_response({'error': 'Authentication required'}, status=401)
 
         # Get user's subscription tier
         sub_result = await (
@@ -304,14 +306,12 @@ async def get_usage(request):
 
         # Check quotas — transcription is a combined pool (CPU+GPU)
         transcribe_allowed, transcribe_info = await check_quota(user_id, 'transcribe_cpu', tier)
-        translate_allowed, translate_info = await check_quota(user_id, 'translate', tier)
 
         return web.json_response({
             'tier': tier,
             'plan_limits': PLAN_LIMITS.get(tier, PLAN_LIMITS['free']),
             'usage': {
                 'transcription': transcribe_info,
-                'translation': translate_info,
             },
         })
 

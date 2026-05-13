@@ -47,6 +47,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     elapsedMs,
     localAnnotations,
     analysisEntries,
+    transcriptionEnabled: activeTranscriptionEnabled,
     hasAudioTrack,
     hasVideoTrack,
     start,
@@ -73,6 +74,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
 
   // Translation state
   const [languages, setLanguages] = useState([]);
+  const [transcriptionServiceEnabled, setTranscriptionServiceEnabled] = useState(true);
   const [translateEnabled, setTranslateEnabled] = useState(false);
   const [sourceLang, setSourceLang] = useState('en');
   const [targetLang, setTargetLang] = useState('');
@@ -90,12 +92,19 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   // Mid-stream translation config updates
   useEffect(() => {
     if (isStarted && streamManager.getStreamId()) {
-      const config = translateEnabled && targetLang
+      const config = transcriptionServiceEnabled && translateEnabled && targetLang
         ? { source_language: sourceLang, target_language: targetLang }
         : null;
       streamManager.updateTranslationConfig(config);
     }
-  }, [isStarted, sourceLang, targetLang, translateEnabled]);
+  }, [isStarted, sourceLang, targetLang, translateEnabled, transcriptionServiceEnabled]);
+
+  useEffect(() => {
+    if (!transcriptionServiceEnabled && translateEnabled) {
+      setTranslateEnabled(false);
+      setTargetLang('');
+    }
+  }, [transcriptionServiceEnabled, translateEnabled]);
 
   const setupTrackAvailability = (() => {
     if (audioSource === 'microphone') return { hasAudio: true, hasVideo: false };
@@ -198,7 +207,11 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
       analysis_video_fps: 3,
       analysis_prompt: analysisPrompt,
     };
-    start(accessToken, sourceConfig, translationConfig, analysisConfig);
+    const serviceConfig = {
+      live_transcription_enabled: transcriptionServiceEnabled,
+      live_translation_enabled: transcriptionServiceEnabled && translateEnabled && !!targetLang,
+    };
+    start(accessToken, sourceConfig, translationConfig, analysisConfig, serviceConfig);
   }, [
     audioSource,
     fileHasVideo,
@@ -207,6 +220,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     translateEnabled,
     sourceLang,
     targetLang,
+    transcriptionServiceEnabled,
     effectiveAnalysisEnabled,
     analysisMode,
     analysisPrompt,
@@ -302,7 +316,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
 
   return (
     <div className="stream-page">
-      <h1 className="page-title">Live Stream Transcription</h1>
+      <h1 className="page-title">Live Stream Services</h1>
       <div className="stream-layout">
 
         {/* Session setup — hidden once session starts */}
@@ -385,6 +399,17 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               </p>
             )}
 
+            <div className="analysis-toggle">
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={transcriptionServiceEnabled}
+                  onChange={(e) => setTranscriptionServiceEnabled(e.target.checked)}
+                />
+                <Mic size={14} /> Live Transcription
+              </label>
+            </div>
+
             {/* Translation toggle */}
             <div className="translation-toggle">
               {!translateEnabled ? (
@@ -392,6 +417,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                   <input
                     type="checkbox"
                     checked={translateEnabled}
+                    disabled={!transcriptionServiceEnabled}
                     onChange={(e) => {
                       setTranslateEnabled(e.target.checked);
                       if (e.target.checked && !targetLang) {
@@ -432,6 +458,9 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                     Disable
                   </button>
                 </div>
+              )}
+              {!transcriptionServiceEnabled && (
+                <small className="analysis-mode-help">Enable Live Transcription to use Live Translation.</small>
               )}
             </div>
 
@@ -496,11 +525,15 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               <button
                 className="primary-button"
                 onClick={handleStart}
-                disabled={audioSource === 'file' && !fileObjectUrl}
+                disabled={(audioSource === 'file' && !fileObjectUrl) || (!transcriptionServiceEnabled && !analysisEnabled)}
               >
                 <Mic size={16} /> Start Session
               </button>
             </div>
+
+            {!transcriptionServiceEnabled && !analysisEnabled && (
+              <p className="source-hint">Select at least one service before starting.</p>
+            )}
 
             {errorMessage && !hasQuotaExceededSignal && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
           </section>
@@ -537,7 +570,8 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
 
         {/* Transcript and analysis panels — shown only when session is active */}
         {isStarted && (
-          <div className={`stream-live-panels ${analysisEnabled ? 'analysis-open' : ''}`}>
+            <div className={`stream-live-panels ${analysisEnabled ? 'analysis-open' : ''}`}>
+          {activeTranscriptionEnabled && (
           <section className="panel-glass transcript-panel">
             {/* Compact session bar */}
             <div className="transcript-session-bar">
@@ -595,6 +629,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               {transcriptContent}
             </div>
           </section>
+          )}
 
           {analysisEnabled && (
             <section className="panel-glass analysis-panel">
