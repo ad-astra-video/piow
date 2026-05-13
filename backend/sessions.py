@@ -1771,6 +1771,21 @@ async def stop_stream_session(request):
                 "error": "Stream session not found or no stop URL available"
             }, status=404)
 
+        # Drain the relay first so the last buffered sentence fragment is translated
+        # before the provider stop request terminates upstream events.
+        try:
+            from sse_relay import get_relay
+
+            relay = get_relay(stream_id)
+            if relay:
+                await relay.drain_pending_translation_work(timeout_seconds=15)
+        except Exception as wait_exc:
+            logger.warning(
+                "Failed while draining pending translation tasks on stream %s: %s",
+                stream_id,
+                wait_exc,
+            )
+
         # Call provider's stop URL
         import aiohttp
         async with aiohttp.ClientSession() as http_session:
@@ -1809,20 +1824,6 @@ async def stop_stream_session(request):
                         "provider_status": response.status,
                         "details": response_text,
                     }
-
-        # Give the relay a bounded window to process last-sentence translation work.
-        try:
-            from sse_relay import get_relay
-
-            relay = get_relay(stream_id)
-            if relay:
-                await relay.wait_for_pending_translation_tasks(timeout_seconds=15)
-        except Exception as wait_exc:
-            logger.warning(
-                "Failed while waiting for pending translation tasks on stream %s: %s",
-                stream_id,
-                wait_exc,
-            )
 
         # Update local session
         await session_store.close_stream_session(stream_id)

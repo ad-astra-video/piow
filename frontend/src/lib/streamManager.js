@@ -126,6 +126,10 @@ class StreamManager {
     this._fileVideoStream = null;
     // Screen share video tracks kept alive to prevent Chrome from killing the audio track
     this._screenVideoTracks = [];
+    this._drainAudioCtx = null;
+    this._drainAudioSource = null;
+    this._drainAudioStream = null;
+    this._drainTracks = [];
     // Timer
     this._timerInterval = null;
     this._streamStartTime = 0;
@@ -286,6 +290,71 @@ class StreamManager {
 
     this.blackVideoSource = { canvas, stream, intervalId };
     return videoTrack;
+  }
+
+  async _createSilentAudioTrack() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      throw new Error('Web Audio API is not available in this browser.');
+    }
+
+    const audioCtx = new AudioContextClass();
+    const destination = audioCtx.createMediaStreamDestination();
+    const source = audioCtx.createConstantSource();
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0;
+    source.connect(gain);
+    gain.connect(destination);
+    source.start();
+
+    const track = destination.stream.getAudioTracks()[0];
+    if (!track) {
+      source.stop();
+      await audioCtx.close().catch(() => {});
+      throw new Error('Failed to create silent audio track');
+    }
+
+    this._drainAudioCtx = audioCtx;
+    this._drainAudioSource = source;
+    this._drainAudioStream = destination.stream;
+    this._drainTracks.push(track);
+    return track;
+  }
+
+  async _replaceOutboundTracksForStopDrain({ replaceVideo = false } = {}) {
+    const pc = this.whipClient?.pc;
+    if (!pc) return;
+
+    const senders = pc.getSenders();
+    const hasAudioSender = senders.some((sender) => sender?.track?.kind === 'audio');
+    const hasVideoSender = senders.some((sender) => sender?.track?.kind === 'video');
+
+    let silentAudioTrack = null;
+    let blackVideoTrack = null;
+
+    try {
+      if (hasAudioSender) {
+        silentAudioTrack = await this._createSilentAudioTrack();
+      }
+      if (replaceVideo && hasVideoSender) {
+        blackVideoTrack = await this._createBlackVideoTrack();
+        this._drainTracks.push(blackVideoTrack);
+      }
+
+      const replacements = senders.map(async (sender) => {
+        if (!sender?.track) return;
+        if (sender.track.kind === 'audio' && silentAudioTrack) {
+          await sender.replaceTrack(silentAudioTrack);
+        }
+        if (sender.track.kind === 'video' && blackVideoTrack) {
+          await sender.replaceTrack(blackVideoTrack);
+        }
+      });
+
+      await Promise.all(replacements);
+    } catch (err) {
+      console.warn('Failed to switch outbound tracks to stop-drain media:', err);
+    }
   }
 
   async _getAudioTrack(sourceConfig) {
@@ -933,6 +1002,12 @@ class StreamManager {
 
     this._stopTimer();
 
+    if (activeStreamId) {
+      await this._replaceOutboundTracksForStopDrain({
+        replaceVideo: !!this.state.analysisEnabled,
+      });
+    }
+
     let stopResult = null;
     if (activeStreamId) {
       try {
@@ -980,6 +1055,23 @@ class StreamManager {
       clearInterval(this.blackVideoSource.intervalId);
     }
     this.blackVideoSource = null;
+    this._drainTracks.forEach((track) => {
+      try {
+        track.stop();
+      } catch (_e) {}
+    });
+    this._drainTracks = [];
+    if (this._drainAudioSource) {
+      try {
+        this._drainAudioSource.stop();
+      } catch (_e) {}
+    }
+    this._drainAudioSource = null;
+    this._drainAudioStream = null;
+    if (this._drainAudioCtx) {
+      this._drainAudioCtx.close().catch(() => {});
+    }
+    this._drainAudioCtx = null;
     if (this._fileVideoStream) {
       this._fileVideoStream.getTracks().forEach((track) => track.stop());
       this._fileVideoStream = null;

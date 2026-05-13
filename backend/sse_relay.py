@@ -114,17 +114,7 @@ class SSERelay:
                 await self._flush_task
             except asyncio.CancelledError:
                 pass
-
-        final_fragment = self._finalize_buffered_fragment_for_stop()
-        if final_fragment and self._translation_callback:
-            self._track_translation_task(
-                self._run_translation_callback(final_fragment),
-                task_name=f"sse-translate-final-fragment-{self.stream_id}",
-            )
-
-        # Final flush of any remaining buffered segments
-        await self._flush_pending_segments()
-        await self.wait_for_pending_translation_tasks(
+        await self.drain_pending_translation_work(
             timeout_seconds=self.TRANSLATION_STOP_WAIT_TIMEOUT_SECONDS
         )
         if self._http_session and not self._http_session.closed:
@@ -132,6 +122,24 @@ class SSERelay:
             self._http_session = None
         self.clients.clear()
         logger.info(f"Stopped SSE relay for stream {self.stream_id}")
+
+    async def drain_pending_translation_work(self, timeout_seconds: Optional[float] = None) -> bool:
+        """Finalize buffered text, flush DB rows, and wait for translation tasks."""
+        final_fragment = self._finalize_buffered_fragment_for_stop()
+        if final_fragment and self._translation_callback:
+            self._track_translation_task(
+                self._run_translation_callback(final_fragment),
+                task_name=f"sse-translate-final-fragment-{self.stream_id}",
+            )
+
+        # Flush first so finalized fragments are persisted before stop continues.
+        await self._flush_pending_segments()
+        timeout = (
+            self.TRANSLATION_STOP_WAIT_TIMEOUT_SECONDS
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        return await self.wait_for_pending_translation_tasks(timeout_seconds=timeout)
 
     def _track_translation_task(self, coroutine: Awaitable[None], *, task_name: str) -> None:
         """Schedule translation-related background work and track it for graceful stop."""
