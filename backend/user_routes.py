@@ -139,6 +139,29 @@ async def get_user_history(request):
                 {**item, '_type': 'transcription'} for item in (t_result.data or [])
             ]
 
+            transcription_ids = [item.get('id') for item in transcriptions if item.get('id')]
+            if transcription_ids:
+                tr_lang_result = await (
+                    supabase.table('translations')
+                    .select('transcription_id, target_language')
+                    .eq('user_id', user_id)
+                    .in_('transcription_id', transcription_ids)
+                    .execute()
+                )
+
+                langs_by_transcription: Dict[str, set] = {}
+                for row in (tr_lang_result.data or []):
+                    transcription_id = row.get('transcription_id')
+                    target_language = row.get('target_language')
+                    if not transcription_id or not target_language:
+                        continue
+                    langs_by_transcription.setdefault(str(transcription_id), set()).add(target_language)
+
+                for item in transcriptions:
+                    item['translated_languages'] = sorted(
+                        list(langs_by_transcription.get(str(item.get('id')), set()))
+                    )
+
         if item_type in ('all', 'translation'):
             tr_result = await supabase.table('translations').select('*').eq('user_id', user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
             translations = [
@@ -169,7 +192,7 @@ async def get_transcription_sentences(request):
     """GET /api/v1/transcriptions/{id}/sentences
 
     Return per-sentence rows for a transcription, ordered by sentence_index.
-    Includes translated_text when available.
+    Includes translation sentence rows grouped by target language.
     """
     user_id = _get_user_id(request)
     if not user_id:
@@ -191,7 +214,75 @@ async def get_transcription_sentences(request):
             .order('sentence_index') \
             .execute()
 
-        return web.json_response({'sentences': result.data or []})
+        base_sentences = result.data or []
+        base_by_index = {row.get('sentence_index'): row for row in base_sentences}
+
+        translations_result = await (
+            supabase.table('translations')
+            .select('id, original_text, translated_text, target_language, created_at')
+            .eq('user_id', user_id)
+            .eq('transcription_id', transcription_id)
+            .order('created_at')
+            .execute()
+        )
+
+        sentence_indices = [row.get('sentence_index') for row in base_sentences]
+        text_to_indices: Dict[str, List[int]] = {}
+        for row in base_sentences:
+            sentence_text = row.get('text')
+            sentence_index = row.get('sentence_index')
+            if not sentence_text or sentence_index is None:
+                continue
+            text_to_indices.setdefault(sentence_text, []).append(sentence_index)
+
+        translation_index_by_language: Dict[str, Dict[int, Dict[str, Any]]] = {}
+        text_match_cursors: Dict[str, Dict[str, int]] = {}
+        fallback_cursor_by_language: Dict[str, int] = {}
+
+        for row in (translations_result.data or []):
+            language = row.get('target_language')
+            translated_text = row.get('translated_text')
+            original_text = row.get('original_text')
+            if not language or not translated_text:
+                continue
+
+            language_cursor = text_match_cursors.setdefault(language, {})
+            sentence_index = None
+
+            if isinstance(original_text, str) and original_text in text_to_indices:
+                candidate_indices = text_to_indices.get(original_text) or []
+                cursor_pos = language_cursor.get(original_text, 0)
+                if cursor_pos < len(candidate_indices):
+                    sentence_index = candidate_indices[cursor_pos]
+                    language_cursor[original_text] = cursor_pos + 1
+
+            if sentence_index is None:
+                fallback_pos = fallback_cursor_by_language.get(language, 0)
+                if fallback_pos < len(sentence_indices):
+                    sentence_index = sentence_indices[fallback_pos]
+                    fallback_cursor_by_language[language] = fallback_pos + 1
+
+            if sentence_index is None:
+                continue
+
+            bucket = translation_index_by_language.setdefault(language, {})
+            bucket[sentence_index] = {
+                'sentence_index': sentence_index,
+                'text': original_text or base_by_index.get(sentence_index, {}).get('text') or '',
+                'translated_text': translated_text,
+                'timestamp': base_by_index.get(sentence_index, {}).get('timestamp'),
+            }
+
+        translations_by_language = {
+            language: sorted(bucket.values(), key=lambda r: r.get('sentence_index', 0))
+            for language, bucket in translation_index_by_language.items()
+        }
+
+        return web.json_response({
+            'sentences': base_sentences,
+            'translations_by_language': translations_by_language,
+            'translated_languages': sorted(list(translations_by_language.keys())),
+        })
     except Exception as e:
         logger.error(f"Error fetching transcription sentences: {e}")
         return web.json_response({'error': str(e)}, status=500)

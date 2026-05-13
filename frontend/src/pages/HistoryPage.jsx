@@ -8,18 +8,20 @@ import { splitSentences, parseTranscriptSentences } from '../lib/download';
 export default function HistoryPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('transcription');
   const [search, setSearch] = useState('');
   const [modalItem, setModalItem] = useState(null);
   const [modalSentences, setModalSentences] = useState(null); // null = not loaded yet
+  const [modalTranslationsByLanguage, setModalTranslationsByLanguage] = useState({});
+  const [activeModalLanguage, setActiveModalLanguage] = useState('transcript');
 
   const load = async () => {
     setLoading(true);
     try {
       const params = { limit: 100 };
-      if (filter !== 'all') params.type = filter;
+      params.type = filter;
       const res = await api.getHistory(params);
-      setItems(res.items || []);
+      setItems((res.items || []).filter((item) => item._type === 'transcription'));
     } catch (e) {
       console.error(e);
     } finally {
@@ -49,11 +51,7 @@ export default function HistoryPage() {
   const handleDelete = async (item) => {
     if (!confirm('Delete this item?')) return;
     try {
-      if (item._type === 'transcription') {
-        await api.deleteTranscription(item.id);
-      } else {
-        await api.deleteTranslation(item.id);
-      }
+      await api.deleteTranscription(item.id);
       load();
     } catch (e) {
       alert('Failed to delete: ' + e.message);
@@ -63,17 +61,27 @@ export default function HistoryPage() {
   const openModal = async (item) => {
     setModalItem(item);
     setModalSentences(null);
-    if (item._type === 'transcription') {
-      try {
-        const res = await api.getSentences(item.id);
-        setModalSentences(res.sentences || null);
-      } catch {
-        setModalSentences(null); // fall back to parsing item.text
+    setModalTranslationsByLanguage({});
+    setActiveModalLanguage('transcript');
+    try {
+      const res = await api.getSentences(item.id);
+      setModalSentences(res.sentences || null);
+      setModalTranslationsByLanguage(res.translations_by_language || {});
+      const translatedLanguages = res.translated_languages || [];
+      if (translatedLanguages.length > 0) {
+        setActiveModalLanguage(translatedLanguages[0]);
       }
+    } catch {
+      setModalSentences(null); // fall back to parsing item.text
     }
   };
 
-  const closeModal = () => { setModalItem(null); setModalSentences(null); };
+  const closeModal = () => {
+    setModalItem(null);
+    setModalSentences(null);
+    setModalTranslationsByLanguage({});
+    setActiveModalLanguage('transcript');
+  };
 
   const filtered = items.filter((item) => {
     if (!search) return true;
@@ -84,6 +92,38 @@ export default function HistoryPage() {
 
   const formatDate = (d) => new Date(d).toLocaleString();
   const formatDuration = (s) => s ? `${Math.floor(s / 60)}m ${s % 60}s` : '';
+
+  const getModalSentencesForLanguage = () => {
+    const baseSentences = modalSentences !== null
+      ? modalSentences
+      : parseTranscriptSentences(modalItem?.text || '').map((s, sentenceIndex) => ({
+        sentence_index: sentenceIndex,
+        text: s.text,
+        timestamp: s.timestamp,
+      }));
+
+    if (activeModalLanguage === 'transcript') {
+      return baseSentences.map((s) => ({
+        text: s.text,
+        timestamp: s.timestamp,
+      }));
+    }
+
+    const languageRows = modalTranslationsByLanguage[activeModalLanguage] || [];
+    const byIndex = (languageRows || []).reduce((acc, row) => {
+      acc[row.sentence_index] = row.translated_text;
+      return acc;
+    }, {});
+
+    return baseSentences.map((s, fallbackIndex) => {
+      const sentenceIndex = s.sentence_index ?? fallbackIndex;
+      return {
+        text: s.text,
+        timestamp: s.timestamp,
+        translatedText: byIndex[sentenceIndex],
+      };
+    });
+  };
 
 
 
@@ -111,9 +151,7 @@ export default function HistoryPage() {
         <div className="filter-wrap">
           <Filter size={16} />
           <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-            <option value="all">All</option>
             <option value="transcription">Transcriptions</option>
-            <option value="translation">Translations</option>
           </select>
         </div>
       </div>
@@ -135,56 +173,48 @@ export default function HistoryPage() {
                   </span>
                   <span className="history-date">{formatDate(item.created_at)}</span>
                 </div>
-                {item._type === 'transcription' ? (
-                  <div className="history-sentences preview" onClick={() => openModal(item)}>
-                    {splitSentences(item.text).slice(0, 5).map((sentence, i) => (
-                      <p key={i} className="history-sentence">{sentence}</p>
-                    ))}
-                    {splitSentences(item.text).length > 5 && (
-                      <p className="history-more">+{splitSentences(item.text).length - 5} more…</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="history-translation-preview" onClick={() => openModal(item)}>
-                    {item.original_text && (
-                      <p className="history-text history-text-original">{item.original_text}</p>
-                    )}
-                    <p className="history-text history-text-translated">{item.translated_text || ''}</p>
-                  </div>
-                )}
+                <div className="history-sentences preview" onClick={() => openModal(item)}>
+                  {splitSentences(item.text).slice(0, 5).map((sentence, i) => (
+                    <p key={i} className="history-sentence">{sentence}</p>
+                  ))}
+                  {splitSentences(item.text).length > 5 && (
+                    <p className="history-more">+{splitSentences(item.text).length - 5} more…</p>
+                  )}
+                </div>
                 <div className="history-footer">
                   <span className="lang-tag">
                     {item.language || item.source_language}
                     {item.target_language ? ` → ${item.target_language}` : ''}
                   </span>
+                  {(item.translated_languages || []).map((lang) => (
+                    <span key={lang} className="lang-tag secondary">{lang}</span>
+                  ))}
                   {item.duration ? <span className="duration-tag"><Clock size={12} /> {formatDuration(item.duration)}</span> : null}
                   {item.word_count ? <span>{item.word_count} words</span> : null}
                   {item.token_count ? <span>{item.token_count} tokens</span> : null}
                 </div>
               </div>
               <div className="history-actions">
-                {item._type === 'transcription' && (
-                  <>
-                    <button className="icon-btn" onClick={() => handleDownload(item, 'txt')} title="Download TXT">
-                      <Download size={16} />
-                    </button>
-                    <button className="icon-btn" onClick={() => handleDownload(item, 'srt')} title="Download SRT">
-                      SRT
-                    </button>
-                    <button className="icon-btn" onClick={() => handleDownload(item, 'vtt')} title="Download VTT">
-                      VTT
-                    </button>
-                    <button className="icon-btn" onClick={() => handleDownload(item, 'md')} title="Download Markdown">
-                      MD
-                    </button>
-                    <button className="icon-btn" onClick={() => handleDownload(item, 'notes-md')} title="Download Notes & Todos with Sentences">
-                      Notes+
-                    </button>
-                    <button className="icon-btn" onClick={() => handleDownload(item, 'annotations')} title="Download Notes & Todos Only">
-                      Notes
-                    </button>
-                  </>
-                )}
+                <>
+                  <button className="icon-btn" onClick={() => handleDownload(item, 'txt')} title="Download TXT">
+                    <Download size={16} />
+                  </button>
+                  <button className="icon-btn" onClick={() => handleDownload(item, 'srt')} title="Download SRT">
+                    SRT
+                  </button>
+                  <button className="icon-btn" onClick={() => handleDownload(item, 'vtt')} title="Download VTT">
+                    VTT
+                  </button>
+                  <button className="icon-btn" onClick={() => handleDownload(item, 'md')} title="Download Markdown">
+                    MD
+                  </button>
+                  <button className="icon-btn" onClick={() => handleDownload(item, 'notes-md')} title="Download Notes & Todos with Sentences">
+                    Notes+
+                  </button>
+                  <button className="icon-btn" onClick={() => handleDownload(item, 'annotations')} title="Download Notes & Todos Only">
+                    Notes
+                  </button>
+                </>
                 <button className="icon-btn danger" onClick={() => handleDelete(item)} title="Delete">
                   <Trash2 size={16} />
                 </button>
@@ -209,26 +239,37 @@ export default function HistoryPage() {
               </button>
             </div>
             <div className="history-modal-body">
-              {modalItem._type === 'transcription' ? (
-                <SentenceList
-                  transcriptionId={modalItem.id}
-                  sentences={
-                    modalSentences !== null
-                      ? modalSentences.map((s) => ({ text: s.text, timestamp: s.timestamp, translatedText: s.translated_text || undefined }))
-                      : parseTranscriptSentences(modalItem.text)
-                  }
-                />
-              ) : (
-                <div className="history-translation-modal">
-                  {modalItem.original_text && (
-                    <>
-                      <p className="history-modal-section-label">Original</p>
-                      <p className="history-text history-text-original">{modalItem.original_text}</p>
-                    </>
-                  )}
-                  <p className="history-modal-section-label">Translation</p>
-                  <p className="history-text history-text-translated">{modalItem.translated_text || ''}</p>
-                </div>
+              <div className="history-language-tabs" role="tablist" aria-label="Transcript and translations">
+                <button
+                  className={`history-language-tab ${activeModalLanguage === 'transcript' ? 'active' : ''}`}
+                  onClick={() => setActiveModalLanguage('transcript')}
+                  role="tab"
+                  aria-selected={activeModalLanguage === 'transcript'}
+                >
+                  Transcript
+                </button>
+                {Object.keys(modalTranslationsByLanguage).map((lang) => (
+                  <button
+                    key={lang}
+                    className={`history-language-tab ${activeModalLanguage === lang ? 'active' : ''}`}
+                    onClick={() => setActiveModalLanguage(lang)}
+                    role="tab"
+                    aria-selected={activeModalLanguage === lang}
+                  >
+                    {lang.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <SentenceList
+                transcriptionId={modalItem.id}
+                sentences={getModalSentencesForLanguage()}
+                readOnly={activeModalLanguage !== 'transcript'}
+              />
+              {activeModalLanguage !== 'transcript' &&
+                (modalTranslationsByLanguage[activeModalLanguage] || []).length === 0 && (
+                  <div className="history-translation-modal">
+                    <p className="history-modal-section-label">No sentence translations for this language yet.</p>
+                  </div>
               )}
             </div>
             <div className="history-modal-footer">
@@ -236,31 +277,32 @@ export default function HistoryPage() {
                 {modalItem.language || modalItem.source_language}
                 {modalItem.target_language ? ` → ${modalItem.target_language}` : ''}
               </span>
+              {Object.keys(modalTranslationsByLanguage).map((lang) => (
+                <span key={lang} className="lang-tag secondary">{lang}</span>
+              ))}
               {modalItem.duration ? <span className="duration-tag"><Clock size={12} /> {formatDuration(modalItem.duration)}</span> : null}
               {modalItem.word_count ? <span>{modalItem.word_count} words</span> : null}
               {modalItem.token_count ? <span>{modalItem.token_count} tokens</span> : null}
-              {modalItem._type === 'transcription' && (
-                <div className="history-modal-downloads">
-                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'txt')} title="Download TXT">
-                    <Download size={14} />
-                  </button>
-                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'srt')} title="Download SRT">
-                    SRT
-                  </button>
-                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'vtt')} title="Download VTT">
-                    VTT
-                  </button>
-                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'md')} title="Download Markdown">
-                    MD
-                  </button>
-                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'notes-md')} title="Download Notes & Todos with Sentences">
-                    Notes+
-                  </button>
-                  <button className="icon-btn" onClick={() => handleDownload(modalItem, 'annotations')} title="Download Notes & Todos Only">
-                    Notes
-                  </button>
-                </div>
-              )}
+              <div className="history-modal-downloads">
+                <button className="icon-btn" onClick={() => handleDownload(modalItem, 'txt')} title="Download TXT">
+                  <Download size={14} />
+                </button>
+                <button className="icon-btn" onClick={() => handleDownload(modalItem, 'srt')} title="Download SRT">
+                  SRT
+                </button>
+                <button className="icon-btn" onClick={() => handleDownload(modalItem, 'vtt')} title="Download VTT">
+                  VTT
+                </button>
+                <button className="icon-btn" onClick={() => handleDownload(modalItem, 'md')} title="Download Markdown">
+                  MD
+                </button>
+                <button className="icon-btn" onClick={() => handleDownload(modalItem, 'notes-md')} title="Download Notes & Todos with Sentences">
+                  Notes+
+                </button>
+                <button className="icon-btn" onClick={() => handleDownload(modalItem, 'annotations')} title="Download Notes & Todos Only">
+                  Notes
+                </button>
+              </div>
             </div>
           </div>
         </div>

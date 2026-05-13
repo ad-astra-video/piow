@@ -1102,6 +1102,18 @@ html, body {
 .history-modal-section-label { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted, #8a96a8); font-weight: 600; }
 .history-footer { display: flex; gap: 0.75rem; margin-top: 0.4rem; font-size: 0.75rem; color: var(--text-muted); }
 
+.history-footer .lang-tag.secondary,
+.history-modal-footer .lang-tag.secondary {
+  display: inline-block;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,0.03);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .history-sentences {
   display: flex;
   flex-direction: column;
@@ -1179,6 +1191,37 @@ html, body {
   flex: 1;
   overflow-y: auto;
   padding: 0.75rem 0;
+}
+
+.history-language-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.history-language-tab {
+  border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,0.02);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 0.28rem 0.72rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.history-language-tab:hover {
+  border-color: rgba(255,255,255,0.22);
+  color: var(--text);
+}
+
+.history-language-tab.active {
+  background: rgba(91,124,250,0.18);
+  border-color: rgba(91,124,250,0.45);
+  color: #cfd9ff;
 }
 
 .history-modal-body .history-sentence {
