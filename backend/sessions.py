@@ -644,12 +644,25 @@ class SessionStore:
     # Live-stream transcription upsert
     # ------------------------------------------------------------------
 
+    # Regex for parsing "[HH:MM:SS] sentence text" from buffered segments
+    _SEGMENT_TS_RE = __import__('re').compile(r'^\[(\d{2}:\d{2}:\d{2})\]\s*')
+
+    @staticmethod
+    def _parse_segment(segment: str):
+        """Return (timestamp_str, sentence_text) for a formatted segment."""
+        m = SessionStore._SEGMENT_TS_RE.match(segment)
+        if m:
+            return m.group(1), segment[m.end():]
+        return '', segment
+
     async def upsert_stream_transcription(self, stream_id: str, new_segments: List[str]) -> Optional[str]:
         """Create or incrementally update the transcriptions row for a live stream.
 
         Called by the SSE relay flush loop each time a batch of final segments
         is ready.  On the first call an in-progress row is inserted; subsequent
         calls append the new text and update word_count.
+
+        Each segment is also written as an individual row in transcription_sentences.
 
         The transcription_id is cached on the stream session so
         stop_stream_session can finalize the row without a DB lookup.
@@ -685,7 +698,7 @@ class SessionStore:
         existing_segments = stream_data.get("text_timestamps") or []
 
         if existing_id:
-            # Append new text to the existing row
+            # Append new text to the existing header row
             try:
                 rows = await supabase.table("transcriptions").select("text").eq("id", existing_id).execute()
                 prev_text = rows.data[0].get("text", "") if rows.data else ""
@@ -699,6 +712,9 @@ class SessionStore:
                     self._stream_sessions_cache[stream_id]["_live_text"] = full_text
             except Exception as e:
                 logger.warning("Failed to append to stream transcription %s: %s", existing_id, e)
+
+            # Insert per-sentence rows
+            await self._insert_transcription_sentences(existing_id, stream_id, new_segments)
             return existing_id
 
         # First flush G�� create the initial row
@@ -727,15 +743,108 @@ class SessionStore:
                 if stream_id in self._stream_sessions_cache:
                     self._stream_sessions_cache[stream_id]["transcription_id"] = transcription_id
                     self._stream_sessions_cache[stream_id]["_live_text"] = new_text
+                    self._stream_sessions_cache[stream_id]["_sentence_count"] = 0
                 logger.info(
                     "Created live transcription record: stream_id=%s transcription_id=%s",
                     stream_id,
                     transcription_id,
                 )
+                # Insert per-sentence rows for the first batch
+                await self._insert_transcription_sentences(transcription_id, stream_id, new_segments)
             return transcription_id
         except Exception as e:
             logger.warning("Failed to create stream transcription for stream %s: %s", stream_id, e)
             return None
+
+    async def _insert_transcription_sentences(
+        self,
+        transcription_id: str,
+        stream_id: str,
+        segments: List[str],
+    ) -> None:
+        """Insert individual sentence rows for a batch of segments."""
+        if not segments:
+            return
+        cache_entry = self._stream_sessions_cache.get(stream_id) or {}
+        start_index: int = cache_entry.get("_sentence_count", 0)
+        rows = []
+        for i, seg in enumerate(segments):
+            if not seg:
+                continue
+            timestamp, text = self._parse_segment(seg)
+            rows.append({
+                "transcription_id": transcription_id,
+                "sentence_index": start_index + i,
+                "text": text,
+                "timestamp": timestamp or None,
+            })
+        if not rows:
+            return
+        try:
+            await supabase.table("transcription_sentences").insert(rows).execute()
+            if stream_id in self._stream_sessions_cache:
+                self._stream_sessions_cache[stream_id]["_sentence_count"] = start_index + len(rows)
+        except Exception as exc:
+            logger.warning(
+                "Failed to insert transcription_sentences for stream %s: %s", stream_id, exc
+            )
+
+    async def store_stream_translation(
+        self,
+        stream_id: str,
+        original_text: str,
+        translated_text: str,
+        source_language: str,
+        target_language: str,
+    ) -> None:
+        """Insert a translation row into the translations table for a live stream sentence.
+
+        Linked to the stream's transcription record (if already created).
+        """
+        stream_data = self._stream_sessions_cache.get(stream_id) or await self.get_stream_session(stream_id)
+        if not stream_data:
+            logger.warning("store_stream_translation: stream %s not found", stream_id)
+            return
+
+        session_id = stream_data.get("session_id")
+        user_id: Optional[str] = None
+        if session_id:
+            parent = await self.get_session(session_id)
+            user_id = str(parent.get("user_id")) if parent and parent.get("user_id") else None
+        if not user_id:
+            logger.warning("store_stream_translation: missing user_id for stream %s", stream_id)
+            return
+
+        transcription_id: Optional[str] = stream_data.get("transcription_id")
+
+        try:
+            payload: Dict[str, Any] = {
+                "user_id": user_id,
+                "original_text": original_text,
+                "translated_text": translated_text,
+                "source_language": source_language,
+                "target_language": target_language,
+                "mode": "stream",
+            }
+            if transcription_id:
+                payload["transcription_id"] = transcription_id
+            await supabase.table("translations").insert(payload).execute()
+        except Exception as exc:
+            logger.warning(
+                "Failed to store stream translation for stream %s: %s", stream_id, exc
+            )
+
+        # Also update the matching transcription_sentences row with translated_text
+        if transcription_id:
+            try:
+                await supabase.table("transcription_sentences").update({
+                    "translated_text": translated_text,
+                }).eq("transcription_id", transcription_id).eq("text", original_text).execute()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to update transcription_sentences translated_text for stream %s: %s",
+                    stream_id, exc
+                )
 
     # ------------------------------------------------------------------
     # Transcription Sessions

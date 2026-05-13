@@ -839,7 +839,17 @@ class StreamManager {
               const translatedText = typeof message.text === 'string' ? message.text : '';
               const originalText = typeof message.original === 'string' ? message.original : '';
               if (translatedText) {
+                // Keep original text intact; attach translatedText to the matching entry
+                const entries = this.state.transcriptEntries;
+                const matchIdx = entries.findLastIndex((e) => e.text === originalText);
+                const updatedEntries =
+                  matchIdx >= 0
+                    ? entries.map((e, i) =>
+                        i === matchIdx ? { ...e, translatedText } : e
+                      )
+                    : entries;
                 this._setState({
+                  transcriptEntries: updatedEntries,
                   translationEntries: [
                     ...this.state.translationEntries,
                     { text: translatedText, original: originalText, status: 'done' },

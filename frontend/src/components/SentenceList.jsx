@@ -27,6 +27,7 @@ export default function SentenceList({
           key={`${transcriptionId}-${index}`}
           index={index}
           text={sentence.text}
+          translatedText={sentence.translatedText}
           timestamp={sentence.timestamp}
           transcriptionId={transcriptionId}
           annotations={bySentenceIndex[index] || []}

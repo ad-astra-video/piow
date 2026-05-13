@@ -23,6 +23,7 @@ def setup_routes(app):
     app.router.add_get('/api/v1/user/profile', get_user_profile)
     app.router.add_get('/api/v1/user/history', get_user_history)
     app.router.add_get('/api/v1/user/usage-details', get_usage_details)
+    app.router.add_get('/api/v1/transcriptions/{id}/sentences', get_transcription_sentences)
 
 
 def _get_user_id(request):
@@ -160,6 +161,39 @@ async def get_user_history(request):
 
     except Exception as e:
         logger.error(f"Error getting user history: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+@require_user_auth
+async def get_transcription_sentences(request):
+    """GET /api/v1/transcriptions/{id}/sentences
+
+    Return per-sentence rows for a transcription, ordered by sentence_index.
+    Includes translated_text when available.
+    """
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({'error': 'Authentication required'}, status=401)
+
+    transcription_id = request.match_info.get('id')
+    if not transcription_id:
+        return web.json_response({'error': 'Transcription ID required'}, status=400)
+
+    try:
+        # Verify ownership
+        ownership = await supabase.table('transcriptions').select('id').eq('id', transcription_id).eq('user_id', user_id).execute()
+        if not ownership.data:
+            return web.json_response({'error': 'Not found'}, status=404)
+
+        result = await supabase.table('transcription_sentences') \
+            .select('sentence_index, text, translated_text, timestamp') \
+            .eq('transcription_id', transcription_id) \
+            .order('sentence_index') \
+            .execute()
+
+        return web.json_response({'sentences': result.data or []})
+    except Exception as e:
+        logger.error(f"Error fetching transcription sentences: {e}")
         return web.json_response({'error': str(e)}, status=500)
 
 

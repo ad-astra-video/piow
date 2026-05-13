@@ -320,6 +320,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
           key={`${entry.timestamp}-${index}`}
           index={index}
           text={entry.text}
+          translatedText={entry.translatedText}
           timestamp={entry.timestamp}
           annotations={localAnnotations[index] || []}
           readOnly={false}

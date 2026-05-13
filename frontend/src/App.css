@@ -1094,6 +1094,12 @@ html, body {
 .history-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
 .history-date { font-size: 0.75rem; color: var(--text-muted); margin-left: auto; }
 .history-text { margin: 0; font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; }
+
+.history-translation-preview { display: flex; flex-direction: column; gap: 0.25rem; cursor: pointer; }
+.history-text-original { color: var(--text-muted, #8a96a8); }
+.history-text-translated { font-style: italic; border-left: 2px solid var(--accent, #6c8cff); padding-left: 0.45rem; }
+.history-translation-modal { display: flex; flex-direction: column; gap: 0.5rem; }
+.history-modal-section-label { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted, #8a96a8); font-weight: 600; }
 .history-footer { display: flex; gap: 0.75rem; margin-top: 0.4rem; font-size: 0.75rem; color: var(--text-muted); }
 
 .history-sentences {
@@ -2938,6 +2944,27 @@ html, body {
   line-height: 1.55;
   color: var(--text);
   word-break: break-word;
+}
+
+.entry-text-block {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.entry-text-block .entry-text {
+  flex: unset;
+}
+
+.entry-text-translated {
+  color: var(--text-muted, #8a96a8);
+  font-style: italic;
+  font-size: 0.88rem;
+  border-left: 2px solid var(--accent, #6c8cff);
+  padding-left: 0.45rem;
+  margin-top: 0.05rem;
 }
 
 .sentence-actions {

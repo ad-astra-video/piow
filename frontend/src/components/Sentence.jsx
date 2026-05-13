@@ -4,6 +4,7 @@ import { StickyNote, CheckSquare, Square, X, Trash2, Plus } from 'lucide-react';
 export default function Sentence({
   index,
   text,
+  translatedText,
   timestamp,
   transcriptionId,
   annotations = [],
@@ -76,7 +77,12 @@ export default function Sentence({
         ) : (
           <span className="entry-timestamp-col placeholder" />
         )}
-        <p className="entry-text">{text}</p>
+        <div className="entry-text-block">
+          <p className="entry-text">{text}</p>
+          {translatedText && (
+            <p className="entry-text entry-text-translated">{translatedText}</p>
+          )}
+        </div>
         <div className="sentence-actions">
           {!readOnly && (hovered || hasNotes || hasTodos) && (
             <>

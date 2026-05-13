@@ -62,6 +62,7 @@ export const api = {
   },
   getTranscription: (id) => _fetch(`/transcriptions/${id}`),
   deleteTranscription: (id) => _fetch(`/transcriptions/${id}`, { method: 'DELETE' }),
+  getSentences: (transcriptionId) => _fetch(`/transcriptions/${transcriptionId}/sentences`),
 
   // Translations (history only)
   listTranslations: (params = {}) => {

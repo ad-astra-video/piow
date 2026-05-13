@@ -336,6 +336,9 @@ class SSERelay:
                     for sentence in new_sentences:
                         asyncio.create_task(self._run_translation_callback(sentence))
 
+                if msg_type == "translation":
+                    asyncio.create_task(self._store_translation_to_db(message))
+
             # Relay messages to frontend as-is.
             await self._broadcast(message)
 
@@ -355,6 +358,31 @@ class SSERelay:
         except Exception as exc:
             logger.warning(
                 "Translation callback failed for stream %s: %s",
+                self.stream_id,
+                exc,
+            )
+
+    async def _store_translation_to_db(self, message: Dict[str, Any]) -> None:
+        """Persist a translation result to the translations DB table."""
+        if self._session_store is None:
+            return
+        translated_text = message.get("text") if isinstance(message.get("text"), str) else ""
+        original_text = message.get("original") if isinstance(message.get("original"), str) else ""
+        source_language = message.get("source_language") if isinstance(message.get("source_language"), str) else "en"
+        target_language = message.get("target_language") if isinstance(message.get("target_language"), str) else ""
+        if not translated_text or not original_text or not target_language:
+            return
+        try:
+            await self._session_store.store_stream_translation(
+                self.stream_id,
+                original_text,
+                translated_text,
+                source_language,
+                target_language,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to store translation to DB for stream %s: %s",
                 self.stream_id,
                 exc,
             )

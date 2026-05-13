@@ -11,6 +11,7 @@ export default function HistoryPage() {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [modalItem, setModalItem] = useState(null);
+  const [modalSentences, setModalSentences] = useState(null); // null = not loaded yet
 
   const load = async () => {
     setLoading(true);
@@ -58,6 +59,21 @@ export default function HistoryPage() {
       alert('Failed to delete: ' + e.message);
     }
   };
+
+  const openModal = async (item) => {
+    setModalItem(item);
+    setModalSentences(null);
+    if (item._type === 'transcription') {
+      try {
+        const res = await api.getSentences(item.id);
+        setModalSentences(res.sentences || null);
+      } catch {
+        setModalSentences(null); // fall back to parsing item.text
+      }
+    }
+  };
+
+  const closeModal = () => { setModalItem(null); setModalSentences(null); };
 
   const filtered = items.filter((item) => {
     if (!search) return true;
@@ -120,7 +136,7 @@ export default function HistoryPage() {
                   <span className="history-date">{formatDate(item.created_at)}</span>
                 </div>
                 {item._type === 'transcription' ? (
-                  <div className="history-sentences preview" onClick={() => setModalItem(item)}>
+                  <div className="history-sentences preview" onClick={() => openModal(item)}>
                     {splitSentences(item.text).slice(0, 5).map((sentence, i) => (
                       <p key={i} className="history-sentence">{sentence}</p>
                     ))}
@@ -129,7 +145,12 @@ export default function HistoryPage() {
                     )}
                   </div>
                 ) : (
-                  <p className="history-text">{item.translated_text || ''}</p>
+                  <div className="history-translation-preview" onClick={() => openModal(item)}>
+                    {item.original_text && (
+                      <p className="history-text history-text-original">{item.original_text}</p>
+                    )}
+                    <p className="history-text history-text-translated">{item.translated_text || ''}</p>
+                  </div>
                 )}
                 <div className="history-footer">
                   <span className="lang-tag">
@@ -174,7 +195,7 @@ export default function HistoryPage() {
       )}
 
       {modalItem && (
-        <div className="history-modal-overlay" onClick={() => setModalItem(null)}>
+        <div className="history-modal-overlay" onClick={closeModal}>
           <div className="history-modal panel-glass" onClick={(e) => e.stopPropagation()}>
             <div className="history-modal-header">
               <div className="history-modal-title">
@@ -183,7 +204,7 @@ export default function HistoryPage() {
                 </span>
                 <span className="history-date">{formatDate(modalItem.created_at)}</span>
               </div>
-              <button className="icon-btn" onClick={() => setModalItem(null)} title="Close">
+              <button className="icon-btn" onClick={closeModal} title="Close">
                 <X size={16} />
               </button>
             </div>
@@ -191,10 +212,23 @@ export default function HistoryPage() {
               {modalItem._type === 'transcription' ? (
                 <SentenceList
                   transcriptionId={modalItem.id}
-                    sentences={parseTranscriptSentences(modalItem.text)}
+                  sentences={
+                    modalSentences !== null
+                      ? modalSentences.map((s) => ({ text: s.text, timestamp: s.timestamp, translatedText: s.translated_text || undefined }))
+                      : parseTranscriptSentences(modalItem.text)
+                  }
                 />
               ) : (
-                <p className="history-text">{modalItem.translated_text || ''}</p>
+                <div className="history-translation-modal">
+                  {modalItem.original_text && (
+                    <>
+                      <p className="history-modal-section-label">Original</p>
+                      <p className="history-text history-text-original">{modalItem.original_text}</p>
+                    </>
+                  )}
+                  <p className="history-modal-section-label">Translation</p>
+                  <p className="history-text history-text-translated">{modalItem.translated_text || ''}</p>
+                </div>
               )}
             </div>
             <div className="history-modal-footer">
