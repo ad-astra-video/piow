@@ -18,6 +18,7 @@ import time
 import asyncio
 import logging
 import requests
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -464,8 +465,11 @@ class LiveTranscriptionWorker:
     def __init__(self) -> None:
         self.analysis_enabled: bool = False
         self.analysis_mode: str = "multimodal"
+        self.analysis_audio_chunk_seconds: float = 1.0
         self.analysis_prompt: str = self._default_analysis_prompt(self.analysis_mode)
         self.analysis_prompt_custom: bool = False
+        self._analysis_pending_text: str = ""
+        self._analysis_last_run_ts_ms: int = 0
 
     def _default_analysis_prompt(self, mode: str) -> str:
         return self._DEFAULT_ANALYSIS_PROMPTS.get(mode, self._DEFAULT_ANALYSIS_PROMPTS["multimodal"])
@@ -492,6 +496,8 @@ class LiveTranscriptionWorker:
         # Reset per-stream audio buffering state
         LiveTranscriptionWorker._audio_frame_count = 0
         LiveTranscriptionWorker._audio_buffer = b""
+        self._analysis_pending_text = ""
+        self._analysis_last_run_ts_ms = 0
         self._apply_analysis_params(params)
 
         # Close any stale client from a previous stream just in case
@@ -535,6 +541,12 @@ class LiveTranscriptionWorker:
                     message["timestamp_ms"] = _delta_count * 80
                 payload = json.dumps(message)
                 await processor.send_data(payload)
+                if msg_type == "transcription.delta":
+                    self._queue_live_analysis(
+                        message.get("delta", ""),
+                        _delta_count * 80,
+                        is_final=False,
+                    )
                 return
 
             text = message if isinstance(message, str) else str(message)
@@ -551,8 +563,7 @@ class LiveTranscriptionWorker:
                 f"Sending transcription on data channel: is_final={is_final}, len={len(text)}"
             )
             await processor.send_data(payload)
-            if is_final and self.analysis_enabled:
-                asyncio.create_task(self._run_live_analysis_async(text.strip(), _delta_count * 80))
+            self._queue_live_analysis(text.strip(), _delta_count * 80, is_final=is_final)
 
         vllm_client.set_text_callback(_on_transcription)
 
@@ -688,6 +699,15 @@ class LiveTranscriptionWorker:
             mode_changed = self.analysis_mode != analysis_mode
             self.analysis_mode = analysis_mode
 
+        analysis_audio_chunk_seconds = params.get("analysis_audio_chunk_seconds")
+        if analysis_audio_chunk_seconds is not None:
+            try:
+                chunk_seconds = float(analysis_audio_chunk_seconds)
+                if chunk_seconds > 0:
+                    self.analysis_audio_chunk_seconds = chunk_seconds
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid analysis_audio_chunk_seconds: %s", analysis_audio_chunk_seconds)
+
         analysis_prompt = params.get("analysis_prompt")
         if analysis_prompt is not None:
             prompt_text = str(analysis_prompt).strip()
@@ -699,6 +719,36 @@ class LiveTranscriptionWorker:
                 self.analysis_prompt_custom = False
         elif mode_changed and not self.analysis_prompt_custom:
             self.analysis_prompt = self._default_analysis_prompt(self.analysis_mode)
+
+    def _queue_live_analysis(self, text: str, timestamp_ms: int, is_final: bool) -> None:
+        """Schedule analysis on final text, sentence boundaries, or elapsed chunk windows."""
+        if not self.analysis_enabled:
+            return
+
+        candidate = (text or "").strip()
+        if not candidate:
+            return
+
+        if self._analysis_pending_text:
+            self._analysis_pending_text = f"{self._analysis_pending_text} {candidate}".strip()
+        else:
+            self._analysis_pending_text = candidate
+
+        chunk_ms = max(int(self.analysis_audio_chunk_seconds * 1000), 250)
+        elapsed_ms = max(0, int(timestamp_ms) - int(self._analysis_last_run_ts_ms or 0))
+        sentence_boundary = bool(re.search(r"[.!?]\s*$", candidate))
+        should_run = is_final or sentence_boundary or elapsed_ms >= chunk_ms
+
+        if not should_run:
+            return
+
+        prompt_text = self._analysis_pending_text.strip()
+        if not prompt_text:
+            return
+
+        self._analysis_pending_text = ""
+        self._analysis_last_run_ts_ms = int(timestamp_ms)
+        asyncio.create_task(self._run_live_analysis_async(prompt_text, int(timestamp_ms)))
 
     async def _run_live_analysis_async(self, text: str, timestamp_ms: Optional[int] = None) -> None:
         """Call Gemma with the current analysis prompt and emit analysis events."""

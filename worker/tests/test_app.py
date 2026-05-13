@@ -4,6 +4,7 @@
 import os
 import sys
 import json
+import asyncio
 import pytest
 import pytest_asyncio
 import aiohttp
@@ -173,9 +174,30 @@ async def test_apply_analysis_params_updates_worker_state():
     worker._apply_analysis_params({
         "analysis_enabled": True,
         "analysis_mode": "video_only",
+        "analysis_audio_chunk_seconds": 0.75,
         "analysis_prompt": "Track visual cues",
     })
 
     assert worker.analysis_enabled is True
     assert worker.analysis_mode == "video_only"
+    assert worker.analysis_audio_chunk_seconds == 0.75
     assert worker.analysis_prompt == "Track visual cues"
+
+
+async def test_queue_live_analysis_triggers_on_chunk_window():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.analysis_audio_chunk_seconds = 0.5
+    worker._run_live_analysis_async = AsyncMock()
+
+    worker._queue_live_analysis("first partial", 200, is_final=False)
+    await asyncio.sleep(0)
+    worker._run_live_analysis_async.assert_not_awaited()
+
+    worker._queue_live_analysis("second partial", 600, is_final=False)
+    await asyncio.sleep(0)
+
+    worker._run_live_analysis_async.assert_awaited_once_with(
+        "first partial second partial",
+        600,
+    )
