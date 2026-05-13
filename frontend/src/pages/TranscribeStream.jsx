@@ -158,6 +158,22 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     e.target.value = '';
   }, [fileObjectUrl]);
 
+  const handleAudioSourceChange = useCallback((nextSource) => {
+    if (nextSource !== 'file' && audioSource === 'file') {
+      if (fileObjectUrl) URL.revokeObjectURL(fileObjectUrl);
+      streamManager.resetFileAudio();
+      setFileObjectUrl(null);
+      setFileHasVideo(false);
+      setPlayerHidden(false);
+      setPlayerFullscreen(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+
+    setAudioSource(nextSource);
+  }, [audioSource, fileObjectUrl]);
+
   useEffect(() => {
     return () => {
       if (fileObjectUrl) URL.revokeObjectURL(fileObjectUrl);
@@ -365,21 +381,21 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
             <div className="source-selector">
               <button
                 className={`source-btn ${audioSource === 'microphone' ? 'active' : ''}`}
-                onClick={() => setAudioSource('microphone')}
+                onClick={() => handleAudioSourceChange('microphone')}
                 title="Capture from microphone"
               >
                 <Mic size={13} /> Microphone
               </button>
               <button
                 className={`source-btn ${audioSource === 'screen' ? 'active' : ''}`}
-                onClick={() => setAudioSource('screen')}
+                onClick={() => handleAudioSourceChange('screen')}
                 title="Capture audio from a browser tab or window"
               >
                 <Monitor size={13} /> Screen Share
               </button>
               <button
                 className={`source-btn ${audioSource === 'file' ? 'active' : ''}`}
-                onClick={() => setAudioSource('file')}
+                onClick={() => handleAudioSourceChange('file')}
                 title="Upload an audio or video file"
               >
                 <Upload size={13} /> File
