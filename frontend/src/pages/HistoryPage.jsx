@@ -13,7 +13,9 @@ export default function HistoryPage() {
   const [modalItem, setModalItem] = useState(null);
   const [modalSentences, setModalSentences] = useState(null); // null = not loaded yet
   const [modalTranslationsByLanguage, setModalTranslationsByLanguage] = useState({});
-  const [activeModalLanguage, setActiveModalLanguage] = useState('transcript');
+  const [activeModalLanguage, setActiveModalLanguage] = useState(null);
+  const [showModalTranscript, setShowModalTranscript] = useState(true);
+  const [showModalTranslation, setShowModalTranslation] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -62,7 +64,9 @@ export default function HistoryPage() {
     setModalItem(item);
     setModalSentences(null);
     setModalTranslationsByLanguage({});
-    setActiveModalLanguage('transcript');
+    setActiveModalLanguage(null);
+    setShowModalTranscript(true);
+    setShowModalTranslation(false);
     try {
       const res = await api.getSentences(item.id);
       setModalSentences(res.sentences || null);
@@ -70,6 +74,7 @@ export default function HistoryPage() {
       const translatedLanguages = res.translated_languages || [];
       if (translatedLanguages.length > 0) {
         setActiveModalLanguage(translatedLanguages[0]);
+        setShowModalTranslation(true);
       }
     } catch {
       setModalSentences(null); // fall back to parsing item.text
@@ -80,7 +85,9 @@ export default function HistoryPage() {
     setModalItem(null);
     setModalSentences(null);
     setModalTranslationsByLanguage({});
-    setActiveModalLanguage('transcript');
+    setActiveModalLanguage(null);
+    setShowModalTranscript(true);
+    setShowModalTranslation(false);
   };
 
   const filtered = items.filter((item) => {
@@ -102,14 +109,9 @@ export default function HistoryPage() {
         timestamp: s.timestamp,
       }));
 
-    if (activeModalLanguage === 'transcript') {
-      return baseSentences.map((s) => ({
-        text: s.text,
-        timestamp: s.timestamp,
-      }));
-    }
-
-    const languageRows = modalTranslationsByLanguage[activeModalLanguage] || [];
+    const languageRows = activeModalLanguage
+      ? modalTranslationsByLanguage[activeModalLanguage] || []
+      : [];
     const byIndex = (languageRows || []).reduce((acc, row) => {
       acc[row.sentence_index] = row.translated_text;
       return acc;
@@ -117,12 +119,65 @@ export default function HistoryPage() {
 
     return baseSentences.map((s, fallbackIndex) => {
       const sentenceIndex = s.sentence_index ?? fallbackIndex;
+      const translatedText = byIndex[sentenceIndex];
+
+      if (showModalTranscript && showModalTranslation) {
+        return {
+          text: s.text,
+          timestamp: s.timestamp,
+          translatedText,
+        };
+      }
+
+      if (showModalTranscript) {
+        return {
+          text: s.text,
+          timestamp: s.timestamp,
+        };
+      }
+
       return {
-        text: s.text,
+        text: translatedText,
         timestamp: s.timestamp,
-        translatedText: byIndex[sentenceIndex],
       };
-    });
+    }).filter((sentence) => sentence.text);
+  };
+
+  const toggleModalTranscript = () => {
+    if (showModalTranscript && !showModalTranslation) {
+      return;
+    }
+
+    setShowModalTranscript((current) => !current);
+  };
+
+  const toggleModalTranslationLanguage = (language) => {
+    if (activeModalLanguage !== language) {
+      setActiveModalLanguage(language);
+      setShowModalTranslation(true);
+      return;
+    }
+
+    if (showModalTranslation) {
+      if (!showModalTranscript) {
+        return;
+      }
+
+      setShowModalTranslation(false);
+      return;
+    }
+
+    setShowModalTranslation(true);
+  };
+
+  const hasActiveTranslationRows = activeModalLanguage
+    ? (modalTranslationsByLanguage[activeModalLanguage] || []).length > 0
+    : false;
+
+  const isShowingTranslationOnly = showModalTranslation && !showModalTranscript;
+
+  const getTranslationButtonActive = (language) => {
+    return showModalTranslation && activeModalLanguage === language;
   };
 
 
@@ -239,22 +294,22 @@ export default function HistoryPage() {
               </button>
             </div>
             <div className="history-modal-body">
-              <div className="history-language-tabs" role="tablist" aria-label="Transcript and translations">
+              <div className="history-language-tabs" aria-label="Transcript and translations display options">
                 <button
-                  className={`history-language-tab ${activeModalLanguage === 'transcript' ? 'active' : ''}`}
-                  onClick={() => setActiveModalLanguage('transcript')}
-                  role="tab"
-                  aria-selected={activeModalLanguage === 'transcript'}
+                  className={`history-language-tab ${showModalTranscript ? 'active' : ''}`}
+                  onClick={toggleModalTranscript}
+                  type="button"
+                  aria-pressed={showModalTranscript}
                 >
                   Transcript
                 </button>
                 {Object.keys(modalTranslationsByLanguage).map((lang) => (
                   <button
                     key={lang}
-                    className={`history-language-tab ${activeModalLanguage === lang ? 'active' : ''}`}
-                    onClick={() => setActiveModalLanguage(lang)}
-                    role="tab"
-                    aria-selected={activeModalLanguage === lang}
+                    className={`history-language-tab ${getTranslationButtonActive(lang) ? 'active' : ''}`}
+                    onClick={() => toggleModalTranslationLanguage(lang)}
+                    type="button"
+                    aria-pressed={getTranslationButtonActive(lang)}
                   >
                     {lang.toUpperCase()}
                   </button>
@@ -263,10 +318,9 @@ export default function HistoryPage() {
               <SentenceList
                 transcriptionId={modalItem.id}
                 sentences={getModalSentencesForLanguage()}
-                readOnly={activeModalLanguage !== 'transcript'}
+                readOnly={!showModalTranscript}
               />
-              {activeModalLanguage !== 'transcript' &&
-                (modalTranslationsByLanguage[activeModalLanguage] || []).length === 0 && (
+              {isShowingTranslationOnly && !hasActiveTranslationRows && (
                   <div className="history-translation-modal">
                     <p className="history-modal-section-label">No sentence translations for this language yet.</p>
                   </div>
