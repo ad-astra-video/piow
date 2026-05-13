@@ -51,7 +51,6 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     hasVideoTrack,
     start,
     stop,
-    dismissQuotaError,
     addLocalAnnotation,
     updateLocalAnnotation,
     deleteLocalAnnotation,
@@ -245,6 +244,15 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   }, [transcriptEntries, partialTranscript, autoScroll]);
 
   const { Icon: SourceIcon, label: sourceLabel } = SOURCE_META[audioSource] ?? SOURCE_META.microphone;
+  const hasQuotaExceededSignal =
+    quotaError?.code === 'quota_exceeded'
+    || /quota exceeded/i.test(errorMessage || '')
+    || /quota exceeded/i.test(status || '');
+  const quotaErrorText =
+    quotaError?.message
+    || errorMessage
+    || status
+    || 'Transcription quota exceeded for current plan';
 
   // Determine video container CSS class
   const videoContainerClass = (() => {
@@ -300,12 +308,12 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
         {/* Session setup — hidden once session starts */}
         {!isStarted && (
           <section className="panel-glass stream-controls">
-             {quotaError?.code === 'quota_exceeded' ? (
+             {hasQuotaExceededSignal ? (
                <div className="quota-error-bar">
                  <div className="quota-error-content">
                    <AlertCircle size={18} />
                    <span className="quota-error-text">
-                     Your <strong>{quotaError.tier || 'free'}</strong> plan quota exceeded
+                     {quotaErrorText}
                    </span>
                  </div>
                  <button
@@ -494,7 +502,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               </button>
             </div>
 
-            {errorMessage && !quotaError && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
+            {errorMessage && !hasQuotaExceededSignal && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
           </section>
         )}
 
@@ -569,7 +577,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               </div>
             </div>
 
-            {errorMessage && !quotaError && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
+            {errorMessage && !hasQuotaExceededSignal && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
 
             <div className="panel-heading transcript-heading">
               <h2>Transcript</h2>
