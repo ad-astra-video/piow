@@ -35,7 +35,7 @@ const SOURCE_META = {
   file: { Icon: Upload, label: 'File' },
 };
 
-export default function TranscribeStream({ accessToken }) {
+export default function TranscribeStream({ accessToken, onStreamStopped }) {
   const {
     isStarted,
     status,
@@ -61,6 +61,7 @@ export default function TranscribeStream({ accessToken }) {
   const scrollRef = useRef(null);
   const navigate = useNavigate();
   const [autoScroll, setAutoScroll] = useState(true);
+  const wasStartedRef = useRef(false);
 
   const [audioSource, setAudioSource] = useState('microphone');
   const [fileObjectUrl, setFileObjectUrl] = useState(null);
@@ -132,6 +133,13 @@ export default function TranscribeStream({ accessToken }) {
       analysis_prompt: analysisPrompt,
     });
   }, [isStarted, effectiveAnalysisEnabled, analysisMode, analysisPrompt]);
+
+  useEffect(() => {
+    if (wasStartedRef.current && !isStarted) {
+      onStreamStopped?.();
+    }
+    wasStartedRef.current = isStarted;
+  }, [isStarted, onStreamStopped]);
 
   const handleFileSelect = useCallback((e) => {
     const file = e.target.files[0];

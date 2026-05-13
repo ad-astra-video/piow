@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import './App.css';
 import AuthModal from './components/AuthModal';
@@ -60,7 +60,7 @@ function Sidebar({ open, onClose, authUser }) {
   );
 }
 
-function LiveTranscriptSidebar({ onStop }) {
+function LiveTranscriptSidebar({ onStreamStopped }) {
   const {
     isStarted,
     status,
@@ -76,6 +76,14 @@ function LiveTranscriptSidebar({ onStop }) {
     deleteLocalAnnotation,
     toggleLocalTodo,
   } = useLiveTranscription();
+  const wasStartedRef = React.useRef(false);
+
+  useEffect(() => {
+    if (wasStartedRef.current && !isStarted) {
+      onStreamStopped?.();
+    }
+    wasStartedRef.current = isStarted;
+  }, [isStarted, onStreamStopped]);
 
   if (!isStarted) return null;
 
@@ -150,8 +158,77 @@ function App() {
   const [authReady, setAuthReady] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [subscriptionTier, setSubscriptionTier] = useState('free');
+  const [usageSnapshot, setUsageSnapshot] = useState(null);
+  const [billingUsageSnapshot, setBillingUsageSnapshot] = useState(null);
+  const [accountDataLoading, setAccountDataLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const accessTokenRef = React.useRef(null);
+
+  const refreshAccountData = useCallback(async (accessToken) => {
+    const token = accessToken || accessTokenRef.current;
+    if (!token) {
+      setSubscriptionTier('free');
+      setUsageSnapshot(null);
+      setBillingUsageSnapshot(null);
+      return;
+    }
+
+    setAccountDataLoading(true);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const [subscriptionRes, usageRes, billingUsageRes] = await Promise.allSettled([
+        fetch(`${window.location.origin}/api/v1/billing/subscription`, { headers }),
+        fetch(`${window.location.origin}/api/v1/user/usage-details?days=30`, { headers }),
+        fetch(`${window.location.origin}/api/v1/billing/usage`, { headers }),
+      ]);
+
+      let nextTier = 'free';
+
+      if (subscriptionRes.status === 'fulfilled' && subscriptionRes.value.ok) {
+        try {
+          const data = await subscriptionRes.value.json();
+          nextTier = data.tier || 'free';
+        } catch (err) {
+          console.warn('Failed to parse subscription payload:', err);
+        }
+      }
+
+      if (usageRes.status === 'fulfilled' && usageRes.value.ok) {
+        try {
+          setUsageSnapshot(await usageRes.value.json());
+        } catch (err) {
+          console.warn('Failed to parse usage details payload:', err);
+          setUsageSnapshot(null);
+        }
+      } else {
+        setUsageSnapshot(null);
+      }
+
+      if (billingUsageRes.status === 'fulfilled' && billingUsageRes.value.ok) {
+        try {
+          const billingUsage = await billingUsageRes.value.json();
+          setBillingUsageSnapshot(billingUsage);
+          if (nextTier === 'free' && billingUsage?.tier) {
+            nextTier = billingUsage.tier;
+          }
+        } catch (err) {
+          console.warn('Failed to parse billing usage payload:', err);
+          setBillingUsageSnapshot(null);
+        }
+      } else {
+        setBillingUsageSnapshot(null);
+      }
+
+      setSubscriptionTier(nextTier);
+    } catch (err) {
+      console.warn('Failed to refresh account data:', err);
+      setSubscriptionTier('free');
+      setUsageSnapshot(null);
+      setBillingUsageSnapshot(null);
+    } finally {
+      setAccountDataLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     getSession().then((session) => {
@@ -159,7 +236,11 @@ function App() {
         setAuthSession(session);
         setAuthUser(session.user);
         accessTokenRef.current = session.access_token;
-        fetchSubscriptionTier(session.access_token);
+        refreshAccountData(session.access_token);
+      } else {
+        setSubscriptionTier('free');
+        setUsageSnapshot(null);
+        setBillingUsageSnapshot(null);
       }
       setAuthReady(true);
     });
@@ -168,27 +249,17 @@ function App() {
       setAuthSession(session);
       setAuthUser(session?.user ?? null);
       accessTokenRef.current = session?.access_token ?? null;
-      if (session) fetchSubscriptionTier(session.access_token);
-      else setSubscriptionTier('free');
+      if (session) refreshAccountData(session.access_token);
+      else {
+        setSubscriptionTier('free');
+        setUsageSnapshot(null);
+        setBillingUsageSnapshot(null);
+      }
       setAuthReady(true);
     });
 
     return () => { unsubscribe(); };
-  }, []);
-
-  const fetchSubscriptionTier = async (accessToken) => {
-    try {
-      const response = await fetch(`${window.location.origin}/api/v1/billing/subscription`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setSubscriptionTier(data.tier || 'free');
-      }
-    } catch (err) {
-      console.warn('Failed to fetch subscription tier:', err);
-    }
-  };
+  }, [refreshAccountData]);
 
   if (!authReady) return null;
 
@@ -237,12 +308,18 @@ function App() {
           setAuthUser(user);
           setAuthSession(session);
           accessTokenRef.current = session?.access_token ?? null;
-          if (user) setAuthModalOpen(false);
+          if (user) {
+            setAuthModalOpen(false);
+            refreshAccountData(session?.access_token);
+          }
         }}
         onLogout={() => {
           setAuthUser(null);
           setAuthSession(null);
           accessTokenRef.current = null;
+          setSubscriptionTier('free');
+          setUsageSnapshot(null);
+          setBillingUsageSnapshot(null);
           setAuthModalOpen(false);
         }}
         open={authModalOpen}
@@ -251,15 +328,15 @@ function App() {
 
       <main className={`main-content ${!authUser ? 'landing-main' : ''} ${location.pathname !== '/transcribe/stream' && authUser ? 'has-live-sidebar' : ''}`}>
         <Routes>
-          <Route path="/" element={authUser ? <Dashboard /> : <LandingPage onOpenAuth={() => setAuthModalOpen(true)} />} />
+          <Route path="/" element={authUser ? <Dashboard usageSnapshot={usageSnapshot} /> : <LandingPage onOpenAuth={() => setAuthModalOpen(true)} />} />
           <Route path="/pricing" element={<PricingPage currentTier={subscriptionTier} onOpenAuth={() => setAuthModalOpen(true)} authUser={authUser} />} />
-          <Route path="/transcribe/stream" element={authUser ? <TranscribeStream accessToken={accessTokenRef.current} /> : <Navigate to="/" replace />} />
+          <Route path="/transcribe/stream" element={authUser ? <TranscribeStream accessToken={accessTokenRef.current} onStreamStopped={() => refreshAccountData(accessTokenRef.current)} /> : <Navigate to="/" replace />} />
           <Route path="/transcribe/file" element={<Navigate to="/transcribe/stream" replace />} />
           <Route path="/transcribe/url" element={<Navigate to="/transcribe/stream" replace />} />
           <Route path="/translate" element={<Navigate to="/transcribe/stream" replace />} />
           <Route path="/history" element={authUser ? <HistoryPage /> : <Navigate to="/" replace />} />
           <Route path="/usage" element={authUser ? <UsagePage /> : <Navigate to="/" replace />} />
-          <Route path="/billing" element={authUser ? <BillingPage /> : <Navigate to="/" replace />} />
+          <Route path="/billing" element={authUser ? <BillingPage billingUsage={billingUsageSnapshot} accountDataLoading={accountDataLoading} onRefreshAccountData={() => refreshAccountData(accessTokenRef.current)} /> : <Navigate to="/" replace />} />
           <Route path="/billing/plans" element={authUser ? <SubscriptionPlans currentTier={subscriptionTier} /> : <Navigate to="/" replace />} />
           <Route path="/billing/success" element={<CheckoutSuccess />} />
           <Route path="/billing/cancel" element={<CheckoutCancel />} />
@@ -267,7 +344,7 @@ function App() {
       </main>
 
       {location.pathname !== '/transcribe/stream' && authUser && (
-        <LiveTranscriptSidebar />
+        <LiveTranscriptSidebar onStreamStopped={() => refreshAccountData(accessTokenRef.current)} />
       )}
     </div>
   );

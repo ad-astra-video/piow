@@ -1,52 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
 const API_BASE = `${window.location.origin}/api/v1`;
 
-export default function BillingPage() {
-  const [subscription, setSubscription] = useState(null);
-  const [usage, setUsage] = useState(null);
-  const [loading, setLoading] = useState(true);
+export default function BillingPage({ billingUsage, accountDataLoading, onRefreshAccountData }) {
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    fetchBillingData();
-  }, []);
-
-  const fetchBillingData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setError('Please sign in to view billing');
-        return;
-      }
-
-      const [subRes, usageRes] = await Promise.all([
-        fetch(`${API_BASE}/billing/subscription`, {
-          headers: { 'Authorization': `Bearer ${session.access_token}` },
-        }),
-        fetch(`${API_BASE}/billing/usage`, {
-          headers: { 'Authorization': `Bearer ${session.access_token}` },
-        }),
-      ]);
-
-      if (subRes.ok) {
-        setSubscription(await subRes.json());
-      }
-      if (usageRes.ok) {
-        setUsage(await usageRes.json());
-      }
-    } catch (err) {
-      console.error('Failed to fetch billing data:', err);
-      setError('Failed to load billing information');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const loading = accountDataLoading && !billingUsage;
 
   const handleCancel = async () => {
     if (!confirm('Are you sure you want to cancel your subscription? You will lose access to paid features at the end of your billing period.')) {
@@ -64,7 +26,7 @@ export default function BillingPage() {
 
       if (response.ok) {
         alert('Subscription cancelled successfully');
-        fetchBillingData();
+        await onRefreshAccountData?.();
       } else {
         const data = await response.json();
         alert(data.error || 'Failed to cancel subscription');
@@ -95,8 +57,12 @@ export default function BillingPage() {
     return <div className="billing-page"><h2>Billing</h2><p className="error">{error}</p></div>;
   }
 
-  const tier = subscription?.tier || 'free';
-  const status = subscription?.status || 'none';
+  if (!billingUsage) {
+    return <div className="billing-page"><h2>Billing & Usage</h2><p className="error">Billing data is unavailable right now.</p></div>;
+  }
+
+  const tier = billingUsage?.tier || 'free';
+  const status = billingUsage?.status || 'none';
 
   return (
     <div className="billing-page">
@@ -126,7 +92,7 @@ export default function BillingPage() {
       </div>
 
       {/* Usage */}
-      {usage && (
+      {billingUsage && (
         <div className="billing-section">
           <h3>Usage (Last 30 Days)</h3>
           <div className="usage-grid">
@@ -134,7 +100,7 @@ export default function BillingPage() {
             <div className="usage-item">
               <label>Transcription</label>
               {(() => {
-                const tx = formatQuota(usage.usage?.transcription);
+                const tx = formatQuota(billingUsage.usage?.transcription);
                 if (tx === '—' || typeof tx === 'string') return <span>{tx}</span>;
                 return (
                   <div className="usage-bar-container">
@@ -156,7 +122,7 @@ export default function BillingPage() {
             <div className="usage-item">
               <label>Translation</label>
               {(() => {
-                const translate = formatQuota(usage.usage?.translation);
+                const translate = formatQuota(billingUsage.usage?.translation);
                 if (translate === '—' || typeof translate === 'string') return <span>{translate}</span>;
                 return (
                   <div className="usage-bar-container">

@@ -4,10 +4,8 @@ import { Mic, Globe, Clock, BarChart3, FileAudio, ArrowRight, Download } from 'l
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
 
-export default function Dashboard() {
+export default function Dashboard({ usageSnapshot }) {
   const [recentItems, setRecentItems] = useState([]);
-  const [usage, setUsage] = useState(null);
-  const [subscription, setSubscription] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -17,14 +15,8 @@ export default function Dashboard() {
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      const [historyRes, usageRes, subRes] = await Promise.allSettled([
-        api.getHistory({ limit: 5 }),
-        api.getUsageDetails(30),
-        api.getSubscription(),
-      ]);
-      if (historyRes.status === 'fulfilled') setRecentItems(historyRes.value?.items || []);
-      if (usageRes.status === 'fulfilled') setUsage(usageRes.value);
-      if (subRes.status === 'fulfilled') setSubscription(subRes.value);
+      const historyRes = await api.getHistory({ limit: 5 });
+      setRecentItems(historyRes?.items || []);
     } catch (e) {
       console.error('Dashboard load error:', e);
     } finally {
@@ -67,35 +59,35 @@ export default function Dashboard() {
       </section>
 
       {/* Usage Snapshot */}
-      {usage && (
+      {usageSnapshot && (
         <section className="usage-snapshot">
           <h2 className="section-title">This Month</h2>
           <div className="stat-grid">
             <div className="stat-card panel-glass">
               <Clock size={22} />
               <div>
-                <span className="stat-value">{formatDuration(usage.transcription?.total_seconds)}</span>
+                <span className="stat-value">{formatDuration(usageSnapshot.transcription?.total_seconds)}</span>
                 <span className="stat-label">Transcribed</span>
               </div>
             </div>
             <div className="stat-card panel-glass">
               <FileAudio size={22} />
               <div>
-                <span className="stat-value">{usage.transcription?.job_count || 0}</span>
+                <span className="stat-value">{usageSnapshot.transcription?.job_count || 0}</span>
                 <span className="stat-label">Transcription Jobs</span>
               </div>
             </div>
             <div className="stat-card panel-glass">
               <Globe size={22} />
               <div>
-                <span className="stat-value">{(usage.translation?.total_characters || 0).toLocaleString()}</span>
+                <span className="stat-value">{(usageSnapshot.translation?.total_characters || 0).toLocaleString()}</span>
                 <span className="stat-label">Chars Translated</span>
               </div>
             </div>
             <div className="stat-card panel-glass">
               <BarChart3 size={22} />
               <div>
-                <span className="stat-value">{usage.translation?.job_count || 0}</span>
+                <span className="stat-value">{usageSnapshot.translation?.job_count || 0}</span>
                 <span className="stat-label">Translation Jobs</span>
               </div>
             </div>
