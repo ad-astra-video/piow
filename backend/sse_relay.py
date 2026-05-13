@@ -796,7 +796,16 @@ class SSERelay:
 
         msg_type = payload.get("type")
         if isinstance(msg_type, str):
-            if msg_type in ("transcription", "status", "error", "translation"):
+            if msg_type in (
+                "transcription",
+                "status",
+                "error",
+                "translation",
+                "analysis.delta",
+                "analysis.done",
+                "analysis.error",
+                "analysis.status",
+            ):
                 return [payload]
 
             if msg_type in ("text_timestamps", "text_timestamps.error"):

@@ -404,6 +404,30 @@ class TestSSERelayHandleEvent(unittest.IsolatedAsyncioTestCase):
 
         ws.send_json.assert_called_once_with(event["data"])
 
+    async def test_handle_analysis_done_passthrough(self):
+        """analysis.done events are forwarded unchanged."""
+        from sse_relay import SSERelay
+        relay = SSERelay(data_url="http://localhost:9999/stream/data", stream_id="test-stream")
+
+        ws = AsyncMock()
+        ws.closed = False
+        relay.add_client(ws)
+
+        event = {
+            "event": "message",
+            "data": {
+                "type": "analysis.done",
+                "mode": "audio_only",
+                "text": "Key risk identified",
+                "timestamp_ms": 12000,
+            },
+            "id": None,
+        }
+
+        await relay._handle_event(event)
+
+        ws.send_json.assert_called_once_with(event["data"])
+
 
 class TestSSERelayPersistence(unittest.IsolatedAsyncioTestCase):
     """Test DB buffering behavior for transcription and timestamp segments."""
