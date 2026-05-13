@@ -31,7 +31,7 @@ RUN uv pip install -r requirements.txt
 # Copy the worker source
 COPY . .
 
-# Create models directory for an optional local Granite model snapshot
+# Create a cache directory for shared model downloads used by the vLLM services
 RUN mkdir -p /models
 
 # Expose the port the worker runs on

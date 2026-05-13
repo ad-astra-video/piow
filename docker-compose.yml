@@ -55,6 +55,8 @@ services:
     depends_on:
       vllm:
         condition: service_healthy
+      gemma-vllm:
+        condition: service_healthy
     restart: unless-stopped
   vllm:
     build:
@@ -95,6 +97,41 @@ services:
           memory: 8G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+  gemma-vllm:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.vllm
+    ports:
+      - "6100:6100"
+    ipc: "host"
+    command:
+      - "--model"
+      - "${GEMMA_VLLM_MODEL:-cyankiwi/gemma-4-E4B-it-AWQ-INT4}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "${GEMMA_VLLM_PORT:-6100}"
+      - "--gpu-memory-utilization"
+      - "${GEMMA_VLLM_GPU_MEMORY_UTILIZATION:-0.55}"
+      - "--max-model-len"
+      - "${GEMMA_VLLM_MAX_MODEL_LEN:-16384}"
+      - "--trust-remote-code"
+    volumes:
+      - vllm_models:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6100/health"]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -146,7 +183,6 @@ services:
       - SYS_ADMIN
     volumes:
       - ./worker:/app/worker
-      - ./models:/models
     environment:
       - DEBUG_AUDIO_WAV=1
       - PYTHONUNBUFFERED=1

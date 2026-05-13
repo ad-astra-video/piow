@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Integration test suite for Worker components (Granite transcriber and VLLM client)
-"""
+"""Integration test suite for Worker components."""
 
 import os
 import sys
@@ -11,7 +9,7 @@ from unittest.mock import patch, MagicMock
 # Add the worker directory to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from granite_transcriber import Granite4Transcriber
+from gemma_client import GemmaClient
 from vllm_client import VLLMRealtimeClient
 
 class TestWorkerIntegration(unittest.TestCase):
@@ -20,25 +18,13 @@ class TestWorkerIntegration(unittest.TestCase):
         """Set up test fixtures"""
         self.test_address = "0x742d35Cc6634C0532925a3b8D4C0532950532950"
         
-    @patch('granite_transcriber.Granite4Transcriber._load_model')
-    def test_granite_transcriber_integration(self, mock_load_model):
-        """Test Granite transcriber integration"""
-        transcriber = Granite4Transcriber()
-        
-        # Test that it initializes correctly
-        self.assertIsInstance(transcriber, Granite4Transcriber)
-        
-        # Test availability check
-        is_available = transcriber.is_available()
-        self.assertIsInstance(is_available, bool)
-        
-        # Test explicit failure payload when not loaded
-        transcriber.is_loaded = False
-        transcriber.load_error = 'Granite runtime unavailable'
-        result = transcriber.transcribe("/fake/path.wav")
-        self.assertIn('text', result)
-        self.assertIn('error', result)
-        self.assertEqual(result['model'], 'granite-speech-4.1-2b-plus')
+    def test_gemma_client_integration(self):
+        """Test Gemma client integration"""
+        client = GemmaClient(base_url="http://gemma-vllm:6100")
+
+        self.assertIsInstance(client, GemmaClient)
+        self.assertTrue(client.is_configured)
+        self.assertEqual(client.base_url, "http://gemma-vllm:6100")
     
     @patch('vllm_client.websockets.connect')
     def test_vllm_client_integration(self, mock_connect):

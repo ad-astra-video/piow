@@ -4,8 +4,6 @@ services:
       context: .
     ports:
       - "9935:9935"
-    volumes:
-      - ./models:/models
     env_file:
       - .env
     environment:
@@ -18,8 +16,11 @@ services:
       - TURN_USERNAME=${TURN_USERNAME:-}
       - TURN_PASSWORD=${TURN_PASSWORD:-}
       - VLLM_WS_URL=ws://vllm:6000/v1/realtime
+      - GEMMA_VLLM_BASE_URL=http://gemma-vllm:${GEMMA_VLLM_PORT:-6100}
     depends_on:
       vllm:
+        condition: service_healthy
+      gemma-vllm:
         condition: service_healthy
     restart: unless-stopped
     deploy:
@@ -29,6 +30,41 @@ services:
             - driver: nvidia
               device_ids: ["${WORKER_GPUS}"]
               capabilities: [gpu]
+  gemma-vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+    ports:
+      - "6100:6100"
+    ipc: "host"
+    command:
+      - "--model"
+      - "${GEMMA_VLLM_MODEL}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "${GEMMA_VLLM_PORT}"
+      - "--gpu-memory-utilization"
+      - "${GEMMA_VLLM_GPU_MEMORY_UTILIZATION}"
+      - "--max-model-len"
+      - "${GEMMA_VLLM_MAX_MODEL_LEN}"
+      - "--trust-remote-code"
+    volumes:
+      - vllm_models:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GEMMA_VLLM_GPUS}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${GEMMA_VLLM_PORT}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
   vllm:
     build:
       context: .

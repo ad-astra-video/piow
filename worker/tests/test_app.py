@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Tests for the PyTrickle-based worker app (batch endpoints).
-"""
+"""Tests for the PyTrickle-based worker app."""
 
 import os
 import sys
@@ -32,13 +30,10 @@ async def cli():
     """Create an aiohttp test client with the worker routes."""
     application = web.Application()
     
-    # Register the batch routes manually
+    # Register only the routes that remain active.
     application.router.add_get("/", worker_app.root_handler)
     application.router.add_get("/health", worker_app.health_handler)
-    application.router.add_post("/transcribe", worker_app.transcribe_handler)
-    application.router.add_post("/process/request/transcribe", worker_app.transcribe_handler)
-    application.router.add_post("/translate", worker_app.translate_handler)
-    application.router.add_post("/process/request/translate", worker_app.translate_handler)
+    application.router.add_get("/capability/status", worker_app.capability_status_handler)
 
     server = TestServer(application)
     client = TestClient(server)
@@ -63,90 +58,50 @@ async def test_health(cli):
     assert resp.status == 200
     data = await resp.json()
     assert data["status"] == "healthy"
-    assert "granite_transcriber" in data
+    assert "gemma_translation" in data
     assert "vllm_client" in data
 
 
-async def test_translate_json(cli):
-    """Test POST /translate with JSON body."""
-    payload = {
-        "text": "Hello world",
-        "source_language": "en",
-        "target_language": "es"
-    }
-    resp = await cli.post("/translate", json=payload)
+async def test_capability_status(cli):
+    resp = await cli.get("/capability/status")
     assert resp.status == 200
     data = await resp.json()
-    assert data["status"] == "completed"
-    assert "translated_text" in data
-    assert data["source_language"] == "en"
-    assert data["target_language"] == "es"
+    assert data["capabilities"][0]["name"] == "live-transcription"
 
 
-async def test_translate_missing_text(cli):
-    """Test POST /translate without text returns 400."""
-    payload = {"source_language": "en", "target_language": "es"}
-    resp = await cli.post("/translate", json=payload)
-    assert resp.status == 400
-    data = await resp.json()
-    assert "error" in data
+async def test_translate_json_is_gone(cli):
+    resp = await cli.post("/translate", json={"text": "Hello world", "source_language": "en", "target_language": "es"})
+    assert resp.status == 404
 
 
-async def test_translate_alias(cli):
-    """Test POST /process/request/translate alias."""
-    payload = {
-        "text": "Hello",
-        "source_language": "en",
-        "target_language": "fr"
-    }
-    resp = await cli.post("/process/request/translate", json=payload)
-    assert resp.status == 200
-    data = await resp.json()
-    assert data["status"] == "completed"
+async def test_translate_missing_text_is_gone(cli):
+    resp = await cli.post("/translate", json={"source_language": "en", "target_language": "es"})
+    assert resp.status == 404
 
 
-async def test_transcribe_missing_audio_url(cli):
-    """Test POST /transcribe without audio_url returns 400."""
-    payload = {"language": "en"}
-    resp = await cli.post("/transcribe", json=payload)
-    assert resp.status == 400
-    data = await resp.json()
-    assert "error" in data
+async def test_translate_alias_is_gone(cli):
+    resp = await cli.post("/process/request/translate", json={"text": "Hello", "source_language": "en", "target_language": "fr"})
+    assert resp.status == 404
 
 
-async def test_transcribe_alias(cli):
-    """Test POST /process/request/transcribe alias returns 400 (no audio_url)."""
-    payload = {"language": "en"}
-    resp = await cli.post("/process/request/transcribe", json=payload)
-    assert resp.status == 400
-    data = await resp.json()
-    assert "error" in data
+async def test_transcribe_missing_audio_url_is_gone(cli):
+    resp = await cli.post("/transcribe", json={"language": "en"})
+    assert resp.status == 404
 
 
-async def test_transcribe_accepts_data_url(cli):
-    """Test POST /transcribe with base64 data URL payload."""
-    data_url = "data:audio/wav;base64,UklGRg=="
-
-    with patch.object(worker_app.granite_transcriber, "transcribe", return_value={"text": "ok", "language": "en"}):
-        resp = await cli.post("/transcribe", json={"audio_url": data_url, "language": "en"})
-
-    assert resp.status == 200
-    payload = await resp.json()
-    assert payload["status"] == "completed"
-    assert payload["text"] == "ok"
+async def test_transcribe_alias_is_gone(cli):
+    resp = await cli.post("/process/request/transcribe", json={"language": "en"})
+    assert resp.status == 404
 
 
-async def test_transcribe_returns_500_for_transcriber_errors(cli):
-    """Test failed transcription results return HTTP 500 and failed status."""
-    data_url = "data:audio/wav;base64,UklGRg=="
+async def test_transcribe_accepts_data_url_is_gone(cli):
+    resp = await cli.post("/transcribe", json={"audio_url": "data:audio/wav;base64,UklGRg==", "language": "en"})
+    assert resp.status == 404
 
-    with patch.object(worker_app.granite_transcriber, "transcribe", return_value={"error": "decoder failure", "language": "en", "text": ""}):
-        resp = await cli.post("/transcribe", json={"audio_url": data_url, "language": "en"})
 
-    assert resp.status == 500
-    payload = await resp.json()
-    assert payload["status"] == "failed"
-    assert payload["error"] == "decoder failure"
+async def test_transcribe_returns_500_for_transcriber_errors_is_gone(cli):
+    resp = await cli.post("/transcribe", json={"audio_url": "data:audio/wav;base64,UklGRg==", "language": "en"})
+    assert resp.status == 404
 
 
 async def test_translate_sentence_async_emits_stream_message():
@@ -156,16 +111,15 @@ async def test_translate_sentence_async_emits_stream_message():
     mock_processor.send_data = AsyncMock()
 
     original_processor = worker_app.processor
+    original_gemma = worker_app.gemma_translator
     worker_app.processor = mock_processor
     try:
-        with patch.object(
-            worker_app.granite_transcriber,
-            "translate",
-            return_value={"translated_text": "Hola mundo"},
-        ):
-            await worker._translate_sentence_async("Hello world", "en", "es")
+        worker_app.gemma_translator = MagicMock()
+        worker_app.gemma_translator.translate = AsyncMock(return_value={"translated_text": "Hola mundo"})
+        await worker._translate_sentence_async("Hello world", "en", "es")
     finally:
         worker_app.processor = original_processor
+        worker_app.gemma_translator = original_gemma
 
     mock_processor.send_data.assert_awaited_once()
     payload = json.loads(mock_processor.send_data.call_args[0][0])

@@ -3,10 +3,8 @@
 PyTrickle-based Worker for Live Translation Platform.
 
 Uses StreamProcessor as the main entrypoint with decorator-based handlers.
-Provides:
-  - Batch endpoints: /transcribe, /translate, /process/request/transcribe, /process/request/translate
-  - Streaming via pytrickle: /stream/start, /stream/stop, /health, /version, etc.
-  - Audio frames forwarded to VLLM realtime websocket.
+Provides streaming-only behavior for live transcription, sentence translation
+updates, and orchestrator registration.
 """
 
 import os
@@ -45,7 +43,7 @@ WORKER_DIR = Path(__file__).parent.resolve()
 if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
-from granite_transcriber import Granite4Transcriber
+from gemma_client import GemmaClient
 from vllm_client import VLLMRealtimeClient, warmup_transcription
 
 # ---------------------------------------------------------------------------
@@ -71,16 +69,11 @@ ORCH_SERVICE_ADDR = os.environ.get("ORCH_SERVICE_ADDR", "")
 ORCH_SECRET = os.environ.get("ORCH_SECRET", "")
 CAPABILITY_NAME = "live-transcription"
 CAPABILITY_DESCRIPTION = "Transcribe audio to text"
-CAPABILITY_NAME_2 = "transcribe-translate"
-CAPABILITY_DESCRIPTION_2 = "Transcribe audio to text and translate to a target language"
 CAPABILITY_URL = os.environ.get("CAPABILITY_URL", f"https://localhost:{PORT}")
 # Per-capability pricing and capacity
 LIVE_CAPABILITY_CAPACITY = int(os.environ.get("LIVE_CAPABILITY_CAPACITY", "1"))
 LIVE_CAPABILITY_PRICE_PER_UNIT = int(os.environ.get("LIVE_CAPABILITY_PRICE_PER_UNIT", "0"))
 LIVE_CAPABILITY_PRICE_SCALING = int(os.environ.get("LIVE_CAPABILITY_PRICE_SCALING", "1"))
-BATCH_CAPABILITY_CAPACITY = int(os.environ.get("BATCH_CAPABILITY_CAPACITY", "1"))
-BATCH_CAPABILITY_PRICE_PER_UNIT = int(os.environ.get("BATCH_CAPABILITY_PRICE_PER_UNIT", "0"))
-BATCH_CAPABILITY_PRICE_SCALING = int(os.environ.get("BATCH_CAPABILITY_PRICE_SCALING", "1"))
 REGISTRATION_ENABLED = os.environ.get("REGISTRATION_ENABLED", "true").lower() in ("true", "1", "yes")
 REGISTRATION_INTERVAL = int(os.environ.get("REGISTRATION_INTERVAL", "60"))  # seconds
 
@@ -94,17 +87,16 @@ urllib3.disable_warnings()
 # Runtime mutable state for capacity/price (per capability)
 _live_capacity = LIVE_CAPABILITY_CAPACITY
 _live_price_per_unit = LIVE_CAPABILITY_PRICE_PER_UNIT
-_batch_capacity = BATCH_CAPABILITY_CAPACITY
-_batch_price_per_unit = BATCH_CAPABILITY_PRICE_PER_UNIT
 
 # ---------------------------------------------------------------------------
 # Component singletons
 # ---------------------------------------------------------------------------
-granite_transcriber = Granite4Transcriber()
+gemma_client = GemmaClient()
 vllm_client: Optional[VLLMRealtimeClient] = None
-processor: Optional[StreamProcessor] = None
+processor: Any = None
+granite_transcriber: Any = None
 
-# In-memory DB for batch jobs
+# Legacy batch-job storage kept only so the disabled helper functions still parse.
 transcriptions_db: Dict[str, Dict[str, Any]] = {}
 
 
@@ -163,7 +155,6 @@ def _register_capability(name: str, description: str, capacity: int, price_per_u
 def _register_to_orchestrator() -> None:
     """Register all capabilities with the orchestrator."""
     _register_capability(CAPABILITY_NAME, CAPABILITY_DESCRIPTION, _live_capacity, _live_price_per_unit, LIVE_CAPABILITY_PRICE_SCALING)
-    _register_capability(CAPABILITY_NAME_2, CAPABILITY_DESCRIPTION_2, _batch_capacity, _batch_price_per_unit, BATCH_CAPABILITY_PRICE_SCALING)
 
 
 def _unregister_capability(name: str) -> None:
@@ -194,7 +185,6 @@ def _unregister_capability(name: str) -> None:
 def _unregister_from_orchestrator() -> None:
     """Unregister all capabilities from the orchestrator."""
     _unregister_capability(CAPABILITY_NAME)
-    _unregister_capability(CAPABILITY_NAME_2)
 
 
 async def registration_background_task():
@@ -225,11 +215,10 @@ async def update_capacity_handler(request: aiohttp.web.Request) -> aiohttp.web.R
     Body:
       { "capacity": 5 }
     """
-    global _live_capacity, _batch_capacity
+    global _live_capacity
     try:
         body = await request.json()
         new_capacity = body.get("capacity")
-        capability = body.get("capability")  # optional: "live-transcription" or "transcribe-translate"
         if new_capacity is None:
             return aiohttp.web.json_response(
                 {"error": "Missing 'capacity' field"}, status=400
@@ -239,14 +228,8 @@ async def update_capacity_handler(request: aiohttp.web.Request) -> aiohttp.web.R
             return aiohttp.web.json_response(
                 {"error": "Capacity must be >= 0"}, status=400
             )
-        if capability == CAPABILITY_NAME_2:
-            _batch_capacity = new_capacity
-        elif capability == CAPABILITY_NAME:
-            _live_capacity = new_capacity
-        else:
-            _live_capacity = new_capacity
-            _batch_capacity = new_capacity
-        logger.info("Capacity updated to %d (capability=%s)", new_capacity, capability or "both")
+        _live_capacity = new_capacity
+        logger.info("Capacity updated to %d", new_capacity)
 
         # Re-register immediately if registration is enabled
         if REGISTRATION_ENABLED and ORCH_SERVICE_ADDR:
@@ -254,7 +237,6 @@ async def update_capacity_handler(request: aiohttp.web.Request) -> aiohttp.web.R
 
         return aiohttp.web.json_response({
             "live_capacity": _live_capacity,
-            "batch_capacity": _batch_capacity,
             "message": "Capacity updated successfully",
         })
     except Exception as exc:
@@ -271,11 +253,10 @@ async def update_price_handler(request: aiohttp.web.Request) -> aiohttp.web.Resp
     Body:
       { "price_per_unit": 1.5 }
     """
-    global _live_price_per_unit, _batch_price_per_unit
+    global _live_price_per_unit
     try:
         body = await request.json()
         new_price = body.get("price_per_unit")
-        capability = body.get("capability")  # optional: "live-transcription" or "transcribe-translate"
         if new_price is None:
             return aiohttp.web.json_response(
                 {"error": "Missing 'price_per_unit' field"}, status=400
@@ -285,14 +266,8 @@ async def update_price_handler(request: aiohttp.web.Request) -> aiohttp.web.Resp
             return aiohttp.web.json_response(
                 {"error": "price_per_unit must be >= 0"}, status=400
             )
-        if capability == CAPABILITY_NAME_2:
-            _batch_price_per_unit = new_price
-        elif capability == CAPABILITY_NAME:
-            _live_price_per_unit = new_price
-        else:
-            _live_price_per_unit = new_price
-            _batch_price_per_unit = new_price
-        logger.info("Price per unit updated to %d (capability=%s)", new_price, capability or "both")
+        _live_price_per_unit = new_price
+        logger.info("Price per unit updated to %d", new_price)
 
         # Re-register immediately if registration is enabled
         if REGISTRATION_ENABLED and ORCH_SERVICE_ADDR:
@@ -300,7 +275,6 @@ async def update_price_handler(request: aiohttp.web.Request) -> aiohttp.web.Resp
 
         return aiohttp.web.json_response({
             "live_price_per_unit": _live_price_per_unit,
-            "batch_price_per_unit": _batch_price_per_unit,
             "message": "Price updated successfully",
         })
     except Exception as exc:
@@ -322,13 +296,6 @@ async def capability_status_handler(request: aiohttp.web.Request) -> aiohttp.web
                 "capacity": _live_capacity,
                 "price_per_unit": _live_price_per_unit,
                 "price_scaling": LIVE_CAPABILITY_PRICE_SCALING,
-            },
-            {
-                "name": CAPABILITY_NAME_2,
-                "description": CAPABILITY_DESCRIPTION_2,
-                "capacity": _batch_capacity,
-                "price_per_unit": _batch_price_per_unit,
-                "price_scaling": BATCH_CAPABILITY_PRICE_SCALING,
             },
         ],
         "capability_url": CAPABILITY_URL,
@@ -408,117 +375,9 @@ async def transcribe_handler(request: aiohttp.web.Request) -> aiohttp.web.Respon
       - multipart/form-data with file + optional language/format
       - JSON with audio_url + optional language/format
     """
-    logger.info("Received transcription request")
-    job_id = str(uuid.uuid4())
+    logger.info("Received transcription request, but batch transcription is disabled")
+    return aiohttp.web.json_response({"error": "Batch transcription is no longer supported"}, status=410)
 
-    try:
-        content_type = request.headers.get("Content-Type", "")
-
-        if content_type.startswith("multipart/form-data"):
-            reader = await request.multipart()
-            field = await reader.next()
-
-            file_data = None
-            uploaded_name = "audio.wav"
-            language = "en"
-            fmt = "json"
-            with_speakers = False
-            with_word_timestamps = False
-            source_language = None
-            target_language = None
-
-            while field is not None:
-                if field.filename and not file_data:
-                    uploaded_name = field.filename or "audio.wav"
-                    file_data = await field.read()
-                elif field.name == "language":
-                    language = (await field.read()).decode("utf-8", "replace").strip() or "en"
-                elif field.name == "format":
-                    fmt = (await field.read()).decode("utf-8", "replace").strip() or "json"
-                elif field.name == "with_speakers":
-                    val = (await field.read()).decode("utf-8", "replace").strip().lower()
-                    with_speakers = val in ("1", "true", "yes")
-                elif field.name == "with_word_timestamps":
-                    val = (await field.read()).decode("utf-8", "replace").strip().lower()
-                    with_word_timestamps = val in ("1", "true", "yes")
-                elif field.name == "source_language":
-                    source_language = (await field.read()).decode("utf-8", "replace").strip() or None
-                elif field.name == "target_language":
-                    target_language = (await field.read()).decode("utf-8", "replace").strip() or None
-                field = await reader.next()
-
-            if not file_data:
-                return aiohttp.web.json_response(
-                    {"error": "Missing file in multipart upload"}, status=400
-                )
-
-            if len(file_data) == 0:
-                return aiohttp.web.json_response(
-                    {"error": "Uploaded file is empty"}, status=400
-                )
-
-            # Preserve the original extension so libavformat can probe correctly.
-            suffix = os.path.splitext(uploaded_name)[1] or ".wav"
-            logger.info(
-                "Received upload: name=%s size=%d bytes suffix=%s",
-                uploaded_name, len(file_data), suffix,
-            )
-
-            result = granite_transcriber.transcribe(file_data, language, with_speakers=with_speakers, with_word_timestamps=with_word_timestamps, source_language=source_language, target_language=target_language)
-
-        else:
-            body = await request.json()
-            audio_url = body.get("audio_url")
-            language = body.get("language", "en")
-            with_speakers = bool(body.get("with_speakers", False))
-            with_word_timestamps = bool(body.get("with_word_timestamps", False))
-            source_language = body.get("source_language")
-            target_language = body.get("target_language")
-
-            if not audio_url:
-                return aiohttp.web.json_response(
-                    {"error": "Missing audio_url"}, status=400
-                )
-
-            if isinstance(audio_url, str) and audio_url.startswith("data:"):
-                marker = ";base64,"
-                if marker not in audio_url:
-                    return aiohttp.web.json_response(
-                        {"error": "Invalid data URL payload (expected base64)"},
-                        status=400,
-                    )
-
-                try:
-                    payload = audio_url.split(marker, 1)[1]
-                    audio_bytes = base64.b64decode(payload, validate=True)
-                except (ValueError, binascii.Error):
-                    return aiohttp.web.json_response(
-                        {"error": "Invalid base64 audio payload"},
-                        status=400,
-                    )
-
-                result = granite_transcriber.transcribe(audio_bytes, language, with_speakers=with_speakers, with_word_timestamps=with_word_timestamps, source_language=source_language, target_language=target_language)
-            else:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(audio_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
-                        if resp.status != 200:
-                            return aiohttp.web.json_response(
-                                {"error": f"Failed to download audio: HTTP {resp.status}"},
-                                status=502,
-                            )
-                        audio_bytes = await resp.read()
-
-                result = granite_transcriber.transcribe(audio_bytes, language, with_speakers=with_speakers, with_word_timestamps=with_word_timestamps, source_language=source_language, target_language=target_language)
-
-        normalized = _normalize_transcription_result(result, job_id, language)
-        transcriptions_db[job_id] = normalized
-        if result.get("error"):
-            return aiohttp.web.json_response(normalized, status=500)
-        return aiohttp.web.json_response(normalized)
-
-    except Exception as exc:
-        logger.exception("Transcription error")
-        return aiohttp.web.json_response({"error": str(exc)}, status=500)
 
 
 async def translate_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
@@ -532,27 +391,8 @@ async def translate_handler(request: aiohttp.web.Request) -> aiohttp.web.Respons
         "target_language": "es"
       }
     """
-    logger.info("Received translation request")
-    job_id = str(uuid.uuid4())
-
-    try:
-        body = await request.json()
-        text = body.get("text")
-        source_lang = body.get("source_language", "en")
-        target_lang = body.get("target_language", "es")
-
-        if not text:
-            return aiohttp.web.json_response(
-                {"error": "Missing text parameter"}, status=400
-            )
-
-        result = granite_transcriber.translate(text, source_lang, target_lang)
-        normalized = _normalize_translation_result(result, job_id, text, source_lang, target_lang)
-        return aiohttp.web.json_response(normalized)
-
-    except Exception as exc:
-        logger.exception("Translation error")
-        return aiohttp.web.json_response({"error": str(exc)}, status=500)
+    logger.info("Received translation request, but batch translation is disabled")
+    return aiohttp.web.json_response({"error": "Batch translation is no longer supported"}, status=410)
 
 
 async def health_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
@@ -561,14 +401,15 @@ async def health_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
         "status": "healthy",
         "service": CAPABILITY_NAME,
         "version": "2.0.0",
-        "granite_transcriber": {
-            "available": granite_transcriber.is_available(),
-            "loaded": granite_transcriber.is_loaded,
+        "gemma_translation": {
+            "configured": gemma_translator.is_configured,
+            "base_url": gemma_translator.base_url,
+            "model": gemma_translator.model,
         },
         "vllm_client": {
             "connected": vllm_client.is_connected if vllm_client else False,
         },
-        "stored_transcriptions": len(transcriptions_db),
+        "stored_transcriptions": 0,
         "timestamp": int(time.time()),
     })
 
@@ -584,10 +425,6 @@ async def root_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
 CUSTOM_ROUTES = [
     ("GET", "/", root_handler),
     ("GET", "/health", health_handler),
-    ("POST", "/transcribe", transcribe_handler),
-    ("POST", "/process/request/transcribe", transcribe_handler),
-    ("POST", "/translate", translate_handler),
-    ("POST", "/process/request/translate", translate_handler),
     # Capability / registration management routes
     ("GET", "/capability/status", capability_status_handler),
     ("POST", "/capability/capacity", update_capacity_handler),
@@ -806,9 +643,7 @@ class LiveTranscriptionWorker:
 
         source_lang = params.get("source_language", "en")
         target_lang = params.get("target_language", "es")
-        asyncio.create_task(
-            self._translate_sentence_async(sentence.strip(), source_lang, target_lang)
-        )
+        asyncio.create_task(self._translate_sentence_async(sentence.strip(), source_lang, target_lang))
 
     async def _translate_sentence_async(
         self,
@@ -818,14 +653,7 @@ class LiveTranscriptionWorker:
     ) -> None:
         """Translate a sentence and emit the result over the data channel."""
         try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                granite_transcriber.translate,
-                sentence,
-                source_lang,
-                target_lang,
-            )
+            result = await gemma_translator.translate(sentence, source_lang, target_lang)
             translated_text = ""
             if isinstance(result, dict):
                 translated_text = (result.get("translated_text") or "").strip()
@@ -843,6 +671,12 @@ class LiveTranscriptionWorker:
                     sentence[:40],
                     translated_text[:40],
                 )
+            elif processor is not None and isinstance(result, dict) and result.get("error"):
+                await processor.send_data(json.dumps({
+                    "type": "translation.error",
+                    "error": result.get("error"),
+                    "original": sentence,
+                }))
         except Exception as exc:
             logger.error("Sentence translation failed: %s", exc)
             if processor is not None:
@@ -886,7 +720,7 @@ async def on_shutdown(app: aiohttp.web.Application):
 # Main entry point
 # =============================================================================
 async def main() -> None:
-    """Create and run the StreamProcessor with custom batch routes."""
+    """Create and run the StreamProcessor with custom worker routes."""
     global processor
     handlers = LiveTranscriptionWorker()
     processor = StreamProcessor.from_handlers(
@@ -898,7 +732,7 @@ async def main() -> None:
         ssl=True,
         send_data_interval=0.1,  # 100ms — smoother transcript streaming
     )
-    # Register custom batch routes directly on the aiohttp app router
+    # Register custom worker routes directly on the aiohttp app router
     # (avoids pytrickle custom_routes API incompatibility with tuples)
     for method, path, handler in CUSTOM_ROUTES:
         processor.server.app.router.add_route(method, path, handler)
