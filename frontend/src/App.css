@@ -578,10 +578,78 @@ html, body {
 
 .hero-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
 
+.service-toggle-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .analysis-toggle {
   margin-top: 0.75rem;
   padding-top: 0.65rem;
   border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.analysis-toggle:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.service-toggle-btn,
+.service-subtoggle-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.03);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.service-toggle-btn-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.service-toggle-btn-state {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.service-toggle-btn:hover:not(:disabled),
+.service-subtoggle-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.08);
+}
+
+.service-toggle-btn.active,
+.service-subtoggle-btn.active {
+  color: var(--text);
+  border-color: rgba(91,124,250,0.62);
+  background: rgba(91,124,250,0.16);
+  box-shadow: inset 0 0 0 1px rgba(91,124,250,0.18);
+}
+
+.service-subtoggle-btn {
+  margin-top: 0.5rem;
+  background: rgba(255,255,255,0.02);
+}
+
+.service-subtoggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .analysis-config-active {
@@ -3136,13 +3204,7 @@ html, body {
 }
 
 /* Translation toggle */
-.translation-toggle { margin: 0.75rem 0; }
-.toggle-label {
-  display: inline-flex; align-items: center; gap: 0.4rem;
-  font-size: 0.85rem; color: var(--text-secondary);
-  cursor: pointer; user-select: none;
-}
-.toggle-label input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+.translation-toggle { margin-top: 0.45rem; }
 .translation-config-active {
   display: flex; flex-direction: column; gap: 0.4rem;
   padding: 0.65rem 0.75rem;

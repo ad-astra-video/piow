@@ -226,6 +226,21 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     analysisPrompt,
   ]);
 
+  const handleToggleTranslate = useCallback(() => {
+    if (!transcriptionServiceEnabled) return;
+
+    if (translateEnabled) {
+      setTranslateEnabled(false);
+      setTargetLang('');
+      return;
+    }
+
+    setTranslateEnabled(true);
+    if (!targetLang) {
+      setTargetLang(languages.find((l) => l.code !== sourceLang)?.code || 'es');
+    }
+  }, [transcriptionServiceEnabled, translateEnabled, targetLang, languages, sourceLang]);
+
   const modeDisabledReason = (mode) => {
     if (mode === 'multimodal' && !(runtimeTrackAvailability.hasAudio && runtimeTrackAvailability.hasVideo)) {
       if (audioSource === 'microphone') {
@@ -399,83 +414,83 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               </p>
             )}
 
-            <div className="analysis-toggle">
-              <label className="toggle-label">
-                <input
-                  type="checkbox"
-                  checked={transcriptionServiceEnabled}
-                  onChange={(e) => setTranscriptionServiceEnabled(e.target.checked)}
-                />
-                <Mic size={14} /> Live Transcription
-              </label>
-            </div>
+            <div className="service-toggle-grid">
+              <div className="analysis-toggle">
+                <button
+                  type="button"
+                  className={`service-toggle-btn ${transcriptionServiceEnabled ? 'active' : ''}`}
+                  onClick={() => setTranscriptionServiceEnabled((enabled) => !enabled)}
+                  title={transcriptionServiceEnabled ? 'Turn off Live Transcription' : 'Turn on Live Transcription'}
+                >
+                  <span className="service-toggle-btn-main">
+                    <Mic size={14} /> Live Transcription
+                  </span>
+                  <span className="service-toggle-btn-state">{transcriptionServiceEnabled ? 'On' : 'Off'}</span>
+                </button>
 
-            {/* Translation toggle */}
-            <div className="translation-toggle">
-              {!translateEnabled ? (
-                <label className="toggle-label">
-                  <input
-                    type="checkbox"
-                    checked={translateEnabled}
-                    disabled={!transcriptionServiceEnabled}
-                    onChange={(e) => {
-                      setTranslateEnabled(e.target.checked);
-                      if (e.target.checked && !targetLang) {
-                        setTargetLang(languages.find((l) => l.code !== sourceLang)?.code || 'es');
-                      }
-                    }}
-                  />
-                  <Languages size={14} /> Translate
-                </label>
-              ) : (
-                <div className="translation-config-active">
-                  <span className="config-label">Translate:</span>
-                  <div className="form-row lang-pair">
-                    <div>
-                      <label>From</label>
-                      <select value={sourceLang} onChange={(e) => setSourceLang(e.target.value)}>
-                        {languages.map((l) => (
-                          <option key={l.code} value={l.code}>{l.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label>To</label>
-                      <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
-                        {languages.map((l) => (
-                          <option key={l.code} value={l.code}>{l.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+                <div className="translation-toggle">
                   <button
-                    className="btn-text"
-                    onClick={() => {
-                      setTranslateEnabled(false);
-                      setTargetLang('');
-                    }}
+                    type="button"
+                    className={`service-subtoggle-btn ${translateEnabled ? 'active' : ''}`}
+                    onClick={handleToggleTranslate}
+                    disabled={!transcriptionServiceEnabled}
+                    title={
+                      transcriptionServiceEnabled
+                        ? (translateEnabled ? 'Turn off translation' : 'Turn on translation')
+                        : 'Enable Live Transcription first'
+                    }
                   >
-                    Disable
+                    <span className="service-toggle-btn-main">
+                      <Languages size={14} /> Translate
+                    </span>
+                    <span className="service-toggle-btn-state">{translateEnabled ? 'On' : 'Off'}</span>
                   </button>
+
+                  {translateEnabled && (
+                    <div className="translation-config-active">
+                      <span className="config-label">Translate:</span>
+                      <div className="form-row lang-pair">
+                        <div>
+                          <label>From</label>
+                          <select value={sourceLang} onChange={(e) => setSourceLang(e.target.value)}>
+                            {languages.map((l) => (
+                              <option key={l.code} value={l.code}>{l.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label>To</label>
+                          <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
+                            {languages.map((l) => (
+                              <option key={l.code} value={l.code}>{l.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!transcriptionServiceEnabled && (
+                    <small className="analysis-mode-help">Enable Live Transcription to use Live Translation.</small>
+                  )}
                 </div>
-              )}
-              {!transcriptionServiceEnabled && (
-                <small className="analysis-mode-help">Enable Live Transcription to use Live Translation.</small>
-              )}
-            </div>
+              </div>
 
-            <div className="analysis-toggle">
-              <label className="toggle-label">
-                <input
-                  type="checkbox"
-                  checked={analysisEnabled}
-                  onChange={(e) => setAnalysisEnabled(e.target.checked)}
-                />
-                <Brain size={14} /> Live Analysis (Beta)
-              </label>
+              <div className="analysis-toggle">
+                <button
+                  type="button"
+                  className={`service-toggle-btn ${analysisEnabled ? 'active' : ''}`}
+                  onClick={() => setAnalysisEnabled((enabled) => !enabled)}
+                  title={analysisEnabled ? 'Turn off Live Analysis' : 'Turn on Live Analysis'}
+                >
+                  <span className="service-toggle-btn-main">
+                    <Brain size={14} /> Live Analysis (Beta)
+                  </span>
+                  <span className="service-toggle-btn-state">{analysisEnabled ? 'On' : 'Off'}</span>
+                </button>
 
-              {analysisEnabled && (
-                <div className="analysis-config-active">
+                {analysisEnabled && (
+                  <div className="analysis-config-active">
                   <span className="config-label">Mode</span>
                   <div className="analysis-mode-options">
                     {['multimodal', 'audio_only', 'video_only'].map((mode) => {
@@ -518,7 +533,8 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                     />
                   </div>
                 </div>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="hero-actions">
