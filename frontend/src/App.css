@@ -533,6 +533,36 @@ html, body {
   justify-self: center;
 }
 .stream-status { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+
+.quota-error-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.15) 0%, rgba(220, 38, 38, 0.08) 100%);
+  border: 1.5px solid rgba(220, 38, 38, 0.4);
+}
+
+.quota-error-content {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.quota-error-text {
+  color: #ff6b6b;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.quota-error-text strong {
+  font-weight: 600;
+}
 .status-dot {
   width: 10px; height: 10px; border-radius: 50%;
   background: var(--text-muted);

@@ -300,14 +300,30 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
         {/* Session setup — hidden once session starts */}
         {!isStarted && (
           <section className="panel-glass stream-controls">
-            {status !== 'Ready.' && (
-              <div className="stream-status">
-                <span className="status-dot" />
-                <div>
-                  <p className="status-text">{status}</p>
-                </div>
-              </div>
-            )}
+             {quotaError?.code === 'quota_exceeded' ? (
+               <div className="quota-error-bar">
+                 <div className="quota-error-content">
+                   <AlertCircle size={18} />
+                   <span className="quota-error-text">
+                     Your <strong>{quotaError.tier || 'free'}</strong> plan quota exceeded
+                   </span>
+                 </div>
+                 <button
+                   className="primary-button"
+                   onClick={() => navigate('/billing/plans')}
+                   style={{ whiteSpace: 'nowrap' }}
+                 >
+                   Upgrade Plan
+                 </button>
+               </div>
+             ) : status !== 'Ready.' ? (
+               <div className="stream-status">
+                 <span className="status-dot" />
+                 <div>
+                   <p className="status-text">{status}</p>
+                 </div>
+               </div>
+             ) : null}
 
             <div className="source-selector">
               <button
@@ -478,7 +494,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               </button>
             </div>
 
-            {errorMessage && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
+            {errorMessage && !quotaError && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
           </section>
         )}
 
@@ -553,7 +569,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               </div>
             </div>
 
-            {errorMessage && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
+            {errorMessage && !quotaError && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
 
             <div className="panel-heading transcript-heading">
               <h2>Transcript</h2>
@@ -612,51 +628,6 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
 
       </div>
 
-      {quotaError?.code === 'quota_exceeded' && (
-        <div className="quota-modal-overlay" onClick={() => dismissQuotaError()}>
-          <div className="quota-modal panel-glass" onClick={(e) => e.stopPropagation()}>
-            <div className="quota-modal-header">
-              <h2>Quota Exceeded</h2>
-            </div>
-            <p className="quota-modal-message">
-              Your <strong>{quotaError.tier || 'free'}</strong> plan has reached its transcription quota limit.
-            </p>
-            {quotaError.quota?.used != null && quotaError.quota?.limit != null && (
-              <div className="quota-modal-meta">
-                <span>
-                  <strong>{quotaError.quota.used}</strong> / <strong>{quotaError.quota.limit === -1 ? '∞' : quotaError.quota.limit}</strong> minutes used
-                </span>
-              </div>
-            )}
-            <div style={{ padding: '0 1rem 1rem' }}>
-              <p style={{ marginTop: '0.5rem', marginBottom: '1rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                Upgrade your plan to continue using live transcription with higher limits.
-              </p>
-            </div>
-            <div className="quota-modal-actions">
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  dismissQuotaError();
-                  navigate('/usage');
-                }}
-              >
-                View Usage Details
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => {
-                  dismissQuotaError();
-                  navigate('/billing/plans');
-                }}
-                style={{ backgroundColor: '#ff6b6b', borderColor: '#ff6b6b' }}
-              >
-                Upgrade Plan
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
