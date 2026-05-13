@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Trash2, Languages, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, Maximize2, X, Download } from 'lucide-react';
+import { Trash2, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, X, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
 import SentenceList from '../components/SentenceList';
@@ -145,9 +144,6 @@ export default function HistoryPage() {
               <div className="history-actions">
                 {item._type === 'transcription' && (
                   <>
-                    <Link to={`/translate?transcription=${item.id}`} className="icon-btn" title="Translate">
-                      <Languages size={16} />
-                    </Link>
                     <button className="icon-btn" onClick={() => handleDownload(item, 'txt')} title="Download TXT">
                       <Download size={16} />
                     </button>

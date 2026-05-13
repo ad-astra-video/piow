@@ -43,9 +43,9 @@ export const api = {
   getUsageDetails: (days = 30) => _fetch(`/user/usage-details?days=${days}`),
 
   // Transcriptions
-  transcribeFile: (formData) => _fetch('/transcribe/file', { method: 'POST', body: formData }),
-  transcribeUrl: (body) => _fetch('/transcribe/url', { method: 'POST', body: JSON.stringify(body) }),
   createStreamSession: (body) => _fetch('/transcribe/stream', { method: 'POST', body: JSON.stringify(body) }),
+  updateStreamTranslation: (streamId, body) => _fetch(`/transcribe/stream/${streamId}/translation`, { method: 'PUT', body: JSON.stringify(body || {}) }),
+  updateStreamAnalysis: (streamId, body) => _fetch(`/transcribe/stream/${streamId}/analysis`, { method: 'PUT', body: JSON.stringify(body || {}) }),
   whipProxy: (streamId, sdpOffer, token) => {
     return fetch(`${API_BASE}/transcribe/stream/${streamId}/whip`, {
       method: 'POST',
@@ -63,9 +63,7 @@ export const api = {
   getTranscription: (id) => _fetch(`/transcriptions/${id}`),
   deleteTranscription: (id) => _fetch(`/transcriptions/${id}`, { method: 'DELETE' }),
 
-  // Translations
-  translateText: (body) => _fetch('/translate/text', { method: 'POST', body: JSON.stringify(body) }),
-  translateTranscription: (body) => _fetch('/translate/transcription', { method: 'POST', body: JSON.stringify(body) }),
+  // Translations (history only)
   listTranslations: (params = {}) => {
     const q = new URLSearchParams(params);
     return _fetch(`/translations?${q}`);

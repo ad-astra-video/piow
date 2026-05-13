@@ -13,14 +13,11 @@ import LandingPage from './pages/LandingPage';
 import PricingPage from './pages/PricingPage';
 import Dashboard from './pages/Dashboard';
 import TranscribeStream from './pages/TranscribeStream';
-import TranscribeFile from './pages/TranscribeFile';
-import TranscribeUrl from './pages/TranscribeUrl';
-import TranslatePage from './pages/TranslatePage';
 import HistoryPage from './pages/HistoryPage';
 import UsagePage from './pages/UsagePage';
 
 import {
-  LayoutDashboard, Mic, Upload, Link as LinkIcon, Languages,
+  LayoutDashboard, Mic,
   History, BarChart3, CreditCard, Menu, X, Radio, MicOff, ArrowRight, AlertCircle, Clock
 } from 'lucide-react';
 import { formatDuration } from './lib/streamManager';
@@ -29,9 +26,6 @@ import Sentence from './components/Sentence';
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/transcribe/stream', icon: Mic, label: 'Live Stream' },
-  { to: '/transcribe/file', icon: Upload, label: 'Upload File' },
-  { to: '/transcribe/url', icon: LinkIcon, label: 'URL' },
-  { to: '/translate', icon: Languages, label: 'Translate' },
   { to: '/history', icon: History, label: 'History' },
   { to: '/usage', icon: BarChart3, label: 'Usage' },
   { to: '/billing', icon: CreditCard, label: 'Billing' },
@@ -260,9 +254,9 @@ function App() {
           <Route path="/" element={authUser ? <Dashboard /> : <LandingPage onOpenAuth={() => setAuthModalOpen(true)} />} />
           <Route path="/pricing" element={<PricingPage currentTier={subscriptionTier} onOpenAuth={() => setAuthModalOpen(true)} authUser={authUser} />} />
           <Route path="/transcribe/stream" element={authUser ? <TranscribeStream accessToken={accessTokenRef.current} /> : <Navigate to="/" replace />} />
-          <Route path="/transcribe/file" element={authUser ? <TranscribeFile /> : <Navigate to="/" replace />} />
-          <Route path="/transcribe/url" element={authUser ? <TranscribeUrl /> : <Navigate to="/" replace />} />
-          <Route path="/translate" element={authUser ? <TranslatePage /> : <Navigate to="/" replace />} />
+          <Route path="/transcribe/file" element={<Navigate to="/transcribe/stream" replace />} />
+          <Route path="/transcribe/url" element={<Navigate to="/transcribe/stream" replace />} />
+          <Route path="/translate" element={<Navigate to="/transcribe/stream" replace />} />
           <Route path="/history" element={authUser ? <HistoryPage /> : <Navigate to="/" replace />} />
           <Route path="/usage" element={authUser ? <UsagePage /> : <Navigate to="/" replace />} />
           <Route path="/billing" element={authUser ? <BillingPage /> : <Navigate to="/" replace />} />

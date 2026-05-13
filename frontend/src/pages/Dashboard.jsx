@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Mic, Upload, Globe, Languages, Clock, BarChart3, FileAudio, Link as LinkIcon, ArrowRight, Download } from 'lucide-react';
+import { Mic, Globe, Clock, BarChart3, FileAudio, ArrowRight, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
 
@@ -41,9 +41,8 @@ export default function Dashboard() {
 
   const quickActions = [
     { to: '/transcribe/stream', icon: Mic, label: 'Live Stream', desc: 'Real-time microphone transcription' },
-    { to: '/transcribe/file', icon: Upload, label: 'Upload File', desc: 'Transcribe audio/video files' },
-    { to: '/transcribe/url', icon: LinkIcon, label: 'URL', desc: 'Transcribe from a link' },
-    { to: '/translate', icon: Languages, label: 'Translate', desc: 'Text or transcription translation' },
+    { to: '/history', icon: FileAudio, label: 'History', desc: 'Review saved stream transcripts' },
+    { to: '/usage', icon: BarChart3, label: 'Usage', desc: 'Track stream usage and quotas' },
   ];
 
   return (
