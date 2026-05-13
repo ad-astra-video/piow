@@ -333,6 +333,10 @@ class SessionStore:
         user_id: Optional[str] = None,
         source_language: Optional[str] = None,
         target_language: Optional[str] = None,
+        analysis_enabled: bool = False,
+        analysis_mode: str = "multimodal",
+        analysis_audio_chunk_seconds: float = 1.0,
+        analysis_video_fps: int = 3,
     ) -> str:
         """
         Create a new stream session with provider data.
@@ -348,6 +352,10 @@ class SessionStore:
         metadata.update({
             "source_language": effective_source_language,
             "target_language": target_language,
+            "analysis_enabled": analysis_enabled,
+            "analysis_mode": analysis_mode,
+            "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
+            "analysis_video_fps": analysis_video_fps,
         })
         provider_session_payload["metadata"] = metadata
         provider_session_payload.setdefault("source_language", effective_source_language)
@@ -358,6 +366,10 @@ class SessionStore:
             "language": language,
             "source_language": effective_source_language,
             "target_language": target_language,
+            "analysis_enabled": analysis_enabled,
+            "analysis_mode": analysis_mode,
+            "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
+            "analysis_video_fps": analysis_video_fps,
             "status": "active",
             "created_at": now,
             "updated_at": now,
@@ -531,6 +543,55 @@ class SessionStore:
             }).eq("id", stream_id).execute()
         except Exception as e:
             logger.warning("Failed to persist stream translation config for %s: %s", stream_id, e)
+
+        return stream_session
+
+    async def update_stream_analysis_config(
+        self,
+        stream_id: str,
+        analysis_enabled: bool,
+        analysis_mode: str,
+        analysis_audio_chunk_seconds: float,
+        analysis_video_fps: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Persist live analysis configuration on the stream session."""
+        stream_session = self._stream_sessions_cache.get(stream_id) or await self.get_stream_session(stream_id)
+        if not stream_session:
+            return None
+
+        now = time.time()
+        provider_session = dict(stream_session.get("provider_session") or {})
+        metadata = provider_session.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        metadata.update({
+            "analysis_enabled": bool(analysis_enabled),
+            "analysis_mode": analysis_mode,
+            "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
+            "analysis_video_fps": analysis_video_fps,
+        })
+        provider_session["metadata"] = metadata
+        provider_session["analysis_enabled"] = bool(analysis_enabled)
+        provider_session["analysis_mode"] = analysis_mode
+        provider_session["analysis_audio_chunk_seconds"] = analysis_audio_chunk_seconds
+        provider_session["analysis_video_fps"] = analysis_video_fps
+
+        stream_session["analysis_enabled"] = bool(analysis_enabled)
+        stream_session["analysis_mode"] = analysis_mode
+        stream_session["analysis_audio_chunk_seconds"] = analysis_audio_chunk_seconds
+        stream_session["analysis_video_fps"] = analysis_video_fps
+        stream_session["provider_session"] = provider_session
+        stream_session["updated_at"] = now
+        self._stream_sessions_cache[stream_id] = stream_session
+
+        try:
+            await supabase.table("stream_sessions").update({
+                "provider_session": provider_session,
+                "updated_at": "now()",
+            }).eq("id", stream_id).execute()
+        except Exception as e:
+            logger.warning("Failed to persist stream analysis config for %s: %s", stream_id, e)
 
         return stream_session
 
@@ -758,12 +819,41 @@ class SessionStore:
             or (provider_session.get("target_language") if isinstance(provider_session, dict) else None)
             or metadata.get("target_language")
         )
+        analysis_enabled = bool(
+            row.get("analysis_enabled")
+            if row.get("analysis_enabled") is not None
+            else (provider_session.get("analysis_enabled") if isinstance(provider_session, dict) else None)
+            if (provider_session.get("analysis_enabled") if isinstance(provider_session, dict) else None) is not None
+            else metadata.get("analysis_enabled", False)
+        )
+        analysis_mode = (
+            row.get("analysis_mode")
+            or (provider_session.get("analysis_mode") if isinstance(provider_session, dict) else None)
+            or metadata.get("analysis_mode")
+            or "multimodal"
+        )
+        analysis_audio_chunk_seconds = (
+            row.get("analysis_audio_chunk_seconds")
+            or (provider_session.get("analysis_audio_chunk_seconds") if isinstance(provider_session, dict) else None)
+            or metadata.get("analysis_audio_chunk_seconds")
+            or 1.0
+        )
+        analysis_video_fps = (
+            row.get("analysis_video_fps")
+            or (provider_session.get("analysis_video_fps") if isinstance(provider_session, dict) else None)
+            or metadata.get("analysis_video_fps")
+            or 3
+        )
         return {
             "id": row["id"],
             "session_id": row.get("user_session_id"),
             "language": row.get("language", "en"),
             "source_language": source_language,
             "target_language": target_language,
+            "analysis_enabled": analysis_enabled,
+            "analysis_mode": analysis_mode,
+            "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
+            "analysis_video_fps": analysis_video_fps,
             "status": row.get("status", "active"),
             "created_at": row.get("created_at", time.time()),
             "updated_at": row.get("updated_at", time.time()),

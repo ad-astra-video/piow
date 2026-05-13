@@ -120,11 +120,10 @@ def _probe_duration_from_bytes(data: bytes, filename: str = "") -> Optional[int]
 
 def setup_routes(app):
     """Setup transcription-related routes."""
-    # Transcription endpoints
-    app.router.add_post('/api/v1/transcribe/file', transcribe_file)
-    app.router.add_post('/api/v1/transcribe/url', transcribe_url)
+    # Streaming transcription endpoints
     app.router.add_post('/api/v1/transcribe/stream', transcribe_stream)
     app.router.add_put('/api/v1/transcribe/stream/{stream_id}/translation', update_stream_translation)
+    app.router.add_put('/api/v1/transcribe/stream/{stream_id}/analysis', update_stream_analysis)
     app.router.add_post('/api/v1/transcribe/stream/{stream_id}/whip', whip_proxy)
     app.router.add_get('/api/v1/transcriptions', list_transcriptions)
     app.router.add_get('/api/v1/transcriptions/{id}', get_transcription)
@@ -633,6 +632,10 @@ async def transcribe_stream(request):
         language = data.get('language', 'en')
         source_language = data.get('source_language') or language
         target_language = data.get('target_language') or None
+        analysis_enabled = bool(data.get('analysis_enabled', False))
+        analysis_mode = str(data.get('analysis_mode') or 'multimodal')
+        analysis_audio_chunk_seconds = float(data.get('analysis_audio_chunk_seconds') or 1.0)
+        analysis_video_fps = int(data.get('analysis_video_fps') or 3)
 
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -671,6 +674,10 @@ async def transcribe_stream(request):
                     stream_request_id=stream_request_id,
                     source_language=source_language,
                     target_language=target_language,
+                    analysis_enabled=analysis_enabled,
+                    analysis_mode=analysis_mode,
+                    analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
+                    analysis_video_fps=analysis_video_fps,
                 )
                 if _is_valid_streaming_session(session_result):
                     logger.info(
@@ -721,6 +728,10 @@ async def transcribe_stream(request):
                 user_id=user_id,
                 source_language=source_language,
                 target_language=target_language,
+                analysis_enabled=analysis_enabled,
+                analysis_mode=analysis_mode,
+                analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
+                analysis_video_fps=analysis_video_fps,
             )
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=403)
@@ -736,7 +747,11 @@ async def transcribe_stream(request):
             "update_url": session_result.get("update_url"),
             "stop_url": session_result.get("stop_url"),
             "provider_stream_id": session_result.get("provider_stream_id"),
-            "provider": session_result.get("provider")
+            "provider": session_result.get("provider"),
+            "analysis_enabled": analysis_enabled,
+            "analysis_mode": analysis_mode,
+            "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
+            "analysis_video_fps": analysis_video_fps,
         })
 
     except Exception as e:
@@ -835,6 +850,90 @@ async def update_stream_translation(request):
         'target_language': target_language,
         'translation_enabled': bool(target_language),
         'message': 'Stream translation configuration updated',
+    })
+
+
+async def update_stream_analysis(request):
+    """Update live analysis settings for an active transcription stream."""
+    stream_id = request.match_info.get('stream_id')
+    if not stream_id:
+        return web.json_response({"error": "Stream ID required"}, status=400)
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    from sessions import session_store, _verify_stream_ownership
+
+    stream_session = await session_store.get_stream_session(stream_id)
+    if not stream_session:
+        return web.json_response({"error": "Stream session not found"}, status=404)
+
+    if not await _verify_stream_ownership(request, stream_id):
+        return web.json_response({"error": "Access denied"}, status=403)
+
+    analysis_enabled = bool(data.get('analysis_enabled', False))
+    analysis_mode = str(data.get('analysis_mode') or stream_session.get('analysis_mode') or 'multimodal')
+    if analysis_mode not in {'multimodal', 'audio_only', 'video_only'}:
+        return web.json_response({"error": "Invalid analysis_mode"}, status=400)
+
+    try:
+        analysis_audio_chunk_seconds = float(
+            data.get('analysis_audio_chunk_seconds', stream_session.get('analysis_audio_chunk_seconds', 1.0))
+        )
+    except (TypeError, ValueError):
+        return web.json_response({"error": "Invalid analysis_audio_chunk_seconds"}, status=400)
+
+    try:
+        analysis_video_fps = int(data.get('analysis_video_fps', stream_session.get('analysis_video_fps', 3)))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "Invalid analysis_video_fps"}, status=400)
+
+    updated_session = await session_store.update_stream_analysis_config(
+        stream_id=stream_id,
+        analysis_enabled=analysis_enabled,
+        analysis_mode=analysis_mode,
+        analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
+        analysis_video_fps=analysis_video_fps,
+    )
+
+    provider_session = (updated_session or stream_session).get('provider_session', {})
+    provider_name = provider_session.get('provider') if isinstance(provider_session, dict) else None
+    provider_stream_id = provider_session.get('provider_stream_id') if isinstance(provider_session, dict) else None
+
+    if provider_name and provider_stream_id:
+        provider = compute_provider_manager.get_provider(provider_name)
+        update_streaming_session: Optional[Callable[..., Awaitable[Any]]] = (
+            getattr(provider, 'update_streaming_session', None) if provider else None
+        )
+        if callable(update_streaming_session):
+            try:
+                await update_streaming_session(
+                    provider_stream_id=provider_stream_id,
+                    params={
+                        'analysis_enabled': analysis_enabled,
+                        'analysis_mode': analysis_mode,
+                        'analysis_audio_chunk_seconds': analysis_audio_chunk_seconds,
+                        'analysis_video_fps': analysis_video_fps,
+                    },
+                    capability='live-transcription',
+                    timeout_seconds=30,
+                )
+            except Exception as exc:
+                logger.warning(
+                    'Analysis config update failed for stream %s: %s',
+                    stream_id,
+                    exc,
+                )
+
+    return web.json_response({
+        'stream_id': stream_id,
+        'analysis_enabled': analysis_enabled,
+        'analysis_mode': analysis_mode,
+        'analysis_audio_chunk_seconds': analysis_audio_chunk_seconds,
+        'analysis_video_fps': analysis_video_fps,
+        'message': 'Stream analysis configuration updated',
     })
 
 

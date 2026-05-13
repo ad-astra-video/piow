@@ -27,10 +27,7 @@ compute_provider_manager.register_providers_from_definitions(PROVIDER_DEFINITION
 
 def setup_routes(app):
     """Setup translation-related routes."""
-    app.router.add_post('/api/v1/translate/text', translate_text)
-    app.router.add_post('/api/v1/translate/transcription', translate_transcription)
-    
-    # Translation CRUD
+    # Translation history CRUD
     app.router.add_get('/api/v1/translations', list_translations)
     app.router.add_get('/api/v1/translations/{id}', get_translation)
     app.router.add_delete('/api/v1/translations/{id}', delete_translation)
