@@ -388,6 +388,80 @@ class TestSessionStoreStreamPersistence(unittest.IsolatedAsyncioTestCase):
             "transcription_segment": {"text": "hello"},
         })
 
+    async def test_bill_active_stream_minutes_skips_streams_without_activity(self):
+        sessions = self._import_sessions_with_stubbed_supabase()
+
+        stream_row = {
+            "id": "stream-idle",
+            "user_session_id": "session-1",
+            "language": "en",
+            "provider_session": {"status_url": "https://provider.example/status"},
+            "status": "active",
+            "created_at": "2026-05-13T00:00:00Z",
+            "updated_at": "2026-05-13T00:00:10Z",
+            "total_audio_bytes": 0,
+            "transcription_segments": [],
+            "final_text": "",
+        }
+
+        stream_sessions_table = MagicMock()
+        stream_sessions_table.select.return_value.eq.return_value.execute = AsyncMock(
+            return_value=SimpleNamespace(data=[stream_row])
+        )
+
+        supabase_mock = MagicMock()
+        supabase_mock.table.side_effect = lambda table_name: stream_sessions_table if table_name == "stream_sessions" else (_ for _ in ()).throw(AssertionError(f"Unexpected table: {table_name}"))
+
+        record_usage = AsyncMock(return_value=True)
+        row_to_stream_session = MagicMock(return_value={"id": "stream-idle"})
+
+        with patch.object(sessions, "supabase", supabase_mock), \
+             patch.object(sessions, "_provider_stream_is_running", AsyncMock(return_value=True)), \
+             patch.object(sessions.session_store, "_record_stream_usage", record_usage), \
+             patch.object(sessions.session_store, "_row_to_stream_session", row_to_stream_session):
+            sessions._stream_usage_billed_minute.clear()
+            await sessions._bill_active_stream_minutes()
+
+        record_usage.assert_not_awaited()
+        row_to_stream_session.assert_not_called()
+
+    async def test_bill_active_stream_minutes_bills_streams_with_activity(self):
+        sessions = self._import_sessions_with_stubbed_supabase()
+
+        stream_row = {
+            "id": "stream-active",
+            "user_session_id": "session-1",
+            "language": "en",
+            "provider_session": {"status_url": "https://provider.example/status"},
+            "status": "active",
+            "created_at": "2026-05-13T00:00:00Z",
+            "updated_at": "2026-05-13T00:00:10Z",
+            "total_audio_bytes": 256,
+            "transcription_segments": [],
+            "final_text": "",
+        }
+
+        stream_sessions_table = MagicMock()
+        stream_sessions_table.select.return_value.eq.return_value.execute = AsyncMock(
+            return_value=SimpleNamespace(data=[stream_row])
+        )
+
+        supabase_mock = MagicMock()
+        supabase_mock.table.side_effect = lambda table_name: stream_sessions_table if table_name == "stream_sessions" else (_ for _ in ()).throw(AssertionError(f"Unexpected table: {table_name}"))
+
+        record_usage = AsyncMock(return_value=True)
+        row_to_stream_session = MagicMock(return_value={"id": "stream-active"})
+
+        with patch.object(sessions, "supabase", supabase_mock), \
+             patch.object(sessions, "_provider_stream_is_running", AsyncMock(return_value=True)), \
+             patch.object(sessions.session_store, "_record_stream_usage", record_usage), \
+             patch.object(sessions.session_store, "_row_to_stream_session", row_to_stream_session):
+            sessions._stream_usage_billed_minute.clear()
+            await sessions._bill_active_stream_minutes()
+
+        row_to_stream_session.assert_called_once_with(stream_row)
+        record_usage.assert_awaited_once_with({"id": "stream-active"}, duration_seconds=60)
+
 
 if __name__ == "__main__":
     unittest.main()

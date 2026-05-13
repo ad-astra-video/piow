@@ -950,6 +950,28 @@ async def _provider_stream_is_running(provider_session: Dict[str, Any]) -> bool:
         return False
 
 
+def _stream_has_billable_activity(row: Dict[str, Any]) -> bool:
+    """Return True when a stream has observable activity worth billing.
+
+    This avoids charging a full minute for sessions that were only created but
+    never actually transmitted media/transcript data.
+    """
+    try:
+        total_audio_bytes = int(row.get("total_audio_bytes") or 0)
+    except (TypeError, ValueError):
+        total_audio_bytes = 0
+
+    if total_audio_bytes > 0:
+        return True
+
+    final_text = str(row.get("final_text") or "").strip()
+    if final_text:
+        return True
+
+    segments = row.get("transcription_segments") or []
+    return bool(segments)
+
+
 async def _bill_active_stream_minutes() -> None:
     """Bill one usage minute for each active stream confirmed running by provider status endpoint."""
     try:
@@ -975,6 +997,9 @@ async def _bill_active_stream_minutes() -> None:
 
         provider_session = row.get("provider_session") or {}
         if not provider_session.get("status_url"):
+            continue
+
+        if not _stream_has_billable_activity(row):
             continue
 
         is_running = await _provider_stream_is_running(provider_session)
