@@ -121,6 +121,7 @@ class StreamManager {
     this._fileAudioCtx = null;
     this._fileSourceNode = null;
     this._fileMediaElement = null;
+    this._fileVideoStream = null;
     // Screen share video tracks kept alive to prevent Chrome from killing the audio track
     this._screenVideoTracks = [];
     // Timer
@@ -348,6 +349,25 @@ class StreamManager {
     throw new Error(`Unknown audio source type: ${type}`);
   }
 
+  _getFileVideoTrack(sourceConfig) {
+    const { mediaElement } = sourceConfig || {};
+    if (!mediaElement) return null;
+
+    const captureStreamFn = mediaElement.captureStream || mediaElement.mozCaptureStream;
+    if (typeof captureStreamFn !== 'function') {
+      return null;
+    }
+
+    const stream = captureStreamFn.call(mediaElement);
+    const videoTrack = stream?.getVideoTracks?.()[0] || null;
+    if (!videoTrack) {
+      return null;
+    }
+
+    this._fileVideoStream = stream;
+    return videoTrack;
+  }
+
   // Call when the file media element is being replaced (e.g. user picks a new file)
   // so the cached AudioContext/SourceNode is recreated on the next start.
   resetFileAudio() {
@@ -357,6 +377,10 @@ class StreamManager {
     this._fileAudioCtx = null;
     this._fileSourceNode = null;
     this._fileMediaElement = null;
+    if (this._fileVideoStream) {
+      this._fileVideoStream.getTracks().forEach((track) => track.stop());
+    }
+    this._fileVideoStream = null;
   }
 
   async _createStreamSession(translationConfig, analysisConfig = null) {
@@ -479,7 +503,7 @@ class StreamManager {
     try {
       const sourceTracks = {
         hasAudioTrack: true,
-        hasVideoTrack: sourceType === 'screen',
+        hasVideoTrack: sourceType === 'screen' || (sourceType === 'file' && !!sourceConfig?.hasVideo),
       };
       if (sourceType === 'microphone') {
         sourceTracks.hasVideoTrack = false;
@@ -502,7 +526,24 @@ class StreamManager {
       });
 
       const audioTrack = await this._getAudioTrack(sourceConfig);
-      const videoTrack = await this._createBlackVideoTrack();
+      let videoTrack = null;
+
+      if (sourceType === 'file' && sourceTracks.hasVideoTrack) {
+        videoTrack = this._getFileVideoTrack(sourceConfig);
+        if (!videoTrack) {
+          sourceTracks.hasVideoTrack = false;
+        }
+      }
+
+      if (!videoTrack) {
+        videoTrack = await this._createBlackVideoTrack();
+      }
+
+      this._setState({
+        hasAudioTrack: sourceTracks.hasAudioTrack,
+        hasVideoTrack: sourceTracks.hasVideoTrack,
+      });
+
       this.localStream = new MediaStream([audioTrack, videoTrack]);
 
       this._setState({ status: 'Connecting...' });
@@ -858,6 +899,10 @@ class StreamManager {
       clearInterval(this.blackVideoSource.intervalId);
     }
     this.blackVideoSource = null;
+    if (this._fileVideoStream) {
+      this._fileVideoStream.getTracks().forEach((track) => track.stop());
+      this._fileVideoStream = null;
+    }
 
     if (this._beforeunloadHandler) {
       window.removeEventListener('beforeunload', this._beforeunloadHandler);

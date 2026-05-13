@@ -175,6 +175,7 @@ export default function TranscribeStream({ accessToken }) {
     const sourceConfig = { type: audioSource };
     if (audioSource === 'file') {
       sourceConfig.mediaElement = mediaRef.current;
+      sourceConfig.hasVideo = fileHasVideo;
     }
     const translationConfig = translateEnabled && targetLang
       ? { source_language: sourceLang, target_language: targetLang }
@@ -189,6 +190,7 @@ export default function TranscribeStream({ accessToken }) {
     start(accessToken, sourceConfig, translationConfig, analysisConfig);
   }, [
     audioSource,
+    fileHasVideo,
     accessToken,
     start,
     translateEnabled,
