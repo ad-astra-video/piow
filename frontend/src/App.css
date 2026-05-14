@@ -2925,6 +2925,10 @@ html, body {
   flex: 1;
 }
 
+.entry-row .entry-text > :first-child {
+  margin-top: 0;
+}
+
 /* Stream timer */
 .stream-timer {
   display: flex;
