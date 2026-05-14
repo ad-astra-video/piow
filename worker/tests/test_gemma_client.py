@@ -87,8 +87,8 @@ class TestGemmaClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["analysis_text"], "Speaker agreed on rollback plan")
         mock_chat_completion.assert_awaited_once()
         messages = mock_chat_completion.call_args.args[0]
-        self.assertEqual(messages[1]["role"], "user")
-        user_content = messages[1]["content"]
+        self.assertEqual(messages[0]["role"], "user")
+        user_content = messages[0]["content"]
         self.assertIsInstance(user_content, list)
         self.assertEqual(user_content[1]["type"], "audio_url")
         audio_url = user_content[1]["audio_url"]["url"]
@@ -101,3 +101,52 @@ class TestGemmaClient(unittest.IsolatedAsyncioTestCase):
         client = GemmaClient(base_url="http://example.com", model="test-model")
         result = await client.analyze_audio(audio_pcm16=b"\x01\x02")
         self.assertIn("disabled via GEMMA_AUDIO_ANALYSIS_ENABLED=false", result["error"])
+
+    @patch.object(GemmaClient, "_chat_completion", new_callable=AsyncMock)
+    async def test_analyze_uses_frontend_prompt_as_user_instruction(self, mock_chat_completion):
+        client = GemmaClient(base_url="http://example.com", model="test-model")
+        mock_chat_completion.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "hello this is a transcript",
+                    }
+                }
+            ]
+        }
+
+        result = await client.analyze(
+            "audio transcript segment",
+            prompt="Transcribe the text verbatim",
+            mode="audio_only",
+        )
+
+        messages = mock_chat_completion.call_args.args[0]
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertIn("Transcribe the text verbatim", messages[0]["content"])
+        self.assertEqual(result["analysis_text"], "hello this is a transcript")
+
+    @patch.object(GemmaClient, "_chat_completion", new_callable=AsyncMock)
+    async def test_analyze_audio_no_update_is_suppressed(self, mock_chat_completion):
+        client = GemmaClient(base_url="http://example.com", model="test-model")
+        mock_chat_completion.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "NO_UPDATE",
+                    }
+                }
+            ]
+        }
+
+        result = await client.analyze_audio(
+            audio_pcm16=b"\x01\x02\x03\x04",
+            sample_rate_hz=16000,
+            prompt="Please transcribe verbatim",
+            mode="audio_only",
+        )
+
+        self.assertTrue(result["suppressed"])
+        self.assertEqual(result["suppression_reason"], "no_update")
+        self.assertEqual(result["analysis_text"], "")

@@ -226,20 +226,14 @@ class GemmaClient:
 
         default_prompt = self._default_analysis_prompt(mode)
         effective_prompt = (prompt or default_prompt).strip()
-        system_prompt = (
-            "You are a real-time analyst. Return concise, actionable observations only. "
-            "If there is no new actionable update (no meaningful action, decision, or risk), "
-            "return exactly NO_UPDATE and nothing else."
-        )
         user_prompt = (
+            f"{effective_prompt}\n\n"
             f"Mode: {mode}\n"
-            f"Instructions: {effective_prompt}\n\n"
             f"Transcript:\n{text}"
         )
 
         try:
             data = await self._chat_completion([
-                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ])
             if isinstance(data, dict) and data.get("error"):
@@ -313,14 +307,9 @@ class GemmaClient:
 
         default_prompt = self._default_analysis_prompt(mode)
         effective_prompt = (prompt or default_prompt).strip()
-        system_prompt = (
-            "You are a real-time analyst. Return concise, actionable observations only. "
-            "If there is no new actionable update (no meaningful action, decision, or risk), "
-            "return exactly NO_UPDATE and nothing else."
-        )
         user_text = (
+            f"{effective_prompt}\\n\\n"
             f"Mode: {mode}\\n"
-            f"Instructions: {effective_prompt}\\n\\n"
             f"Audio format: pcm16 mono {int(sample_rate_hz)}Hz. "
             "Analyze only the provided audio chunk and report any actionable updates."
         )
@@ -337,7 +326,6 @@ class GemmaClient:
 
         try:
             data = await self._chat_completion([
-                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
                     "content": [
