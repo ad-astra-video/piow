@@ -1170,6 +1170,8 @@ html, body {
 .analysis-entry .markdown-text th:nth-child(1),
 .analysis-entry .markdown-text td:nth-child(1) {
   width: 16%;
+  vertical-align: top;
+  text-align: left;
 }
 
 .analysis-entry .markdown-text th:nth-child(2),
@@ -1188,10 +1190,18 @@ html, body {
   text-transform: uppercase;
   color: #c7d2fe;
   font-weight: 700;
+  text-align: left;
+  vertical-align: top;
 }
 
 .markdown-text td {
   color: var(--text-secondary);
+  vertical-align: top;
+}
+
+.markdown-text th p,
+.markdown-text td p {
+  margin: 0;
 }
 
 .markdown-text tr:last-child td {
