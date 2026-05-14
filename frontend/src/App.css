@@ -1134,6 +1134,55 @@ html, body {
   padding: 0;
 }
 
+.markdown-text table {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  margin: 0.45rem 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 8px;
+  overflow: hidden;
+  display: block;
+  overflow-x: auto;
+}
+
+.markdown-text thead {
+  background: rgba(91,124,250,0.14);
+}
+
+.markdown-text th,
+.markdown-text td {
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+  border-right: 1px solid rgba(255,255,255,0.1);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  min-width: 120px;
+}
+
+.markdown-text th {
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #c7d2fe;
+  font-weight: 700;
+}
+
+.markdown-text td {
+  color: var(--text-secondary);
+}
+
+.markdown-text tr:last-child td {
+  border-bottom: none;
+}
+
+.markdown-text th:last-child,
+.markdown-text td:last-child {
+  border-right: none;
+}
+
 /* History */
 .history-controls {
   display: flex; gap: 0.75rem;
