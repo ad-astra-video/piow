@@ -73,6 +73,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   const analysisScrollRef = useRef(null);
   const navigate = useNavigate();
   const [autoScroll, setAutoScroll] = useState(true);
+  const [analysisAutoScroll, setAnalysisAutoScroll] = useState(true);
   const wasStartedRef = useRef(false);
 
   const [audioSource, setAudioSource] = useState('microphone');
@@ -314,9 +315,9 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   }, [transcriptEntries, partialTranscript, autoScroll]);
 
   useEffect(() => {
-    if (!analysisEnabled || !analysisScrollRef.current) return;
+    if (!analysisEnabled || !analysisAutoScroll || !analysisScrollRef.current) return;
     analysisScrollRef.current.scrollTop = analysisScrollRef.current.scrollHeight;
-  }, [analysisEntries, analysisEnabled]);
+  }, [analysisEntries, analysisEnabled, analysisAutoScroll]);
 
   const { Icon: SourceIcon, label: sourceLabel } = SOURCE_META[audioSource] ?? SOURCE_META.microphone;
   const hasQuotaExceededSignal =
@@ -754,7 +755,17 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
             <section className="panel-glass analysis-panel">
               <div className="analysis-panel-header">
                 <h2>Live Analysis</h2>
-                <span className="analysis-mode-badge">{getAnalysisModeLabel(analysisMode)}</span>
+                <div className="analysis-panel-actions">
+                  <button
+                    className={`autoscroll-toggle ${analysisAutoScroll ? 'active' : ''}`}
+                    onClick={() => setAnalysisAutoScroll((v) => !v)}
+                    title={analysisAutoScroll ? 'Auto-scroll on' : 'Auto-scroll off'}
+                  >
+                    <ChevronsDown size={14} />
+                    {analysisAutoScroll ? 'Auto-scroll on' : 'Auto-scroll off'}
+                  </button>
+                  <span className="analysis-mode-badge">{getAnalysisModeLabel(analysisMode)}</span>
+                </div>
               </div>
 
               {!effectiveAnalysisEnabled && (

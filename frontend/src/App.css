@@ -1014,6 +1014,12 @@ html, body {
   font-size: 1.05rem;
 }
 
+.analysis-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 .analysis-mode-badge {
   font-size: 0.68rem;
   text-transform: uppercase;
