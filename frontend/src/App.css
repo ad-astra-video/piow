@@ -1136,6 +1136,7 @@ html, body {
 
 .markdown-text table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   border-spacing: 0;
   margin: 0.45rem 0;
@@ -1144,8 +1145,6 @@ html, body {
   border: 1px solid rgba(255,255,255,0.14);
   border-radius: 8px;
   overflow: hidden;
-  display: block;
-  overflow-x: auto;
 }
 
 .markdown-text thead {
@@ -1160,6 +1159,21 @@ html, body {
   border-right: 1px solid rgba(255,255,255,0.1);
   border-bottom: 1px solid rgba(255,255,255,0.1);
   min-width: 120px;
+}
+
+.analysis-entry .markdown-text th:nth-child(1),
+.analysis-entry .markdown-text td:nth-child(1) {
+  width: 16%;
+}
+
+.analysis-entry .markdown-text th:nth-child(2),
+.analysis-entry .markdown-text td:nth-child(2) {
+  width: 64%;
+}
+
+.analysis-entry .markdown-text th:nth-child(3),
+.analysis-entry .markdown-text td:nth-child(3) {
+  width: 20%;
 }
 
 .markdown-text th {
