@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { StickyNote, CheckSquare, Square, X, Trash2, Plus } from 'lucide-react';
+import MarkdownText from './MarkdownText';
 
 export default function Sentence({
   index,
@@ -78,9 +79,9 @@ export default function Sentence({
           <span className="entry-timestamp-col placeholder" />
         )}
         <div className="entry-text-block">
-          <p className="entry-text">{text}</p>
+          <MarkdownText className="entry-text" content={text} />
           {translatedText && (
-            <p className="entry-text entry-text-translated">{translatedText}</p>
+            <MarkdownText className="entry-text entry-text-translated" content={translatedText} />
           )}
         </div>
         <div className="sentence-actions">

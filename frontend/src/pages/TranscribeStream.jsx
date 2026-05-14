@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages, Brain, X } from 'lucide-react';
 import Sentence from '../components/Sentence';
+import MarkdownText from '../components/MarkdownText';
 import useLiveTranscription from '../hooks/useLiveTranscription';
 import streamManager, { formatDuration } from '../lib/streamManager';
 import { api } from '../lib/api';
@@ -330,6 +331,11 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     return 'fvc-inline';
   })();
 
+  const livePanelsClassName = [
+    'stream-live-panels',
+    analysisEnabled && activeTranscriptionEnabled ? 'analysis-open' : '',
+  ].filter(Boolean).join(' ');
+
   const transcriptContent = (
     <>
       {transcriptEntries.length === 0 && !partialTranscript ? (
@@ -361,7 +367,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
             ) : (
               <span className="entry-timestamp-col placeholder" />
             )}
-            <p className="entry-text">{partialTranscript}</p>
+            <MarkdownText className="entry-text" content={partialTranscript} />
           </div>
         </article>
       ) : null}
@@ -715,7 +721,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
             </div>
           </div>
 
-            <div className={`stream-live-panels ${analysisEnabled ? 'analysis-open' : ''}`}>
+            <div className={livePanelsClassName}>
           {activeTranscriptionEnabled && (
           <section className="panel-glass transcript-panel">
             {errorMessage && !hasQuotaExceededSignal && <p className="error-banner"><AlertCircle size={16} /> {errorMessage}</p>}
@@ -766,7 +772,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                         <span className="analysis-entry-mode">{getAnalysisModeLabel(entry.mode)}</span>
                         <span className="analysis-entry-ts">{formatDuration(entry.timestampMs || 0)}</span>
                       </div>
-                      <p>{entry.text}</p>
+                      <MarkdownText content={entry.text} />
                     </article>
                   ))
                 )}

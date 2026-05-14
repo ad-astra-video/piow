@@ -836,7 +836,7 @@ html, body {
 }
 
 .stream-live-panels.analysis-open {
-  grid-template-columns: 1.4fr 1fr;
+  grid-template-columns: 1fr 1fr;
   align-items: start;
 }
 
@@ -1079,10 +1079,59 @@ html, body {
   color: var(--text-muted);
 }
 
-.analysis-entry p {
-  margin: 0;
+.analysis-entry .markdown-text {
   font-size: 0.85rem;
   line-height: 1.45;
+}
+
+.markdown-text {
+  color: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.markdown-text > :first-child {
+  margin-top: 0;
+}
+
+.markdown-text > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-text p {
+  margin: 0;
+}
+
+.markdown-text p + p {
+  margin-top: 0.4rem;
+}
+
+.markdown-text ul,
+.markdown-text ol {
+  margin: 0.35rem 0;
+  padding-left: 1.1rem;
+}
+
+.markdown-text code {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 0.05rem 0.25rem;
+}
+
+.markdown-text pre {
+  margin: 0.35rem 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.22);
+  border: 1px solid rgba(255,255,255,0.08);
+  overflow-x: auto;
+}
+
+.markdown-text pre code {
+  background: transparent;
+  padding: 0;
 }
 
 /* History */

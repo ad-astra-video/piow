@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { formatDuration } from './lib/streamManager';
 import Sentence from './components/Sentence';
+import MarkdownText from './components/MarkdownText';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -137,7 +138,7 @@ function LiveTranscriptSidebar({ onStreamStopped }) {
               ) : (
                 <span className="entry-timestamp-col placeholder" />
               )}
-              <p className="entry-text">{partialTranscript}</p>
+              <MarkdownText className="entry-text" content={partialTranscript} />
             </div>
           </article>
         ) : null}
