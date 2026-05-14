@@ -234,6 +234,30 @@ async def test_queue_live_analysis_triggers_on_chunk_window():
     )
 
 
+async def test_queue_live_analysis_does_not_bypass_chunk_window_on_final_or_punctuation():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.live_transcription_enabled = True
+    worker.analysis_audio_chunk_seconds = 1.0
+    worker._run_live_analysis_async = AsyncMock()
+
+    worker._queue_live_analysis("first sentence.", 400, is_final=False)
+    await asyncio.sleep(0)
+    worker._run_live_analysis_async.assert_not_awaited()
+
+    worker._queue_live_analysis("second sentence", 700, is_final=True)
+    await asyncio.sleep(0)
+    worker._run_live_analysis_async.assert_not_awaited()
+
+    worker._queue_live_analysis("third sentence", 1100, is_final=False)
+    await asyncio.sleep(0)
+
+    worker._run_live_analysis_async.assert_awaited_once_with(
+        "first sentence. second sentence third sentence",
+        1100,
+    )
+
+
 async def test_queue_live_analysis_respects_video_window_and_transcription_flag():
     worker = worker_app.LiveTranscriptionWorker()
     worker.analysis_enabled = True

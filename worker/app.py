@@ -18,7 +18,6 @@ import time
 import asyncio
 import logging
 import requests
-import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -474,6 +473,7 @@ class LiveTranscriptionWorker:
         self._analysis_pending_audio: bytes = b""
         self._analysis_audio_samples_total: int = 0
         self._analysis_last_run_ts_ms: int = 0
+        self._analysis_last_seen_ts_ms: int = 0
         self._analysis_audio_request_count: int = 0
 
     def _default_analysis_prompt(self, mode: str) -> str:
@@ -505,6 +505,7 @@ class LiveTranscriptionWorker:
         self._analysis_pending_audio = b""
         self._analysis_audio_samples_total = 0
         self._analysis_last_run_ts_ms = 0
+        self._analysis_last_seen_ts_ms = 0
         self._apply_analysis_params(params)
 
         # Close any stale client from a previous stream just in case
@@ -748,13 +749,15 @@ class LiveTranscriptionWorker:
             self.analysis_prompt = self._default_analysis_prompt(self.analysis_mode)
 
     def _queue_live_analysis(self, text: str, timestamp_ms: int, is_final: bool) -> None:
-        """Schedule analysis on final text, sentence boundaries, or elapsed chunk windows."""
+        """Schedule analysis only on elapsed chunk windows for stable cadence."""
         if not self.analysis_enabled or not self.live_transcription_enabled:
             return
 
         candidate = (text or "").strip()
         if not candidate:
             return
+
+        self._analysis_last_seen_ts_ms = int(timestamp_ms)
 
         if self._analysis_pending_text:
             self._analysis_pending_text = f"{self._analysis_pending_text} {candidate}".strip()
@@ -764,8 +767,7 @@ class LiveTranscriptionWorker:
         chunk_seconds = self.analysis_video_chunk_seconds if self.analysis_mode == "video_only" else self.analysis_audio_chunk_seconds
         chunk_ms = max(int(chunk_seconds * 1000), 250)
         elapsed_ms = max(0, int(timestamp_ms) - int(self._analysis_last_run_ts_ms or 0))
-        sentence_boundary = bool(re.search(r"[.!?]\s*$", candidate))
-        should_run = is_final or sentence_boundary or elapsed_ms >= chunk_ms
+        should_run = elapsed_ms >= chunk_ms
 
         if not should_run:
             return
@@ -1016,6 +1018,14 @@ class LiveTranscriptionWorker:
         realtime websocket so the next stream gets a fresh session."""
         global vllm_client
         logger.info("Stream stopped")
+
+        if self.analysis_enabled and self.live_transcription_enabled and self._analysis_pending_text:
+            prompt_text = self._analysis_pending_text.strip()
+            self._analysis_pending_text = ""
+            if prompt_text:
+                timestamp_ms = int(self._analysis_last_seen_ts_ms or self._analysis_last_run_ts_ms or 0)
+                self._analysis_last_run_ts_ms = timestamp_ms
+                await self._run_live_analysis_async(prompt_text, timestamp_ms)
 
         if self._should_use_audio_direct_analysis() and self._analysis_pending_audio:
             audio_chunk = self._analysis_pending_audio
