@@ -70,6 +70,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   } = useLiveTranscription();
 
   const scrollRef = useRef(null);
+  const analysisScrollRef = useRef(null);
   const navigate = useNavigate();
   const [autoScroll, setAutoScroll] = useState(true);
   const wasStartedRef = useRef(false);
@@ -311,6 +312,11 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [transcriptEntries, partialTranscript, autoScroll]);
+
+  useEffect(() => {
+    if (!analysisEnabled || !analysisScrollRef.current) return;
+    analysisScrollRef.current.scrollTop = analysisScrollRef.current.scrollHeight;
+  }, [analysisEntries, analysisEnabled]);
 
   const { Icon: SourceIcon, label: sourceLabel } = SOURCE_META[audioSource] ?? SOURCE_META.microphone;
   const hasQuotaExceededSignal =
@@ -758,7 +764,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                 </div>
               )}
 
-              <div className="analysis-scroll">
+              <div className="analysis-scroll" ref={analysisScrollRef}>
                 {analysisEntries.length === 0 ? (
                   <div className="empty-state compact">
                     <p>No analysis events yet.</p>
