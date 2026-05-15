@@ -11,8 +11,7 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS stream_analysis (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  stream_id UUID NOT NULL REFERENCES stream_sessions(id) ON DELETE CASCADE,
-  transcription_id UUID REFERENCES transcriptions(id) ON DELETE SET NULL,
+  stream_session_id UUID NOT NULL REFERENCES stream_sessions(id) ON DELETE CASCADE,
   analysis_mode TEXT NOT NULL CHECK (analysis_mode IN ('multimodal', 'audio_only', 'video_only')),
   summary_text TEXT NOT NULL,
   source_event_type TEXT NOT NULL DEFAULT 'analysis.done',
@@ -20,14 +19,8 @@ CREATE TABLE IF NOT EXISTS stream_analysis (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_stream_analysis_stream_id
-  ON stream_analysis(stream_id);
-
-CREATE INDEX IF NOT EXISTS idx_stream_analysis_transcription_id
-  ON stream_analysis(transcription_id);
-
-CREATE INDEX IF NOT EXISTS idx_stream_analysis_transcription_created_at
-  ON stream_analysis(transcription_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stream_analysis_stream_session_id
+  ON stream_analysis(stream_session_id);
 
 CREATE INDEX IF NOT EXISTS idx_stream_analysis_user_created_at
   ON stream_analysis(user_id, created_at DESC);

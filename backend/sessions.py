@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Session Management Endpoints
-Handles user sessions, transcription sessions, and streaming sessions.
+Handles user sessions and streaming sessions.
 
 Uses a write-through cache pattern:
 - Writes go to Supabase first, then update the in-memory cache
@@ -64,7 +64,6 @@ class SessionStore:
     All write operations persist to Supabase tables:
     - user_sessions: user session tracking
     - stream_sessions: live streaming session data
-    - transcription_sessions: batch transcription job tracking
 
     The in-memory cache provides fast reads for hot-path operations
     (e.g., WebSocket relay looking up stream data_url).
@@ -73,7 +72,6 @@ class SessionStore:
     def __init__(self):
         # In-memory cache layers
         self._sessions_cache: Dict[str, Dict[str, Any]] = {}  # session_id -> session_data
-        self._transcriptions_cache: Dict[str, Dict[str, Any]] = {}  # transcription_id -> data
         self._stream_sessions_cache: Dict[str, Dict[str, Any]] = {}  # stream_id -> data
 
     def _build_session_data(self, session_id: str, user_id: str, now: Optional[float] = None) -> Dict[str, Any]:
@@ -276,29 +274,6 @@ class SessionStore:
             }).eq("id", session_id).execute()
         except Exception as e:
             logger.warning(f"Failed to update session activity in Supabase: {e}")
-
-    async def add_transcription_to_session(self, session_id: str, transcription_id: str):
-        """Add transcription to session."""
-        if session_id in self._sessions_cache:
-            self._sessions_cache[session_id]["transcriptions"].append(transcription_id)
-            self._sessions_cache[session_id]["last_activity"] = time.time()
-
-        # Persist to Supabase by reading current array and writing the updated one
-        try:
-            transcription_ids = []
-            if session_id in self._sessions_cache:
-                transcription_ids = list(self._sessions_cache[session_id]["transcriptions"])
-            else:
-                result = await supabase.table("user_sessions").select("transcription_ids").eq("id", session_id).execute()
-                if result.data:
-                    transcription_ids = list(result.data[0].get("transcription_ids") or [])
-                transcription_ids.append(transcription_id)
-
-            await supabase.table("user_sessions").update({
-                "transcription_ids": transcription_ids
-            }).eq("id", session_id).execute()
-        except Exception as e:
-            logger.warning(f"Failed to add transcription to session in Supabase: {e}")
 
     async def add_stream_to_session(self, session_id: str, stream_id: str):
         """Add stream session to session."""
@@ -721,7 +696,7 @@ class SessionStore:
                 logger.warning("Failed to append to stream transcription %s: %s", existing_id, e)
 
             # Insert per-sentence rows
-            await self._insert_transcription_sentences(existing_id, stream_id, new_segments)
+            await self._insert_transcription_sentences(stream_id, new_segments)
             return existing_id
 
         # First flush G�� create the initial row
@@ -730,6 +705,7 @@ class SessionStore:
             insert_payload: Dict[str, Any] = {
                 "user_id": user_id,
                 "audio_url": f"stream://{stream_id}",
+                "stream_session_id": stream_id,
                 "text": new_text,
                 "language": language,
                 "duration": 0,
@@ -757,7 +733,7 @@ class SessionStore:
                     transcription_id,
                 )
                 # Insert per-sentence rows for the first batch
-                await self._insert_transcription_sentences(transcription_id, stream_id, new_segments)
+                await self._insert_transcription_sentences(stream_id, new_segments)
             return transcription_id
         except Exception as e:
             logger.warning("Failed to create stream transcription for stream %s: %s", stream_id, e)
@@ -765,7 +741,6 @@ class SessionStore:
 
     async def _insert_transcription_sentences(
         self,
-        transcription_id: str,
         stream_id: str,
         segments: List[str],
     ) -> None:
@@ -780,7 +755,7 @@ class SessionStore:
                 continue
             timestamp, text = self._parse_segment(seg)
             rows.append({
-                "transcription_id": transcription_id,
+                "stream_session_id": stream_id,
                 "sentence_index": start_index + i,
                 "text": text,
                 "timestamp": timestamp or None,
@@ -831,18 +806,15 @@ class SessionStore:
             logger.warning("store_stream_translation: missing user_id for stream %s", stream_id)
             return
 
-        transcription_id: Optional[str] = stream_data.get("transcription_id")
-
         payload: Dict[str, Any] = {
             "user_id": user_id,
+            "stream_session_id": stream_id,
             "original_text": original_text,
             "translated_text": translated_text,
             "source_language": source_language,
             "target_language": target_language,
             "mode": "stream",
         }
-        if transcription_id:
-            payload["transcription_id"] = transcription_id
         if sentence_index is not None:
             payload["sentence_index"] = sentence_index
 
@@ -881,11 +853,11 @@ class SessionStore:
                 )
 
         # Also update the matching transcription_sentences row with translated_text if sentence_index is known
-        if transcription_id and sentence_index is not None:
+        if sentence_index is not None:
             try:
                 await supabase.table("transcription_sentences").update({
                     "translated_text": translated_text,
-                }).eq("transcription_id", transcription_id).eq("sentence_index", sentence_index).execute()
+                }).eq("stream_session_id", stream_id).eq("sentence_index", sentence_index).execute()
             except Exception as exc:
                 logger.warning(
                     "Failed to update transcription_sentences translated_text for stream %s: %s",
@@ -924,18 +896,14 @@ class SessionStore:
             logger.warning("store_stream_analysis: missing user_id for stream %s", stream_id)
             return False
 
-        transcription_id: Optional[str] = stream_data.get("transcription_id")
-
         payload: Dict[str, Any] = {
             "user_id": user_id,
-            "stream_id": stream_id,
+            "stream_session_id": stream_id,
             "analysis_mode": normalized_mode,
             "summary_text": normalized_summary,
             "source_event_type": source_event_type or "analysis.done",
             "timestamp_ms": timestamp_ms,
         }
-        if transcription_id:
-            payload["transcription_id"] = transcription_id
 
         try:
             await supabase.table("stream_analysis").insert(payload).execute()
@@ -947,76 +915,6 @@ class SessionStore:
                 exc,
             )
             return False
-
-    # ------------------------------------------------------------------
-    # Transcription Sessions
-    # ------------------------------------------------------------------
-
-    async def create_transcription(self, transcription_id: str, data: Dict[str, Any]):
-        """Create a transcription session record. Persists to Supabase."""
-        # Update cache
-        self._transcriptions_cache[transcription_id] = data
-
-        # Persist to Supabase
-        try:
-            await supabase.table("transcription_sessions").insert({
-                "id": transcription_id,
-                "user_session_id": data.get("session_id"),
-                "filename": data.get("filename", "unknown"),
-                "duration": data.get("duration", 0),
-                "language": data.get("language", "en"),
-                "status": data.get("status", "processing"),
-                "result": data.get("result"),
-            }).execute()
-        except Exception as e:
-            logger.warning(f"Failed to persist transcription to Supabase, using cache only: {e}")
-
-    async def get_transcription(self, transcription_id: str) -> Optional[Dict[str, Any]]:
-        """Get transcription by ID. Checks cache first, then Supabase."""
-        # Cache hit
-        if transcription_id in self._transcriptions_cache:
-            return self._transcriptions_cache[transcription_id]
-
-        # Cache miss G�� try Supabase
-        try:
-            result = await supabase.table("transcription_sessions").select("*").eq("id", transcription_id).execute()
-            if result.data:
-                row = result.data[0]
-                data = self._row_to_transcription(row)
-                self._transcriptions_cache[transcription_id] = data
-                return data
-        except Exception as e:
-            logger.warning(f"Failed to load transcription from Supabase: {e}")
-
-        return None
-
-    async def has_transcription(self, transcription_id: str) -> bool:
-        """Check if a transcription exists."""
-        if transcription_id in self._transcriptions_cache:
-            return True
-        try:
-            result = await supabase.table("transcription_sessions").select("id").eq("id", transcription_id).execute()
-            return len(result.data) > 0
-        except Exception as e:
-            logger.warning(f"Failed to check transcription in Supabase: {e}")
-            return False
-
-    async def update_transcription(self, transcription_id: str, updates: Dict[str, Any]):
-        """Update transcription with new data."""
-        now = time.time()
-
-        # Update cache
-        if transcription_id in self._transcriptions_cache:
-            self._transcriptions_cache[transcription_id].update(updates)
-            self._transcriptions_cache[transcription_id]["updated_at"] = now
-
-        # Persist to Supabase
-        try:
-            db_update = {k: v for k, v in updates.items() if k in ("result", "status")}
-            db_update["updated_at"] = "now()"
-            await supabase.table("transcription_sessions").update(db_update).eq("id", transcription_id).execute()
-        except Exception as e:
-            logger.warning(f"Failed to update transcription in Supabase: {e}")
 
     # ------------------------------------------------------------------
     # Row-to-dict converters (Supabase row G�� in-memory format)
@@ -1125,21 +1023,6 @@ class SessionStore:
             "text_timestamps": row.get("text_timestamps", []),
             "final_text": row.get("final_text"),
         }
-
-    def _row_to_transcription(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert a Supabase transcription_sessions row to in-memory format."""
-        return {
-            "id": row["id"],
-            "session_id": row.get("user_session_id"),
-            "filename": row.get("filename", "unknown"),
-            "duration": row.get("duration", 0),
-            "language": row.get("language", "en"),
-            "status": row.get("status", "processing"),
-            "created_at": row.get("created_at", time.time()),
-            "updated_at": row.get("updated_at", time.time()),
-            "result": row.get("result"),
-        }
-
 
 # Global session store
 session_store = SessionStore()
@@ -1369,29 +1252,6 @@ async def _verify_stream_ownership(request, stream_id):
     return True
 
 
-async def _verify_transcription_ownership(request, transcription_id):
-    """Verify that the authenticated entity owns the given transcription.
-
-    Checks via the transcription's parent user session.
-    Returns True if ownership is verified, False otherwise.
-    """
-    entity_id, entity_type = _get_authenticated_entity_id(request)
-    if not entity_id:
-        return False
-
-    transcription = await session_store.get_transcription(transcription_id)
-    if not transcription:
-        return False
-
-    # Check if the transcription's parent session belongs to the user
-    parent_session_id = transcription.get('session_id')
-    if parent_session_id:
-        return await _verify_session_ownership(request, parent_session_id)
-
-    # Transcription has no parent session, allow access (legacy data)
-    return True
-
-
 # ======================================================================
 # HTTP Endpoint Handlers
 # ======================================================================
@@ -1436,120 +1296,6 @@ async def get_session(request):
         return web.json_response(session)
     except Exception as e:
         logger.error(f"Error getting session: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def get_user_transcriptions(request):
-    """Get transcriptions for a user/session. Only the session owner can access them."""
-    try:
-        session_id = request.match_info.get('session_id')
-        if not session_id:
-            return web.json_response({"error": "Session ID required"}, status=400)
-
-        session = await session_store.get_session(session_id)
-        if not session:
-            return web.json_response({"error": "Session not found"}, status=404)
-
-        # Verify ownership
-        if not await _verify_session_ownership(request, session_id):
-            return web.json_response({"error": "Access denied"}, status=403)
-
-        # Get transcription details
-        transcriptions = []
-        for tid in session.get("transcriptions", []):
-            transcription = await session_store.get_transcription(tid)
-            if transcription:
-                transcriptions.append(transcription)
-
-        return web.json_response({
-            "session_id": session_id,
-            "transcriptions": transcriptions,
-            "count": len(transcriptions)
-        })
-    except Exception as e:
-        logger.error(f"Error getting user transcriptions: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def create_transcription_session(request):
-    """Create a transcription session record. Only the session owner can create transcriptions."""
-    try:
-        data = await request.json()
-        session_id = data.get('session_id')
-        filename = data.get('filename', 'unknown')
-        duration = data.get('duration', 0)
-        language = data.get('language', 'en')
-
-        if not session_id:
-            return web.json_response({"error": "Session ID required"}, status=400)
-
-        # Verify ownership of the parent session
-        if not await _verify_session_ownership(request, session_id):
-            return web.json_response({"error": "Access denied: session does not belong to authenticated user"}, status=403)
-
-        transcription_id = str(uuid.uuid4())
-        now = time.time()
-        transcription_data = {
-            "id": transcription_id,
-            "session_id": session_id,
-            "filename": filename,
-            "duration": duration,
-            "language": language,
-            "status": "processing",
-            "created_at": now,
-            "updated_at": now,
-            "result": None
-        }
-
-        await session_store.create_transcription(transcription_id, transcription_data)
-
-        # Link to user session
-        await session_store.add_transcription_to_session(session_id, transcription_id)
-
-        return web.json_response({
-            "transcription_id": transcription_id,
-            "message": "Transcription session created",
-            "status": "processing"
-        })
-    except Exception as e:
-        logger.error(f"Error creating transcription session: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def update_transcription_result(request):
-    """Update transcription with results. Only the owner can update their transcriptions."""
-    try:
-        # Get transcription_id from path parameter
-        transcription_id = request.match_info.get('transcription_id')
-        if not transcription_id:
-            return web.json_response({"error": "Transcription ID required"}, status=400)
-
-        data = await request.json()
-        result = data.get('result')
-        status = data.get('status', 'completed')
-
-        if not await session_store.has_transcription(transcription_id):
-            return web.json_response({"error": "Transcription not found"}, status=404)
-
-        # Verify ownership
-        if not await _verify_transcription_ownership(request, transcription_id):
-            return web.json_response({"error": "Access denied"}, status=403)
-
-        await session_store.update_transcription(transcription_id, {
-            "result": result,
-            "status": status,
-        })
-
-        if status == "completed":
-            logger.info(f"Transcription {transcription_id} completed")
-
-        return web.json_response({
-            "transcription_id": transcription_id,
-            "status": status,
-            "message": f"Transcription updated to {status}"
-        })
-    except Exception as e:
-        logger.error(f"Error updating transcription result: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -1972,9 +1718,6 @@ def setup_routes(app: web.Application):
     """Setup session-related routes."""
     app.router.add_post('/api/v1/sessions', create_session)
     app.router.add_get('/api/v1/sessions/{session_id}', get_session)
-    app.router.add_get('/api/v1/sessions/{session_id}/transcriptions', get_user_transcriptions)
-    app.router.add_post('/api/v1/transcriptions/session', create_transcription_session)
-    app.router.add_post('/api/v1/transcriptions/{transcription_id}/result', update_transcription_result)
     app.router.add_post('/api/v1/stream/session', create_stream_session)
     app.router.add_post('/api/v1/stream/{stream_id}/update', update_stream_session)
     app.router.add_post('/api/v1/stream/{stream_id}/close', close_stream_session)

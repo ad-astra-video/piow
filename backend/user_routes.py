@@ -140,53 +140,59 @@ async def get_user_history(request):
                 {**item, '_type': 'transcription'} for item in (t_result.data or [])
             ]
 
-            transcription_ids = [item.get('id') for item in transcriptions if item.get('id')]
-            if transcription_ids:
+            stream_session_ids = [
+                item.get('stream_session_id')
+                for item in transcriptions
+                if item.get('stream_session_id')
+            ]
+            if stream_session_ids:
                 tr_lang_result = await (
                     supabase.table('translations')
-                    .select('transcription_id, target_language')
+                    .select('stream_session_id, target_language')
                     .eq('user_id', user_id)
-                    .in_('transcription_id', transcription_ids)
+                    .in_('stream_session_id', stream_session_ids)
                     .execute()
                 )
 
-                langs_by_transcription: Dict[str, set] = {}
+                langs_by_stream_session: Dict[str, set] = {}
                 for row in (tr_lang_result.data or []):
-                    transcription_id = row.get('transcription_id')
+                    stream_session_id = row.get('stream_session_id')
                     target_language = row.get('target_language')
-                    if not transcription_id or not target_language:
+                    if not stream_session_id or not target_language:
                         continue
-                    langs_by_transcription.setdefault(str(transcription_id), set()).add(target_language)
+                    langs_by_stream_session.setdefault(str(stream_session_id), set()).add(target_language)
 
                 for item in transcriptions:
+                    stream_session_id = item.get('stream_session_id')
                     item['translated_languages'] = sorted(
-                        list(langs_by_transcription.get(str(item.get('id')), set()))
+                        list(langs_by_stream_session.get(str(stream_session_id), set()))
                     )
 
                 analysis_result = await (
                     supabase.table('stream_analysis')
-                    .select('transcription_id, analysis_mode, created_at')
+                    .select('stream_session_id, analysis_mode, created_at')
                     .eq('user_id', user_id)
-                    .in_('transcription_id', transcription_ids)
+                    .in_('stream_session_id', stream_session_ids)
                     .order('created_at', desc=True)
                     .execute()
                 )
 
-                latest_analysis_by_transcription: Dict[str, Dict[str, Any]] = {}
+                latest_analysis_by_stream_session: Dict[str, Dict[str, Any]] = {}
                 for row in (analysis_result.data or []):
-                    transcription_id = row.get('transcription_id')
-                    if not transcription_id:
+                    stream_session_id = row.get('stream_session_id')
+                    if not stream_session_id:
                         continue
-                    key = str(transcription_id)
-                    if key not in latest_analysis_by_transcription:
-                        latest_analysis_by_transcription[key] = row
+                    key = str(stream_session_id)
+                    if key not in latest_analysis_by_stream_session:
+                        latest_analysis_by_stream_session[key] = row
 
                 for item in transcriptions:
-                    analysis = latest_analysis_by_transcription.get(str(item.get('id')))
+                    analysis = latest_analysis_by_stream_session.get(str(item.get('stream_session_id')))
                     item['has_analysis'] = bool(analysis)
                     item['analysis_mode'] = analysis.get('analysis_mode') if analysis else None
             else:
                 for item in transcriptions:
+                    item['translated_languages'] = []
                     item['has_analysis'] = False
                     item['analysis_mode'] = None
 
@@ -232,13 +238,27 @@ async def get_transcription_sentences(request):
 
     try:
         # Verify ownership
-        ownership = await supabase.table('transcriptions').select('id').eq('id', transcription_id).eq('user_id', user_id).execute()
+        ownership = await (
+            supabase.table('transcriptions')
+            .select('id, stream_session_id')
+            .eq('id', transcription_id)
+            .eq('user_id', user_id)
+            .execute()
+        )
         if not ownership.data:
             return web.json_response({'error': 'Not found'}, status=404)
 
+        stream_session_id = ownership.data[0].get('stream_session_id')
+        if not stream_session_id:
+            return web.json_response({
+                'sentences': [],
+                'translations_by_language': {},
+                'translated_languages': [],
+            })
+
         result = await supabase.table('transcription_sentences') \
             .select('sentence_index, text, translated_text, timestamp') \
-            .eq('transcription_id', transcription_id) \
+            .eq('stream_session_id', stream_session_id) \
             .order('sentence_index') \
             .execute()
 
@@ -251,7 +271,7 @@ async def get_transcription_sentences(request):
             supabase.table('translations')
             .select('id, original_text, translated_text, target_language, sentence_index, created_at')
             .eq('user_id', user_id)
-            .eq('transcription_id', transcription_id)
+            .eq('stream_session_id', stream_session_id)
             .order('created_at')
             .execute()
         )
@@ -362,7 +382,7 @@ async def get_transcription_analysis(request):
     try:
         ownership = await (
             supabase.table('transcriptions')
-            .select('id')
+            .select('id, stream_session_id')
             .eq('id', transcription_id)
             .eq('user_id', user_id)
             .execute()
@@ -370,11 +390,15 @@ async def get_transcription_analysis(request):
         if not ownership.data:
             return web.json_response({'error': 'Not found'}, status=404)
 
+        stream_session_id = ownership.data[0].get('stream_session_id')
+        if not stream_session_id:
+            return web.json_response({'analysis': [], 'count': 0})
+
         result = await (
             supabase.table('stream_analysis')
             .select('id, analysis_mode, summary_text, timestamp_ms, source_event_type, created_at')
             .eq('user_id', user_id)
-            .eq('transcription_id', transcription_id)
+            .eq('stream_session_id', stream_session_id)
             .order('created_at', desc=True)
             .execute()
         )

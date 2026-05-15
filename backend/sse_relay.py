@@ -518,22 +518,6 @@ class SSERelay:
         if not translated_text or not original_text or not target_language:
             return
 
-        # Early stream translations can arrive before the first periodic flush,
-        # which means no transcription_id exists yet. Flush now so the first
-        # translation rows are linked to the transcription header row.
-        try:
-            stream_data = self._session_store._stream_sessions_cache.get(self.stream_id)  # type: ignore[attr-defined]
-            if not stream_data:
-                stream_data = await self._session_store.get_stream_session(self.stream_id)
-            if stream_data and not stream_data.get("transcription_id") and self._pending_transcription_sentences:
-                await self._flush_pending_segments()
-        except Exception as exc:
-            logger.warning(
-                "Pre-translation flush failed for stream %s: %s",
-                self.stream_id,
-                exc,
-            )
-        
         # Look up the sentence_index for this original text
         original_text_stripped = original_text.strip()
         sentence_index = self._sentence_text_to_index.get(original_text_stripped)
@@ -571,21 +555,6 @@ class SSERelay:
         analysis_mode = message.get("mode") if isinstance(message.get("mode"), str) else "multimodal"
         timestamp_ms_raw = message.get("timestamp_ms")
         timestamp_ms: Optional[int] = timestamp_ms_raw if isinstance(timestamp_ms_raw, int) else None
-
-        # Analysis events can arrive before the first transcription flush creates a
-        # transcription_id. Flush pending segments to link the analysis record.
-        try:
-            stream_data = self._session_store._stream_sessions_cache.get(self.stream_id)  # type: ignore[attr-defined]
-            if not stream_data:
-                stream_data = await self._session_store.get_stream_session(self.stream_id)
-            if stream_data and not stream_data.get("transcription_id") and self._pending_transcription_sentences:
-                await self._flush_pending_segments()
-        except Exception as exc:
-            logger.warning(
-                "Pre-analysis flush failed for stream %s: %s",
-                self.stream_id,
-                exc,
-            )
 
         try:
             await self._session_store.store_stream_analysis(

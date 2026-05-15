@@ -450,9 +450,7 @@ flowchart TB
 |--------|----------|------|-------------|--------|
 | POST | `/api/v1/sessions` | Any | Create a user session (user_id derived from auth token) | ✅ |
 | GET | `/api/v1/sessions/{session_id}` | Any | Get session info (ownership verified) | ✅ |
-| GET | `/api/v1/sessions/{session_id}/transcriptions` | Any | Get session transcriptions (ownership verified) | ✅ |
-| POST | `/api/v1/transcriptions/session` | Any | Create transcription session record (ownership verified) | ✅ |
-| POST | `/api/v1/transcriptions/{id}/result` | Any | Update transcription result (ownership verified) | ✅ |
+| Note | Legacy session transcription endpoints | N/A | Deprecated/removed in stream-first flow | ✅ |
 
 ### Stream Management Endpoints ✅
 
@@ -650,19 +648,16 @@ class SessionStore:
     def __init__(self):
         # In-memory cache layers (hot-path reads)
         self._sessions_cache: Dict[str, Dict] = {}
-        self._transcriptions_cache: Dict[str, Dict] = {}
         self._stream_sessions_cache: Dict[str, Dict] = {}
 ```
 
 **Supabase tables** (migration [`20260418_01_create_session_tables.sql`](supabase/migrations/20260418_01_create_session_tables.sql)):
 - `user_sessions` — User session tracking with settings JSONB
 - `stream_sessions` — Live streaming session data with provider_session JSONB
-- `transcription_sessions` — Batch transcription job tracking with result JSONB
 
 **Session data includes:**
-- User session tracking with transcription and stream ID arrays
+- User session tracking with stream ID arrays
 - Stream session with provider session data (whip_url, data_url, update_url, stop_url) stored as JSONB
-- Transcription session records with status tracking and result JSONB
 
 ### 9.2 Stream Session Lifecycle ✅
 
@@ -1151,7 +1146,6 @@ CREATE TABLE agents (
 | `api_usage` | ✅ | Per-request API tracking for both agents and users (migration `20260427_01`) |
 | `user_sessions` | ✅ | User session tracking (migration `20260418_01`) |
 | `stream_sessions` | ✅ | Live streaming session data with provider_session JSONB (migration `20260418_01`) |
-| `transcription_sessions` | ✅ | Batch transcription job tracking (migration `20260418_01`) |
 
 ### 18.4 Schema Differences: `agents` Table 🔄
 
@@ -1448,7 +1442,7 @@ This section tracks what remains to be implemented based on the v5.0 specificati
 | Batch transcription async processing | ⚠️ | Calls real provider but needs async job polling/webhook callbacks and Supabase Storage for file uploads |
 | Translation async processing | ⚠️ | Calls real provider but needs async job polling for long translations |
 | RLS policies on all tables | ❌ | Security requirement |
-| ~~Auth protection on session/stream endpoints~~ | ✅ | **Fixed in v6.2**: All `/api/v1/sessions/*`, `/api/v1/transcriptions/session`, `/api/v1/transcriptions/{id}/result`, `/api/v1/stream/*` endpoints now require `@require_auth` with ownership verification |
+| ~~Auth protection on session/stream endpoints~~ | ✅ | **Fixed in v6.2**: Active `/api/v1/sessions/*` and `/api/v1/stream/*` endpoints require auth with ownership verification |
 
 ### 23.2 Medium Priority (P1)
 
