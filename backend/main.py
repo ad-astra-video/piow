@@ -165,7 +165,7 @@ async def _handle_start_stream(ws: web.WebSocketResponse, stream_id: str):
     if not stream_session:
         await ws.send_json({
             "type": "error",
-            "text": f"Stream session '{stream_id}' not found. Create one via POST /api/v1/transcribe/stream first.",
+            "text": f"Stream session '{stream_id}' not found. Create one via POST /api/v1/stream/process first.",
         })
         return
 

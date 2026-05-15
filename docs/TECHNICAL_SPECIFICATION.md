@@ -12,7 +12,7 @@
 
 **Model Architecture:**
 - **Batch Transcription (`/transcribe`)**: Granite 4.0 1B Speech ONNX (CPU Worker) — via Compute Providers
-- **Real-time Streaming (`/transcribe/stream`)**: VLLM Voxtral Realtime (GPU Worker) — via Compute Providers
+- **Real-time Streaming (`/stream/process`)**: VLLM Voxtral Realtime (GPU Worker) — via Compute Providers
 - **Translation (`/translate`)**: Granite 4.0 1B Speech ONNX (CPU Worker) — via Compute Providers
 
 > **Implementation Status Key:**
@@ -352,7 +352,7 @@ The frontend connects to `ws://host/ws` and sends JSON messages:
 
 > 🔄 **DIFFERS FROM v5.0**: The original spec had the frontend connecting directly to the provider's WHIP endpoint. The implementation proxies WHIP through the backend.
 
-The backend proxies WHIP SDP offers/answers at `POST /api/v1/transcribe/stream/{stream_id}/whip`:
+The backend proxies WHIP SDP offers/answers at `POST /api/v1/stream/process/{stream_id}/whip`:
 
 1. Frontend sends SDP offer to backend WHIP proxy
 2. Backend looks up the provider's `whip_url` from the in-memory session store
@@ -429,8 +429,8 @@ flowchart TB
 |--------|----------|------|-------------|--------|
 | POST | `/api/v1/transcribe/file` | Any | Upload audio file for batch transcription | ⚠️ Calls provider; `file://` URLs only work same-host; no async job polling |
 | POST | `/api/v1/transcribe/url` | Any | Transcribe audio from URL | ⚠️ Calls provider; no async job polling or webhook callbacks |
-| POST | `/api/v1/transcribe/stream` | Any | Create streaming transcription session | ✅ |
-| POST | `/api/v1/transcribe/stream/{stream_id}/whip` | Any | WHIP SDP proxy for WebRTC | ✅ |
+| POST | `/api/v1/stream/process` | Any | Create streaming transcription session | ✅ |
+| POST | `/api/v1/stream/{stream_id}/whip` | Any | WHIP SDP proxy for WebRTC | ✅ |
 | GET | `/api/v1/transcriptions` | Any | List user transcriptions | ✅ |
 | GET | `/api/v1/transcriptions/{id}` | Any | Get transcription by ID | ✅ |
 | DELETE | `/api/v1/transcriptions/{id}` | Any | Delete transcription | ✅ |
@@ -661,8 +661,8 @@ class SessionStore:
 
 ### 9.2 Stream Session Lifecycle ✅
 
-1. **Create**: `POST /api/v1/transcribe/stream` → selects provider → `provider.create_streaming_session()` → stores in `SessionStore`
-2. **WHIP Connect**: `POST /api/v1/transcribe/stream/{stream_id}/whip` → proxies SDP to provider
+1. **Create**: `POST /api/v1/stream/process` → selects provider → `provider.create_streaming_session()` → stores in `SessionStore`
+2. **WHIP Connect**: `POST /api/v1/stream/process/{stream_id}/whip` → proxies SDP to provider
 3. **SSE Relay**: Frontend sends `start_stream` via WebSocket → `SSERelay` connects to provider `data_url` → relays to WebSocket
 4. **Update**: `POST /api/v1/stream/{stream_id}/update` → forwards to provider `update_url`
 5. **Stop**: `POST /api/v1/stream/{stream_id}/stop` → calls provider `stop_url` → marks session completed
@@ -677,11 +677,11 @@ class SessionStore:
 
 The streaming transcription flow is fully implemented:
 
-1. Frontend calls `POST /api/v1/transcribe/stream` with `session_id` and `language`
+1. Frontend calls `POST /api/v1/stream/process` with `session_id` and `language`
 2. Backend selects compute provider via `ComputeProviderManager`
 3. Provider creates streaming session, returns `whip_url`, `data_url`, `update_url`, `stop_url`
 4. Backend stores session in `SessionStore`, returns `stream_id` and URLs to frontend
-5. Frontend creates `WHIPClient` and sends SDP offer to `POST /api/v1/transcribe/stream/{stream_id}/whip`
+5. Frontend creates `WHIPClient` and sends SDP offer to `POST /api/v1/stream/process/{stream_id}/whip`
 6. Backend proxies SDP to provider's WHIP endpoint, returns answer
 7. Frontend connects WebSocket to `/ws`, sends `start_stream` with `stream_id`
 8. Backend creates `SSERelay` connecting to provider's `data_url`
@@ -698,7 +698,7 @@ Batch transcription endpoints call real compute providers but have **infrastruct
 
 ### 10.3 WHIP Proxy ✅
 
-The WHIP proxy at `POST /api/v1/transcribe/stream/{stream_id}/whip` is fully implemented:
+The WHIP proxy at `POST /api/v1/stream/process/{stream_id}/whip` is fully implemented:
 - Looks up `whip_url` from session store
 - Forwards SDP offer with `Content-Type: application/sdp`
 - Returns SDP answer from provider

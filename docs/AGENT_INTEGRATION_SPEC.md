@@ -526,7 +526,7 @@ sequenceDiagram
 | Endpoint | Price (USD) | Payment Model |
 |----------|-------------|---------------|
 | `/v1/transcribe` | $0.01 | Pay-per-request |
-| `/v1/transcribe/stream` | $0.05 | Pay-per-minute |
+| `/v1/stream/process` | $0.05 | Pay-per-minute |
 | `/v1/translate` | $0.001 | Pay-per-request |
 
 ### Agent SDK Integration
@@ -721,7 +721,7 @@ export class AgentClient {
   }
 
   async transcribeStream(): Promise<WebSocket> {
-    return this.connectWebSocket('/v1/transcribe/stream');
+    return this.connectWebSocket('/v1/stream/process');
   }
 
   async getTranscription(id: string): Promise<Transcription> {

@@ -43,11 +43,11 @@ export const api = {
   getUsageDetails: (days = 30) => _fetch(`/user/usage-details?days=${days}`),
 
   // Transcriptions
-  createStreamSession: (body) => _fetch('/transcribe/stream', { method: 'POST', body: JSON.stringify(body) }),
-  updateStreamTranslation: (streamId, body) => _fetch(`/transcribe/stream/${streamId}/translation`, { method: 'PUT', body: JSON.stringify(body || {}) }),
-  updateStreamAnalysis: (streamId, body) => _fetch(`/transcribe/stream/${streamId}/analysis`, { method: 'PUT', body: JSON.stringify(body || {}) }),
+  createStreamSession: (body) => _fetch('/stream/process', { method: 'POST', body: JSON.stringify(body) }),
+  updateStreamTranslation: (streamId, body) => _fetch(`/stream/${streamId}/translation`, { method: 'PUT', body: JSON.stringify(body || {}) }),
+  updateStreamAnalysis: (streamId, body) => _fetch(`/stream/${streamId}/analysis`, { method: 'PUT', body: JSON.stringify(body || {}) }),
   whipProxy: (streamId, sdpOffer, token) => {
-    return fetch(`${API_BASE}/transcribe/stream/${streamId}/whip`, {
+    return fetch(`${API_BASE}/stream/${streamId}/whip`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/sdp',

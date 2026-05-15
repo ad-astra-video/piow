@@ -172,7 +172,7 @@ While agent management is under `/api/v1/agents/`, the core transcription and tr
 |--------|----------|-------------|------------------|
 | POST | `/api/v1/transcribe/file` | Upload audio file for transcription | ✅ |
 | POST | `/api/v1/transcribe/url` | Transcribe audio from URL | ✅ |
-| POST | `/api/v1/transcribe/stream` | Start real-time transcription streaming | 🔒 Subscription only |
+| POST | `/api/v1/stream/process` | Start real-time transcription streaming | 🔒 Subscription only |
 | POST | `/api/v1/translate` | Translate text | ✅ |
 | POST | `/api/v1/translate/transcription` | Translate existing transcription | ✅ |
 | GET | `/api/v1/transcriptions` | List user's transcriptions | 🔒 Subscription only |

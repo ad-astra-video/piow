@@ -1249,7 +1249,7 @@ PRICING = {
         "base_price_usd": 0.01,  # $0.01 per request
         "per_minute_price_usd": 0.001,  # Additional $0.001 per minute
     },
-    "/api/v1/transcribe/stream": {
+    "/api/v1/stream/process": {
         "base_price_usd": 0.05,  # $0.05 per request (GPU)
         "per_minute_price_usd": 0.01,  # Additional $0.01 per minute
     },

@@ -5,7 +5,7 @@ const WS_ENDPOINT = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://$
 
 class WHIPClient {
   constructor(streamId, accessToken) {
-    this.whipEndpoint = `${API_BASE}/transcribe/stream/${streamId}/whip`;
+    this.whipEndpoint = `${API_BASE}/stream/${streamId}/whip`;
     this.accessToken = accessToken || null;
     this.pc = null;
   }
@@ -538,7 +538,7 @@ class StreamManager {
       }
       }
     }
-    const response = await fetch(`${API_BASE}/transcribe/stream`, {
+    const response = await fetch(`${API_BASE}/stream/process`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -608,7 +608,7 @@ class StreamManager {
         'Content-Type': 'application/json',
         ...(this.accessToken ? { 'Authorization': `Bearer ${this.accessToken}` } : {}),
       };
-      const response = await fetch(`${API_BASE}/transcribe/stream/${this.streamId}/translation`, {
+      const response = await fetch(`${API_BASE}/stream/${this.streamId}/translation`, {
         method: 'PUT',
         headers,
         body: JSON.stringify(config || {}),
@@ -628,7 +628,7 @@ class StreamManager {
         'Content-Type': 'application/json',
         ...(this.accessToken ? { 'Authorization': `Bearer ${this.accessToken}` } : {}),
       };
-      const response = await fetch(`${API_BASE}/transcribe/stream/${this.streamId}/analysis`, {
+      const response = await fetch(`${API_BASE}/stream/${this.streamId}/analysis`, {
         method: 'PUT',
         headers,
         body: JSON.stringify(config || {}),

@@ -74,7 +74,7 @@ server.addTool('transcribe', {
   handler: async (params) => {
     try {
       const endpoint = params.streaming 
-        ? '/api/v1/transcribe/stream' 
+        ? '/api/v1/stream/process' 
         : '/api/v1/transcribe';
       
       const result = await backendRequest(endpoint, 'POST', {
@@ -127,7 +127,7 @@ server.addTool('transcribe_stream', {
     try {
       // For streaming, we return connection information
       // In a full implementation, this would establish a WebSocket connection
-      const result = await backendRequest('/api/v1/transcribe/stream', 'POST', {
+      const result = await backendRequest('/api/v1/stream/process', 'POST', {
         audio_stream_id: params.audio_stream_id,
         language: params.language,
         streaming: true

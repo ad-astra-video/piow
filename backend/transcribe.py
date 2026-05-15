@@ -133,10 +133,10 @@ def _probe_duration_from_bytes(data: bytes, filename: str = "") -> Optional[int]
 def setup_routes(app):
     """Setup transcription-related routes."""
     # Streaming transcription endpoints
-    app.router.add_post('/api/v1/transcribe/stream', transcribe_stream)
-    app.router.add_put('/api/v1/transcribe/stream/{stream_id}/translation', update_stream_translation)
-    app.router.add_put('/api/v1/transcribe/stream/{stream_id}/analysis', update_stream_analysis)
-    app.router.add_post('/api/v1/transcribe/stream/{stream_id}/whip', whip_proxy)
+    app.router.add_post('/api/v1/stream/process', transcribe_stream)
+    app.router.add_put('/api/v1/stream/{stream_id}/translation', update_stream_translation)
+    app.router.add_put('/api/v1/stream/{stream_id}/analysis', update_stream_analysis)
+    app.router.add_post('/api/v1/stream/{stream_id}/whip', whip_proxy)
     app.router.add_get('/api/v1/transcriptions', list_transcriptions)
     app.router.add_get('/api/v1/transcriptions/{id}', get_transcription)
     app.router.add_delete('/api/v1/transcriptions/{id}', delete_transcription)
@@ -1091,7 +1091,7 @@ async def whip_proxy(request):
     stream_session = await session_store.get_stream_session(stream_id)
     if not stream_session:
         return web.json_response({
-            "error": f"Stream session '{stream_id}' not found. Create one via POST /api/v1/transcribe/stream first."
+            "error": f"Stream session '{stream_id}' not found. Create one via POST /api/v1/stream/process first."
         }, status=404)
 
     provider_session = stream_session.get("provider_session", {})

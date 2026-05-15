@@ -1429,7 +1429,7 @@ async def create_stream_session(request):
 
         # Return session info to client.
         # WHIP is now proxied through the backend G�� clients POST SDP offers
-        # to /api/v1/transcribe/stream/{stream_id}/whip instead of connecting
+        # to /api/v1/stream/{stream_id}/whip instead of connecting
         # directly to the provider. The provider's whip_url is stored server-side.
         return web.json_response({
             "stream_id": stream_id,
