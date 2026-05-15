@@ -2994,6 +2994,16 @@ html, body {
   margin-top: 0;
 }
 
+/* Keep in-progress transcript sentence inline with its timestamp. */
+.partial-entry .entry-row {
+  align-items: baseline;
+}
+
+.partial-entry .entry-timestamp-col {
+  line-height: 1.5;
+  padding-top: 0;
+}
+
 /* Stream timer */
 .stream-timer {
   display: flex;
