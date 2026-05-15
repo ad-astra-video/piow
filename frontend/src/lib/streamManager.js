@@ -90,6 +90,59 @@ function formatDuration(ms) {
   return `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`;
 }
 
+function isPlaceholderCellValue(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === ''
+    || normalized === 'none'
+    || normalized === 'null'
+    || normalized === 'n/a'
+    || normalized === 'na'
+    || normalized === 'unknown'
+    || normalized === '-'
+    || normalized === '--';
+}
+
+function isMarkdownSeparatorRow(cells) {
+  return cells.length > 0 && cells.every((cell) => /^:?-{2,}:?$/.test(cell));
+}
+
+function sanitizeAnalysisText(rawText) {
+  const text = typeof rawText === 'string' ? rawText.trim() : '';
+  if (!text) {
+    return '';
+  }
+
+  const lines = text.split(/\r?\n/);
+  let removedRows = 0;
+  const keptLines = lines.filter((line) => {
+    if (!line.includes('|')) {
+      return true;
+    }
+
+    const cells = line
+      .split('|')
+      .map((cell) => cell.trim())
+      .filter((cell) => cell.length > 0);
+
+    if (cells.length === 0 || isMarkdownSeparatorRow(cells)) {
+      return true;
+    }
+
+    const allPlaceholderValues = cells.every((cell) => isPlaceholderCellValue(cell));
+    if (allPlaceholderValues) {
+      removedRows += 1;
+      return false;
+    }
+    return true;
+  });
+
+  const normalized = keptLines.join('\n').trim();
+  if (removedRows > 0 && !normalized) {
+    return '';
+  }
+  return normalized;
+}
+
 class StreamManager {
   constructor() {
     this.state = {
@@ -932,13 +985,15 @@ class StreamManager {
               const errorText = typeof message.error === 'string' ? message.error : 'Translation failed';
               this._setState({ errorMessage: errorText });
             } else if (msgType === 'analysis.delta' || msgType === 'analysis.done') {
+              const rawAnalysisText = typeof message.text === 'string'
+                ? message.text
+                : (typeof message.summary === 'string' ? message.summary : '');
+              const normalizedAnalysisText = sanitizeAnalysisText(rawAnalysisText);
               const entry = {
                 id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 type: msgType,
                 mode: typeof message.mode === 'string' ? message.mode : this.state.analysisMode,
-                text: typeof message.text === 'string'
-                  ? message.text
-                  : (typeof message.summary === 'string' ? message.summary : ''),
+                text: normalizedAnalysisText,
                 timestampMs: typeof message.timestamp_ms === 'number'
                   ? message.timestamp_ms
                   : (typeof message.window_end_ms === 'number' ? message.window_end_ms : this.state.elapsedMs),
@@ -946,6 +1001,12 @@ class StreamManager {
               if (entry.text) {
                 this._setState({
                   analysisEntries: [...this.state.analysisEntries, entry].slice(-200),
+                });
+              } else {
+                console.debug('Dropped empty/suppressed analysis update', {
+                  type: msgType,
+                  mode: entry.mode,
+                  timestampMs: entry.timestampMs,
                 });
               }
             } else if (msgType === 'analysis.status') {

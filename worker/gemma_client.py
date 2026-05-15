@@ -16,6 +16,7 @@ import wave
 from typing import Any, Dict, Optional
 
 import aiohttp
+from gemma_prompts import get_analysis_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -87,21 +88,7 @@ class GemmaClient:
 
     @staticmethod
     def _default_analysis_prompt(mode: str) -> str:
-        prompts = {
-            "multimodal": (
-                "Analyze the live conversation using both audio and video context. "
-                "Summarize key actions, decisions, and risks."
-            ),
-            "audio_only": (
-                "Analyze only the spoken audio from the live conversation. "
-                "Summarize key actions, decisions, and risks."
-            ),
-            "video_only": (
-                "Analyze only the visual video context from the live conversation. "
-                "Summarize key actions, decisions, and risks."
-            ),
-        }
-        return prompts.get(mode, prompts["multimodal"])
+        return get_analysis_prompt(mode)
 
     @staticmethod
     def _is_no_update_response(text: str) -> bool:
@@ -109,7 +96,27 @@ class GemmaClient:
         normalized = (text or "").strip()
         if not normalized:
             return False
-        return bool(re.fullmatch(r"NO[_\s-]?UPDATE\.?", normalized, flags=re.IGNORECASE))
+
+        # Direct contract match.
+        if re.fullmatch(r"NO[_\s-]?UPDATE[\.!]?", normalized, flags=re.IGNORECASE):
+            return True
+
+        # Handle wrapped responses such as markdown code fences or quoted text.
+        unwrapped = re.sub(r"^```[a-zA-Z0-9_-]*\s*|\s*```$", "", normalized, flags=re.DOTALL).strip()
+        unwrapped = unwrapped.strip("`\"' ")
+        if re.fullmatch(r"NO[_\s-]?UPDATE[\.!]?", unwrapped, flags=re.IGNORECASE):
+            return True
+
+        # Accept one-line sentences that explicitly request no update.
+        compact = re.sub(r"\s+", " ", unwrapped).strip().lower()
+        return compact in {
+            "no update",
+            "no_update",
+            "no-update",
+            "no update.",
+            "no_update.",
+            "no-update.",
+        }
 
     @staticmethod
     def _pcm16_to_wav_bytes(audio_pcm16: bytes, sample_rate_hz: int) -> bytes:

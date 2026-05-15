@@ -44,6 +44,7 @@ if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
 from gemma_client import GemmaClient
+from gemma_prompts import get_analysis_prompt
 from vllm_client import VLLMRealtimeClient, warmup_transcription
 
 # ---------------------------------------------------------------------------
@@ -446,21 +447,6 @@ class LiveTranscriptionWorker:
     # Cycle the VLLM WebSocket connection every 15 minutes to avoid
     # long-lived connection issues (stale state, memory growth, etc.).
     _CONNECTION_MAX_AGE_SECONDS: int = 15 * 60
-    _DEFAULT_ANALYSIS_PROMPTS: Dict[str, str] = {
-        "multimodal": (
-            "Analyze the live conversation using both audio and video context. "
-            "Summarize key actions, decisions, and risks."
-        ),
-        "audio_only": (
-            "Analyze only the spoken audio from the live conversation. "
-            "Summarize key actions, decisions, and risks."
-        ),
-        "video_only": (
-            "Analyze only the visual video context from the live conversation. "
-            "Summarize key actions, decisions, and risks."
-        ),
-    }
-
     def __init__(self) -> None:
         self.analysis_enabled: bool = False
         self.analysis_mode: str = "multimodal"
@@ -475,9 +461,26 @@ class LiveTranscriptionWorker:
         self._analysis_last_run_ts_ms: int = 0
         self._analysis_last_seen_ts_ms: int = 0
         self._analysis_audio_request_count: int = 0
+        self._stream_started_monotonic_s: Optional[float] = None
 
     def _default_analysis_prompt(self, mode: str) -> str:
-        return self._DEFAULT_ANALYSIS_PROMPTS.get(mode, self._DEFAULT_ANALYSIS_PROMPTS["multimodal"])
+        return get_analysis_prompt(mode)
+
+    def _resolve_analysis_timestamp_ms(self, timestamp_ms: Optional[int]) -> int:
+        """Resolve a stable non-negative timestamp for emitted analysis events."""
+        if isinstance(timestamp_ms, (int, float)):
+            return max(int(timestamp_ms), 0)
+
+        if self._analysis_last_seen_ts_ms > 0:
+            return int(self._analysis_last_seen_ts_ms)
+        if self._analysis_last_run_ts_ms > 0:
+            return int(self._analysis_last_run_ts_ms)
+
+        if isinstance(self._stream_started_monotonic_s, (int, float)):
+            elapsed_ms = int((time.monotonic() - float(self._stream_started_monotonic_s)) * 1000)
+            return max(elapsed_ms, 0)
+
+        return 0
 
     @model_loader
     async def load(self, **kwargs: dict) -> None:
@@ -506,6 +509,7 @@ class LiveTranscriptionWorker:
         self._analysis_audio_samples_total = 0
         self._analysis_last_run_ts_ms = 0
         self._analysis_last_seen_ts_ms = 0
+        self._stream_started_monotonic_s = time.monotonic()
         self._apply_analysis_params(params)
 
         # Close any stale client from a previous stream just in case
@@ -848,13 +852,13 @@ class LiveTranscriptionWorker:
                 return
 
             if analysis_text and processor is not None:
+                resolved_timestamp_ms = self._resolve_analysis_timestamp_ms(timestamp_ms)
                 payload = {
                     "type": "analysis.done",
                     "mode": self.analysis_mode,
                     "text": analysis_text,
+                    "timestamp_ms": resolved_timestamp_ms,
                 }
-                if isinstance(timestamp_ms, int):
-                    payload["timestamp_ms"] = timestamp_ms
                 await processor.send_data(json.dumps(payload))
             elif processor is not None and isinstance(result, dict) and result.get("error"):
                 await processor.send_data(json.dumps({
@@ -922,19 +926,19 @@ class LiveTranscriptionWorker:
                 return
 
             if analysis_text and processor is not None:
+                resolved_timestamp_ms = self._resolve_analysis_timestamp_ms(timestamp_ms)
                 payload = {
                     "type": "analysis.done",
                     "mode": self.analysis_mode,
                     "text": analysis_text,
+                    "timestamp_ms": resolved_timestamp_ms,
                 }
-                if isinstance(timestamp_ms, int):
-                    payload["timestamp_ms"] = timestamp_ms
                 await processor.send_data(json.dumps(payload))
                 logger.info(
                     "Audio analysis emitted #%d: text_len=%d timestamp_ms=%s",
                     request_id,
                     len(analysis_text),
-                    str(timestamp_ms),
+                    str(resolved_timestamp_ms),
                 )
             elif processor is not None and isinstance(result, dict) and result.get("error"):
                 logger.warning(
@@ -1012,6 +1016,24 @@ class LiveTranscriptionWorker:
                     "original": sentence,
                 }))
 
+    async def _flush_analysis_on_stop(self) -> None:
+        """Flush pending analysis buffers before stream shutdown."""
+        if self.analysis_enabled and self.live_transcription_enabled and self._analysis_pending_text:
+            prompt_text = self._analysis_pending_text.strip()
+            self._analysis_pending_text = ""
+            if prompt_text:
+                timestamp_ms = self._resolve_analysis_timestamp_ms(None)
+                self._analysis_last_run_ts_ms = timestamp_ms
+                await self._run_live_analysis_async(prompt_text, timestamp_ms)
+
+        if self._should_use_audio_direct_analysis() and self._analysis_pending_audio:
+            audio_chunk = self._analysis_pending_audio
+            self._analysis_pending_audio = b""
+            audio_timestamp_ms = int((self._analysis_audio_samples_total * 1000) / 16000)
+            timestamp_ms = self._resolve_analysis_timestamp_ms(audio_timestamp_ms)
+            self._analysis_last_run_ts_ms = timestamp_ms
+            await self._run_live_audio_analysis_async(audio_chunk, timestamp_ms)
+
     @on_stream_stop
     async def on_stop(self) -> None:
         """Called when a trickle stream stops. Closes the per-stream VLLM
@@ -1019,20 +1041,7 @@ class LiveTranscriptionWorker:
         global vllm_client
         logger.info("Stream stopped")
 
-        if self.analysis_enabled and self.live_transcription_enabled and self._analysis_pending_text:
-            prompt_text = self._analysis_pending_text.strip()
-            self._analysis_pending_text = ""
-            if prompt_text:
-                timestamp_ms = int(self._analysis_last_seen_ts_ms or self._analysis_last_run_ts_ms or 0)
-                self._analysis_last_run_ts_ms = timestamp_ms
-                await self._run_live_analysis_async(prompt_text, timestamp_ms)
-
-        if self._should_use_audio_direct_analysis() and self._analysis_pending_audio:
-            audio_chunk = self._analysis_pending_audio
-            self._analysis_pending_audio = b""
-            timestamp_ms = int((self._analysis_audio_samples_total * 1000) / 16000)
-            self._analysis_last_run_ts_ms = timestamp_ms
-            await self._run_live_audio_analysis_async(audio_chunk, timestamp_ms)
+        await self._flush_analysis_on_stop()
 
         if vllm_client is not None:
             try:

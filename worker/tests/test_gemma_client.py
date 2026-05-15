@@ -150,3 +150,22 @@ class TestGemmaClient(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["suppressed"])
         self.assertEqual(result["suppression_reason"], "no_update")
         self.assertEqual(result["analysis_text"], "")
+
+    @patch.object(GemmaClient, "_chat_completion", new_callable=AsyncMock)
+    async def test_analyze_suppresses_wrapped_no_update_contract(self, mock_chat_completion):
+        client = GemmaClient(base_url="http://example.com", model="test-model")
+        mock_chat_completion.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "```\nNO_UPDATE\n```",
+                    }
+                }
+            ]
+        }
+
+        result = await client.analyze("brief filler transcript", mode="audio_only")
+
+        self.assertEqual(result["analysis_text"], "")
+        self.assertTrue(result["suppressed"])
+        self.assertEqual(result["suppression_reason"], "no_update")

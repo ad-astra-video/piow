@@ -5,6 +5,7 @@ import os
 import sys
 import json
 import asyncio
+import time
 import pytest
 import pytest_asyncio
 import aiohttp
@@ -166,6 +167,31 @@ async def test_run_live_analysis_async_emits_stream_message():
         "text": "Potential outage risk",
         "timestamp_ms": 640,
     }
+
+
+async def test_run_live_analysis_async_emits_elapsed_timestamp_when_missing():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.analysis_mode = "audio_only"
+    worker._stream_started_monotonic_s = time.monotonic() - 1.25
+
+    mock_processor = MagicMock()
+    mock_processor.send_data = AsyncMock()
+
+    original_processor = worker_app.processor
+    original_gemma = worker_app.gemma_translator
+    worker_app.processor = mock_processor
+    try:
+        worker_app.gemma_translator = MagicMock()
+        worker_app.gemma_translator.analyze = AsyncMock(return_value={"analysis_text": "Update available"})
+        await worker._run_live_analysis_async("New update", None)
+    finally:
+        worker_app.processor = original_processor
+        worker_app.gemma_translator = original_gemma
+
+    payload = json.loads(mock_processor.send_data.call_args[0][0])
+    assert payload["type"] == "analysis.done"
+    assert payload["timestamp_ms"] >= 1000
 
 
 async def test_run_live_analysis_async_suppresses_no_update_output():
@@ -343,3 +369,19 @@ async def test_queue_live_audio_analysis_flushes_on_final():
     await asyncio.sleep(0)
 
     worker._run_live_audio_analysis_async.assert_awaited_once_with(b"\x00\x00\x01\x01", 0)
+
+
+async def test_on_stop_flush_uses_elapsed_timestamp_when_none_seen():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.live_transcription_enabled = True
+    worker._analysis_pending_text = "tail text"
+    worker._stream_started_monotonic_s = time.monotonic() - 1.5
+    worker._run_live_analysis_async = AsyncMock()
+
+    await worker._flush_analysis_on_stop()
+
+    worker._run_live_analysis_async.assert_awaited_once()
+    call_args = worker._run_live_analysis_async.call_args.args
+    assert call_args[0] == "tail text"
+    assert call_args[1] >= 1000
