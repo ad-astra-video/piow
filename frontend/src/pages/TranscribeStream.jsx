@@ -718,69 +718,69 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               <div className="player-fullscreen-transcript">
                 <div className="transcript-scroll player-fullscreen-scroll">
                   {transcriptContent}
-
-      {showResponseFormatModal && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowResponseFormatModal(false); }}>
-          <div className="modal-content panel-glass">
-            <div className="modal-header">
-              <h3>Structured Output Schema</h3>
-              <button className="icon-btn" onClick={() => setShowResponseFormatModal(false)}>
-                <X size={16} />
-              </button>
-            </div>
-            <p className="modal-hint">
-              Paste a JSON schema to enforce structured output from the analysis LLM.
-              Example: <code>{'{"type": "json_object", "schema": {"probability": {"type": "number"}}}'}</code>
-            </p>
-            <textarea
-              className="modal-textarea"
-              rows={8}
-              value={responseFormatDraft}
-              onChange={(e) => setResponseFormatDraft(e.target.value)}
-              placeholder={'{\n  "type": "json_object",\n  "schema": {\n    "probability": { "type": "number", "minimum": 0, "maximum": 1 },\n    "confidence": { "type": "string", "enum": ["high", "medium", "low"] },\n    "reasoning": { "type": "string" }\n  }\n}'}
-            />
-            <div className="modal-actions">
-              <button
-                className="primary-button"
-                onClick={() => {
-                  const draft = responseFormatDraft.trim();
-                  if (!draft) {
-                    setAnalysisResponseFormat(null);
-                    setShowResponseFormatModal(false);
-                    return;
-                  }
-                  try {
-                    const parsed = JSON.parse(draft);
-                    if (typeof parsed !== 'object' || parsed === null) {
-                      alert('Schema must be a JSON object');
-                      return;
-                    }
-                    setAnalysisResponseFormat(parsed);
-                    setShowResponseFormatModal(false);
-                  } catch (err) {
-                    alert('Invalid JSON: ' + err.message);
-                  }
-                }}
-              >
-                Save Schema
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  setAnalysisResponseFormat(null);
-                  setResponseFormatDraft('');
-                  setShowResponseFormatModal(false);
-                }}
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {showResponseFormatModal && (
+          <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowResponseFormatModal(false); }}>
+            <div className="modal-content panel-glass">
+              <div className="modal-header">
+                <h3>Structured Output Schema</h3>
+                <button className="icon-btn" onClick={() => setShowResponseFormatModal(false)}>
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="modal-hint">
+                Paste a JSON schema to enforce structured output from the analysis LLM.
+                Example: <code>{'{"type": "json_object", "schema": {"probability": {"type": "number"}}}'}</code>
+              </p>
+              <textarea
+                className="modal-textarea"
+                rows={8}
+                value={responseFormatDraft}
+                onChange={(e) => setResponseFormatDraft(e.target.value)}
+                placeholder={'{\n  "type": "json_object",\n  "schema": {\n    "probability": { "type": "number", "minimum": 0, "maximum": 1 },\n    "confidence": { "type": "string", "enum": ["high", "medium", "low"] },\n    "reasoning": { "type": "string" }\n  }\n}'}
+              />
+              <div className="modal-actions">
+                <button
+                  className="primary-button"
+                  onClick={() => {
+                    const draft = responseFormatDraft.trim();
+                    if (!draft) {
+                      setAnalysisResponseFormat(null);
+                      setShowResponseFormatModal(false);
+                      return;
+                    }
+                    try {
+                      const parsed = JSON.parse(draft);
+                      if (typeof parsed !== 'object' || parsed === null) {
+                        alert('Schema must be a JSON object');
+                        return;
+                      }
+                      setAnalysisResponseFormat(parsed);
+                      setShowResponseFormatModal(false);
+                    } catch (err) {
+                      alert('Invalid JSON: ' + err.message);
+                    }
+                  }}
+                >
+                  Save Schema
+                </button>
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    setAnalysisResponseFormat(null);
+                    setResponseFormatDraft('');
+                    setShowResponseFormatModal(false);
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
