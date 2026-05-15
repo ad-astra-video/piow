@@ -455,6 +455,7 @@ class LiveTranscriptionWorker:
         self.live_transcription_enabled: bool = True
         self.analysis_prompt: str = self._default_analysis_prompt(self.analysis_mode)
         self.analysis_prompt_custom: bool = False
+        self.analysis_response_format: Optional[Dict[str, Any]] = None
         self._analysis_pending_text: str = ""
         self._analysis_pending_audio: bytes = b""
         self._analysis_audio_samples_total: int = 0
@@ -752,6 +753,13 @@ class LiveTranscriptionWorker:
         elif mode_changed and not self.analysis_prompt_custom:
             self.analysis_prompt = self._default_analysis_prompt(self.analysis_mode)
 
+        analysis_response_format = params.get("analysis_response_format")
+        if analysis_response_format is not None:
+            if isinstance(analysis_response_format, dict) and analysis_response_format:
+                self.analysis_response_format = analysis_response_format
+            else:
+                self.analysis_response_format = None
+
     def _queue_live_analysis(self, text: str, timestamp_ms: int, is_final: bool) -> None:
         """Schedule analysis only on elapsed chunk windows for stable cadence."""
         if not self.analysis_enabled or not self.live_transcription_enabled:
@@ -836,6 +844,7 @@ class LiveTranscriptionWorker:
                 text=text,
                 prompt=self.analysis_prompt,
                 mode=self.analysis_mode,
+                response_format=self.analysis_response_format,
             )
             analysis_text = ""
             suppressed = False
@@ -853,12 +862,29 @@ class LiveTranscriptionWorker:
 
             if analysis_text and processor is not None:
                 resolved_timestamp_ms = self._resolve_analysis_timestamp_ms(timestamp_ms)
-                payload = {
-                    "type": "analysis.done",
-                    "mode": self.analysis_mode,
-                    "text": analysis_text,
-                    "timestamp_ms": resolved_timestamp_ms,
-                }
+                if self.analysis_response_format:
+                    try:
+                        structured_data = json.loads(analysis_text)
+                        payload = {
+                            "type": "analysis.signal",
+                            "mode": self.analysis_mode,
+                            "data": structured_data,
+                            "timestamp_ms": resolved_timestamp_ms,
+                        }
+                    except json.JSONDecodeError:
+                        payload = {
+                            "type": "analysis.done",
+                            "mode": self.analysis_mode,
+                            "text": analysis_text,
+                            "timestamp_ms": resolved_timestamp_ms,
+                        }
+                else:
+                    payload = {
+                        "type": "analysis.done",
+                        "mode": self.analysis_mode,
+                        "text": analysis_text,
+                        "timestamp_ms": resolved_timestamp_ms,
+                    }
                 await processor.send_data(json.dumps(payload))
             elif processor is not None and isinstance(result, dict) and result.get("error"):
                 await processor.send_data(json.dumps({

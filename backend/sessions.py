@@ -318,6 +318,7 @@ class SessionStore:
         analysis_video_chunk_seconds: float = 10.0,
         analysis_video_fps: int = 3,
         analysis_prompt: Optional[str] = None,
+        analysis_response_format: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Create a new stream session with provider data.
@@ -341,6 +342,7 @@ class SessionStore:
             "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
+            "analysis_response_format": analysis_response_format,
         })
         provider_session_payload["metadata"] = metadata
         provider_session_payload["live_transcription_enabled"] = bool(live_transcription_enabled)
@@ -362,6 +364,7 @@ class SessionStore:
             "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
+            "analysis_response_format": analysis_response_format,
             "status": "active",
             "created_at": now,
             "updated_at": now,
@@ -550,6 +553,7 @@ class SessionStore:
         analysis_video_chunk_seconds: float,
         analysis_video_fps: int,
         analysis_prompt: Optional[str],
+        analysis_response_format: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Persist live analysis configuration on the stream session."""
         stream_session = self._stream_sessions_cache.get(stream_id) or await self.get_stream_session(stream_id)
@@ -569,6 +573,7 @@ class SessionStore:
             "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
+            "analysis_response_format": analysis_response_format,
         })
         provider_session["metadata"] = metadata
         provider_session["analysis_enabled"] = bool(analysis_enabled)
@@ -577,6 +582,7 @@ class SessionStore:
         provider_session["analysis_video_chunk_seconds"] = analysis_video_chunk_seconds
         provider_session["analysis_video_fps"] = analysis_video_fps
         provider_session["analysis_prompt"] = analysis_prompt
+        provider_session["analysis_response_format"] = analysis_response_format
 
         stream_session["analysis_enabled"] = bool(analysis_enabled)
         stream_session["analysis_mode"] = analysis_mode
@@ -584,6 +590,7 @@ class SessionStore:
         stream_session["analysis_video_chunk_seconds"] = analysis_video_chunk_seconds
         stream_session["analysis_video_fps"] = analysis_video_fps
         stream_session["analysis_prompt"] = analysis_prompt
+        stream_session["analysis_response_format"] = analysis_response_format
         stream_session["provider_session"] = provider_session
         stream_session["updated_at"] = now
         self._stream_sessions_cache[stream_id] = stream_session

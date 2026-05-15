@@ -533,6 +533,9 @@ class StreamManager {
       }
       if (typeof analysisConfig.analysis_prompt === 'string') {
         body.analysis_prompt = analysisConfig.analysis_prompt;
+      if (analysisConfig.analysis_response_format != null) {
+        body.analysis_response_format = analysisConfig.analysis_response_format;
+      }
       }
     }
     const response = await fetch(`${API_BASE}/transcribe/stream`, {
@@ -984,11 +987,18 @@ class StreamManager {
             } else if (msgType === 'translation.error') {
               const errorText = typeof message.error === 'string' ? message.error : 'Translation failed';
               this._setState({ errorMessage: errorText });
-            } else if (msgType === 'analysis.delta' || msgType === 'analysis.done') {
+            } else if (msgType === 'analysis.delta' || msgType === 'analysis.done' || msgType === 'analysis.signal') {
               const rawAnalysisText = typeof message.text === 'string'
                 ? message.text
                 : (typeof message.summary === 'string' ? message.summary : '');
               const normalizedAnalysisText = sanitizeAnalysisText(rawAnalysisText);
+              const isSignal = msgType === 'analysis.signal';
+              const rawAnalysisText = isSignal
+                ? JSON.stringify(message.data || {})
+                : (typeof message.text === 'string'
+                  ? message.text
+                  : (typeof message.summary === 'string' ? message.summary : ''));
+              const normalizedAnalysisText = isSignal ? rawAnalysisText : sanitizeAnalysisText(rawAnalysisText);
               const entry = {
                 id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 type: msgType,

@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages, Brain, X } from 'lucide-react';
+import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages, Brain, X, FileCode } from 'lucide-react';
 import Sentence from '../components/Sentence';
 import MarkdownText from '../components/MarkdownText';
 import useLiveTranscription from '../hooks/useLiveTranscription';
@@ -97,6 +97,9 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   const [analysisVideoWindowSeconds, setAnalysisVideoWindowSeconds] = useState(ANALYSIS_WINDOW_DEFAULT_SECONDS);
   const [analysisPrompt, setAnalysisPrompt] = useState(getDefaultAnalysisPrompt('multimodal'));
   const [analysisPromptTouched, setAnalysisPromptTouched] = useState(false);
+  const [analysisResponseFormat, setAnalysisResponseFormat] = useState(null);
+  const [showResponseFormatModal, setShowResponseFormatModal] = useState(false);
+  const [responseFormatDraft, setResponseFormatDraft] = useState('');
   const [fileHasVideo, setFileHasVideo] = useState(false);
 
   // Fetch available languages on mount
@@ -155,6 +158,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
       analysis_video_chunk_seconds: clampAnalysisWindowSeconds(analysisVideoWindowSeconds),
       analysis_video_fps: 3,
       analysis_prompt: analysisPrompt,
+      analysis_response_format: analysisResponseFormat,
     });
   }, [
     isStarted,
@@ -246,6 +250,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
       analysis_video_chunk_seconds: clampAnalysisWindowSeconds(analysisVideoWindowSeconds),
       analysis_video_fps: 3,
       analysis_prompt: analysisPrompt,
+      analysis_response_format: analysisResponseFormat,
     };
     const serviceConfig = {
       live_transcription_enabled: transcriptionServiceEnabled,
@@ -572,6 +577,23 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                   {!isModeSupported(analysisMode, runtimeTrackAvailability) && (
                     <small className="analysis-mode-help">{modeDisabledReason(analysisMode)}</small>
                   )}
+                  <div className="form-row analysis-response-format-row">
+                    <label>Structured Output</label>
+                    <button
+                      type="button"
+                      className="secondary-button structured-output-btn"
+                      onClick={() => {
+                        setResponseFormatDraft(analysisResponseFormat ? JSON.stringify(analysisResponseFormat, null, 2) : '');
+                        setShowResponseFormatModal(true);
+                      }}
+                    >
+                      <FileCode size={14} />
+                      {analysisResponseFormat ? 'Edit JSON Schema' : 'Set JSON Schema'}
+                    </button>
+                    {analysisResponseFormat && (
+                      <span className="response-format-badge">Schema active</span>
+                    )}
+                  </div>
                   <div className="form-row analysis-prompt-row">
                     <label htmlFor="analysis_prompt">Prompt</label>
                     <textarea
@@ -681,6 +703,66 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               <div className="player-fullscreen-transcript">
                 <div className="transcript-scroll player-fullscreen-scroll">
                   {transcriptContent}
+
+      {showResponseFormatModal && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowResponseFormatModal(false); }}>
+          <div className="modal-content panel-glass">
+            <div className="modal-header">
+              <h3>Structured Output Schema</h3>
+              <button className="icon-btn" onClick={() => setShowResponseFormatModal(false)}>
+                <X size={16} />
+              </button>
+            </div>
+            <p className="modal-hint">
+              Paste a JSON schema to enforce structured output from the analysis LLM.
+              Example: <code>{"type": "json_object", "schema": {"probability": {"type": "number"}}}</code>
+            </p>
+            <textarea
+              className="modal-textarea"
+              rows={8}
+              value={responseFormatDraft}
+              onChange={(e) => setResponseFormatDraft(e.target.value)}
+              placeholder={'{\n  "type": "json_object",\n  "schema": {\n    "probability": { "type": "number", "minimum": 0, "maximum": 1 },\n    "confidence": { "type": "string", "enum": ["high", "medium", "low"] },\n    "reasoning": { "type": "string" }\n  }\n}'}
+            />
+            <div className="modal-actions">
+              <button
+                className="primary-button"
+                onClick={() => {
+                  const draft = responseFormatDraft.trim();
+                  if (!draft) {
+                    setAnalysisResponseFormat(null);
+                    setShowResponseFormatModal(false);
+                    return;
+                  }
+                  try {
+                    const parsed = JSON.parse(draft);
+                    if (typeof parsed !== 'object' || parsed === null) {
+                      alert('Schema must be a JSON object');
+                      return;
+                    }
+                    setAnalysisResponseFormat(parsed);
+                    setShowResponseFormatModal(false);
+                  } catch (err) {
+                    alert('Invalid JSON: ' + err.message);
+                  }
+                }}
+              >
+                Save Schema
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  setAnalysisResponseFormat(null);
+                  setResponseFormatDraft('');
+                  setShowResponseFormatModal(false);
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
                 </div>
               </div>
             )}

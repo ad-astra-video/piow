@@ -344,6 +344,9 @@ class LivepeerComputeProvider(BaseComputeProvider):
         analysis_prompt = kwargs.get("analysis_prompt")
         if analysis_prompt is not None:
             worker_params["analysis_prompt"] = str(analysis_prompt)
+        analysis_response_format = kwargs.get("analysis_response_format")
+        if analysis_response_format is not None:
+            worker_params["analysis_response_format"] = analysis_response_format
         source_language = kwargs.get("source_language")
         target_language = kwargs.get("target_language")
         if source_language:

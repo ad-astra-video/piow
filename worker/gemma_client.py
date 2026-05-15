@@ -48,7 +48,7 @@ class GemmaClient:
         raw = os.environ.get("GEMMA_AUDIO_ANALYSIS_ENABLED", "true").strip().lower()
         return raw not in ("0", "false", "no", "off")
 
-    async def _chat_completion(self, messages: list[dict[str, Any]]) -> Dict[str, Any]:
+    async def _chat_completion(self, messages: list[dict[str, Any]], response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         payload = {
             "model": self.model,
             "messages": messages,
@@ -56,6 +56,8 @@ class GemmaClient:
             "max_tokens": self.max_tokens,
             "stream": False,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
 
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -211,7 +213,7 @@ class GemmaClient:
                 "backend": "gemma-vllm",
             }
 
-    async def analyze(self, text: str, prompt: Optional[str] = None, mode: str = "multimodal") -> Dict[str, Any]:
+    async def analyze(self, text: str, prompt: Optional[str] = None, mode: str = "multimodal", response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Run live-analysis text generation on the Gemma runtime."""
         start_time = time.time()
 
@@ -240,9 +242,10 @@ class GemmaClient:
         )
 
         try:
-            data = await self._chat_completion([
-                {"role": "user", "content": user_prompt},
-            ])
+            data = await self._chat_completion(
+                [{"role": "user", "content": user_prompt}],
+                response_format=response_format,
+            )
             if isinstance(data, dict) and data.get("error"):
                 return {
                     "error": data.get("error"),

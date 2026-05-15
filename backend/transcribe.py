@@ -660,6 +660,13 @@ async def transcribe_stream(request):
         analysis_prompt = data.get('analysis_prompt')
         if analysis_prompt is not None:
             analysis_prompt = str(analysis_prompt).strip() or None
+        analysis_response_format = data.get('analysis_response_format')
+        if analysis_response_format is not None:
+            if not isinstance(analysis_response_format, dict):
+                return web.json_response({
+                    'error': 'analysis_response_format must be a JSON object (e.g., {"type": "json_object", "schema": {...}})',
+                    'code': 'invalid_response_format',
+                }, status=400)
 
         if not live_transcription_enabled and not analysis_enabled:
             return web.json_response({
@@ -753,6 +760,7 @@ async def transcribe_stream(request):
                     analysis_video_chunk_seconds=analysis_video_chunk_seconds,
                     analysis_video_fps=analysis_video_fps,
                     analysis_prompt=analysis_prompt,
+                    analysis_response_format=analysis_response_format,
                 )
                 if _is_valid_streaming_session(session_result):
                     logger.info(
@@ -811,6 +819,7 @@ async def transcribe_stream(request):
                 analysis_video_chunk_seconds=analysis_video_chunk_seconds,
                 analysis_video_fps=analysis_video_fps,
                 analysis_prompt=analysis_prompt,
+                analysis_response_format=analysis_response_format,
             )
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=403)
@@ -835,6 +844,7 @@ async def transcribe_stream(request):
             "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
+            "analysis_response_format": analysis_response_format,
         })
 
     except Exception as e:
