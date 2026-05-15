@@ -253,13 +253,13 @@ class StreamManager {
     }
   }
 
-  async flushLocalAnnotations(transcriptionId) {
+  async flushLocalAnnotations(streamId) {
     const allAnnotations = Object.values(this.state.localAnnotations).flat();
-    if (!transcriptionId || allAnnotations.length === 0) return;
+    if (!streamId || allAnnotations.length === 0) return;
 
     for (const a of allAnnotations) {
       try {
-        await fetch(`${API_BASE}/transcriptions/${transcriptionId}/annotations`, {
+        await fetch(`${API_BASE}/streams/${streamId}/annotations`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

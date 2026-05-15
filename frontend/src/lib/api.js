@@ -42,7 +42,7 @@ export const api = {
   },
   getUsageDetails: (days = 30) => _fetch(`/user/usage-details?days=${days}`),
 
-  // Transcriptions
+  // Streams
   createStreamSession: (body) => _fetch('/stream/process', { method: 'POST', body: JSON.stringify(body) }),
   updateStreamTranslation: (streamId, body) => _fetch(`/stream/${streamId}/translation`, { method: 'PUT', body: JSON.stringify(body || {}) }),
   updateStreamAnalysis: (streamId, body) => _fetch(`/stream/${streamId}/analysis`, { method: 'PUT', body: JSON.stringify(body || {}) }),
@@ -56,14 +56,14 @@ export const api = {
       body: sdpOffer,
     });
   },
-  listTranscriptions: (params = {}) => {
+  listStreams: (params = {}) => {
     const q = new URLSearchParams(params);
-    return _fetch(`/transcriptions?${q}`);
+    return _fetch(`/streams?${q}`);
   },
-  getTranscription: (id) => _fetch(`/transcriptions/${id}`),
-  deleteTranscription: (id) => _fetch(`/transcriptions/${id}`, { method: 'DELETE' }),
-  getSentences: (transcriptionId) => _fetch(`/transcriptions/${transcriptionId}/sentences`),
-  getTranscriptionAnalysis: (transcriptionId) => _fetch(`/transcriptions/${transcriptionId}/analysis`),
+  getStream: (id) => _fetch(`/streams/${id}`),
+  deleteStream: (id) => _fetch(`/streams/${id}`, { method: 'DELETE' }),
+  getSentences: (streamId) => _fetch(`/streams/${streamId}/sentences`),
+  getStreamAnalysis: (streamId) => _fetch(`/streams/${streamId}/analysis`),
 
   // Translations (history only)
   listTranslations: (params = {}) => {
@@ -82,8 +82,8 @@ export const api = {
   createCheckoutSession: (tier) => _fetch('/billing/create-checkout-session', { method: 'POST', body: JSON.stringify({ tier }) }),
 
   // Annotations
-  getAnnotations: (transcriptionId) => _fetch(`/transcriptions/${transcriptionId}/annotations`),
-  createAnnotation: (transcriptionId, body) => _fetch(`/transcriptions/${transcriptionId}/annotations`, { method: 'POST', body: JSON.stringify(body) }),
+  getAnnotations: (streamId) => _fetch(`/streams/${streamId}/annotations`),
+  createAnnotation: (streamId, body) => _fetch(`/streams/${streamId}/annotations`, { method: 'POST', body: JSON.stringify(body) }),
   updateAnnotation: (annotationId, body) => _fetch(`/annotations/${annotationId}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteAnnotation: (annotationId) => _fetch(`/annotations/${annotationId}`, { method: 'DELETE' }),
 };

@@ -23,8 +23,8 @@ def setup_routes(app):
     app.router.add_get('/api/v1/user/profile', get_user_profile)
     app.router.add_get('/api/v1/user/history', get_user_history)
     app.router.add_get('/api/v1/user/usage-details', get_usage_details)
-    app.router.add_get('/api/v1/transcriptions/{id}/sentences', get_transcription_sentences)
-    app.router.add_get('/api/v1/transcriptions/{id}/analysis', get_transcription_analysis)
+    app.router.add_get('/api/v1/streams/{id}/sentences', get_stream_sentences)
+    app.router.add_get('/api/v1/streams/{id}/analysis', get_stream_analysis)
 
 
 def _get_user_id(request):
@@ -222,8 +222,8 @@ async def get_user_history(request):
 
 
 @require_user_auth
-async def get_transcription_sentences(request):
-    """GET /api/v1/transcriptions/{id}/sentences
+async def get_stream_sentences(request):
+    """GET /api/v1/streams/{id}/sentences
 
     Return per-sentence rows for a transcription, ordered by sentence_index.
     Includes translation sentence rows grouped by target language.
@@ -232,24 +232,32 @@ async def get_transcription_sentences(request):
     if not user_id:
         return web.json_response({'error': 'Authentication required'}, status=401)
 
-    transcription_id = request.match_info.get('id')
-    if not transcription_id:
-        return web.json_response({'error': 'Transcription ID required'}, status=400)
+    stream_id = request.match_info.get('id')
+    if not stream_id:
+        return web.json_response({'error': 'Stream ID required'}, status=400)
 
     try:
-        # Verify ownership
         ownership = await (
-            supabase.table('transcriptions')
-            .select('id, stream_session_id')
-            .eq('id', transcription_id)
-            .eq('user_id', user_id)
+            supabase.table('stream_sessions')
+            .select('id, user_session_id')
+            .eq('id', stream_id)
             .execute()
         )
         if not ownership.data:
             return web.json_response({'error': 'Not found'}, status=404)
 
-        stream_session_id = ownership.data[0].get('stream_session_id')
-        if not stream_session_id:
+        parent_session_id = ownership.data[0].get('user_session_id')
+        parent_session = await (
+            supabase.table('user_sessions')
+            .select('id')
+            .eq('id', parent_session_id)
+            .eq('user_id', user_id)
+            .execute()
+        )
+        if not parent_session.data:
+            return web.json_response({'error': 'Not found'}, status=404)
+
+        if not stream_id:
             return web.json_response({
                 'sentences': [],
                 'translations_by_language': {},
@@ -258,7 +266,7 @@ async def get_transcription_sentences(request):
 
         result = await supabase.table('transcription_sentences') \
             .select('sentence_index, text, translated_text, timestamp') \
-            .eq('stream_session_id', stream_session_id) \
+            .eq('stream_session_id', stream_id) \
             .order('sentence_index') \
             .execute()
 
@@ -271,7 +279,7 @@ async def get_transcription_sentences(request):
             supabase.table('translations')
             .select('id, original_text, translated_text, target_language, sentence_index, created_at')
             .eq('user_id', user_id)
-            .eq('stream_session_id', stream_session_id)
+            .eq('stream_session_id', stream_id)
             .order('created_at')
             .execute()
         )
@@ -361,13 +369,13 @@ async def get_transcription_sentences(request):
             'translated_languages': sorted(list(translations_by_language.keys())),
         })
     except Exception as e:
-        logger.error(f"Error fetching transcription sentences: {e}")
+        logger.error(f"Error fetching stream sentences: {e}")
         return web.json_response({'error': str(e)}, status=500)
 
 
 @require_user_auth
-async def get_transcription_analysis(request):
-    """GET /api/v1/transcriptions/{id}/analysis
+async def get_stream_analysis(request):
+    """GET /api/v1/streams/{id}/analysis
 
     Return persisted analysis summaries for a transcription, newest first.
     """
@@ -375,30 +383,39 @@ async def get_transcription_analysis(request):
     if not user_id:
         return web.json_response({'error': 'Authentication required'}, status=401)
 
-    transcription_id = request.match_info.get('id')
-    if not transcription_id:
-        return web.json_response({'error': 'Transcription ID required'}, status=400)
+    stream_id = request.match_info.get('id')
+    if not stream_id:
+        return web.json_response({'error': 'Stream ID required'}, status=400)
 
     try:
         ownership = await (
-            supabase.table('transcriptions')
-            .select('id, stream_session_id')
-            .eq('id', transcription_id)
-            .eq('user_id', user_id)
+            supabase.table('stream_sessions')
+            .select('id, user_session_id')
+            .eq('id', stream_id)
             .execute()
         )
         if not ownership.data:
             return web.json_response({'error': 'Not found'}, status=404)
 
-        stream_session_id = ownership.data[0].get('stream_session_id')
-        if not stream_session_id:
+        parent_session_id = ownership.data[0].get('user_session_id')
+        parent_session = await (
+            supabase.table('user_sessions')
+            .select('id')
+            .eq('id', parent_session_id)
+            .eq('user_id', user_id)
+            .execute()
+        )
+        if not parent_session.data:
+            return web.json_response({'error': 'Not found'}, status=404)
+
+        if not stream_id:
             return web.json_response({'analysis': [], 'count': 0})
 
         result = await (
             supabase.table('stream_analysis')
             .select('id, analysis_mode, summary_text, timestamp_ms, source_event_type, created_at')
             .eq('user_id', user_id)
-            .eq('stream_session_id', stream_session_id)
+            .eq('stream_session_id', stream_id)
             .order('created_at', desc=True)
             .execute()
         )
@@ -408,7 +425,7 @@ async def get_transcription_analysis(request):
             'count': len(result.data or []),
         })
     except Exception as e:
-        logger.error(f"Error fetching transcription analysis: {e}")
+        logger.error(f"Error fetching stream analysis: {e}")
         return web.json_response({'error': str(e)}, status=500)
 
 

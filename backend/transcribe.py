@@ -8,12 +8,11 @@ import asyncio
 import aiohttp
 import aiohttp.web as web
 import logging
-import time
 import uuid
 import json
 from typing import Any, Awaitable, Callable, Optional
 
-from auth import no_auth, require_user_auth, track_usage
+from auth import require_user_auth, track_usage
 from payments.payment_strategy import x402_or_subscription
 from supabase_client import async_supabase as supabase
 from compute_providers.provider_manager import ComputeProviderManager
@@ -66,12 +65,9 @@ def setup_routes(app):
     app.router.add_put('/api/v1/stream/{stream_id}/translation', update_stream_translation)
     app.router.add_put('/api/v1/stream/{stream_id}/analysis', update_stream_analysis)
     app.router.add_post('/api/v1/stream/{stream_id}/whip', whip_proxy)
-    app.router.add_get('/api/v1/transcriptions', list_transcriptions)
-    app.router.add_get('/api/v1/transcriptions/{id}', get_transcription)
-    app.router.add_delete('/api/v1/transcriptions/{id}', delete_transcription)
-    
-    # Health check
-    app.router.add_get('/api/v1/transcribe/health', transcribe_health_check)
+    app.router.add_get('/api/v1/streams', list_streams)
+    app.router.add_get('/api/v1/streams/{id}', get_stream)
+    app.router.add_delete('/api/v1/streams/{id}', delete_stream)
 
 # ============================================================================
 # HELPER: Get current user_id from request
@@ -611,13 +607,98 @@ async def whip_proxy(request):
 
 
 # ============================================================================
-# LIST / GET / DELETE TRANSCRIPTIONS (user-scoped)
+# LIST / GET / DELETE STREAMS (user-scoped)
 # ============================================================================
 
+async def _get_user_session_ids(user_id: str) -> list[str]:
+    result = await supabase.table('user_sessions').select('id').eq('user_id', user_id).execute()
+    return [str(row.get('id')) for row in (result.data or []) if row.get('id')]
+
+
+async def _build_stream_items(user_id: str, stream_rows: list[dict]) -> list[dict]:
+    stream_ids = [str(row.get('id')) for row in stream_rows if row.get('id')]
+    if not stream_ids:
+        return []
+
+    transcriptions_result = await (
+        supabase.table('transcriptions')
+        .select('*')
+        .eq('user_id', user_id)
+        .in_('stream_session_id', stream_ids)
+        .execute()
+    )
+    transcription_by_stream: dict[str, dict] = {
+        str(row.get('stream_session_id')): row
+        for row in (transcriptions_result.data or [])
+        if row.get('stream_session_id')
+    }
+
+    translations_result = await (
+        supabase.table('translations')
+        .select('stream_session_id, target_language')
+        .eq('user_id', user_id)
+        .in_('stream_session_id', stream_ids)
+        .execute()
+    )
+    translated_languages_by_stream: dict[str, set[str]] = {}
+    for row in (translations_result.data or []):
+        stream_id = row.get('stream_session_id')
+        lang = row.get('target_language')
+        if not stream_id or not lang:
+            continue
+        translated_languages_by_stream.setdefault(str(stream_id), set()).add(lang)
+
+    analysis_result = await (
+        supabase.table('stream_analysis')
+        .select('stream_session_id, analysis_mode, created_at')
+        .eq('user_id', user_id)
+        .in_('stream_session_id', stream_ids)
+        .order('created_at', desc=True)
+        .execute()
+    )
+    latest_analysis_by_stream: dict[str, dict] = {}
+    for row in (analysis_result.data or []):
+        stream_id = row.get('stream_session_id')
+        if not stream_id:
+            continue
+        key = str(stream_id)
+        if key not in latest_analysis_by_stream:
+            latest_analysis_by_stream[key] = row
+
+    items: list[dict] = []
+    for stream_row in stream_rows:
+        stream_id = str(stream_row.get('id'))
+        transcription = transcription_by_stream.get(stream_id, {})
+        analysis = latest_analysis_by_stream.get(stream_id)
+
+        items.append({
+            'id': stream_id,
+            '_type': 'stream',
+            'stream_id': stream_id,
+            'stream_session_id': stream_id,
+            'session_id': stream_row.get('user_session_id'),
+            'status': stream_row.get('status'),
+            'created_at': stream_row.get('created_at'),
+            'updated_at': stream_row.get('updated_at'),
+            'language': transcription.get('language') or stream_row.get('language'),
+            'source_language': transcription.get('language') or stream_row.get('language'),
+            'text': transcription.get('text') or stream_row.get('final_text') or '',
+            'duration': transcription.get('duration') or 0,
+            'word_count': transcription.get('word_count') or 0,
+            'total_audio_bytes': stream_row.get('total_audio_bytes') or 0,
+            'transcription_id': transcription.get('id'),
+            'translated_languages': sorted(list(translated_languages_by_stream.get(stream_id, set()))),
+            'has_analysis': bool(analysis),
+            'analysis_mode': analysis.get('analysis_mode') if analysis else None,
+        })
+
+    return items
+
+
 @require_user_auth
-async def list_transcriptions(request):
-    """List transcriptions for the authenticated user."""
-    logger.info("Received list transcriptions request")
+async def list_streams(request):
+    """List stream sessions for the authenticated user."""
+    logger.info("Received list streams request")
 
     user_id = _get_user_id(request)
     if not user_id:
@@ -626,115 +707,108 @@ async def list_transcriptions(request):
     try:
         limit = int(request.query.get('limit', '100'))
         offset = int(request.query.get('offset', '0'))
-        source_type = request.query.get('source_type')
 
-        query = supabase.table('transcriptions').select('*').eq('user_id', user_id)
-        if source_type:
-            query = query.eq('source_type', source_type)
-        result = await query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+        session_ids = await _get_user_session_ids(user_id)
+        if not session_ids:
+            return web.json_response({"streams": [], "count": 0, "limit": limit, "offset": offset})
+
+        stream_result = await (
+            supabase.table('stream_sessions')
+            .select('*')
+            .in_('user_session_id', session_ids)
+            .order('created_at', desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        streams = stream_result.data or []
+        items = await _build_stream_items(user_id, streams)
 
         return web.json_response({
-            "transcriptions": result.data if hasattr(result, 'data') else result,
-            "count": len(result.data) if hasattr(result, 'data') else 0,
-            "limit": limit,
-            "offset": offset
+            'streams': items,
+            'count': len(items),
+            'limit': limit,
+            'offset': offset,
         })
-
     except Exception as e:
-        logger.error(f"Error listing transcriptions: {e}")
+        logger.error(f"Error listing streams: {e}")
         return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
 @require_user_auth
-async def get_transcription(request):
-    """Get a specific transcription by ID (user must own it)."""
-    logger.info("Received get transcription request")
+async def get_stream(request):
+    """Get a specific stream by ID (user must own it)."""
+    logger.info("Received get stream request")
 
     user_id = _get_user_id(request)
     if not user_id:
         return web.json_response({"error": "Authentication required"}, status=401)
 
     try:
-        transcription_id = request.match_info.get('id')
-        if not transcription_id:
-            return web.json_response({"error": "Missing transcription ID"}, status=400)
+        stream_id = request.match_info.get('id')
+        if not stream_id:
+            return web.json_response({"error": "Missing stream ID"}, status=400)
 
-        result = await supabase.table('transcriptions').select('*').eq('id', transcription_id).eq('user_id', user_id).execute()
+        session_ids = await _get_user_session_ids(user_id)
+        if not session_ids:
+            return web.json_response({"error": "Stream not found"}, status=404)
 
-        if not result.data:
-            return web.json_response({"error": "Transcription not found"}, status=404)
+        stream_result = await (
+            supabase.table('stream_sessions')
+            .select('*')
+            .eq('id', stream_id)
+            .in_('user_session_id', session_ids)
+            .limit(1)
+            .execute()
+        )
+        if not stream_result.data:
+            return web.json_response({"error": "Stream not found"}, status=404)
 
-        return web.json_response(result.data[0])
-
+        stream_item = (await _build_stream_items(user_id, [stream_result.data[0]]))[0]
+        return web.json_response(stream_item)
     except Exception as e:
-        logger.error(f"Error getting transcription: {e}")
+        logger.error(f"Error getting stream: {e}")
         return web.json_response({"error": str(e), "status": "error"}, status=500)
 
 
 @require_user_auth
-async def delete_transcription(request):
-    """Delete a transcription by ID (user must own it)."""
-    logger.info("Received delete transcription request")
+async def delete_stream(request):
+    """Delete a stream by ID (user must own it)."""
+    logger.info("Received delete stream request")
 
     user_id = _get_user_id(request)
     if not user_id:
         return web.json_response({"error": "Authentication required"}, status=401)
 
     try:
-        transcription_id = request.match_info.get('id')
-        if not transcription_id:
-            return web.json_response({"error": "Missing transcription ID"}, status=400)
+        stream_id = request.match_info.get('id')
+        if not stream_id:
+            return web.json_response({"error": "Missing stream ID"}, status=400)
 
-        result = await supabase.table('transcriptions').delete().eq('id', transcription_id).eq('user_id', user_id).execute()
+        session_ids = await _get_user_session_ids(user_id)
+        if not session_ids:
+            return web.json_response({"error": "Stream not found"}, status=404)
 
-        if not result.data:
-            return web.json_response({"error": "Transcription not found"}, status=404)
+        stream_lookup = await (
+            supabase.table('stream_sessions')
+            .select('id')
+            .eq('id', stream_id)
+            .in_('user_session_id', session_ids)
+            .limit(1)
+            .execute()
+        )
+        if not stream_lookup.data:
+            return web.json_response({"error": "Stream not found"}, status=404)
 
-        return web.json_response({
-            "message": "Transcription deleted successfully",
-            "transcription_id": transcription_id
-        })
-
-    except Exception as e:
-        logger.error(f"Error deleting transcription: {e}")
-        return web.json_response({"error": str(e), "status": "error"}, status=500)
-
-
-@no_auth
-async def transcribe_health_check(request):
-    """Health check for transcription service."""
-    logger.info("Received transcription health check request")
-
-    try:
-        provider_health = {}
-        for name in compute_provider_manager.list_providers():
-            provider = compute_provider_manager.get_provider(name)
-            if provider:
-                provider_health[name] = {
-                    "status": "healthy" if provider.enabled else "disabled",
-                    "provider": name
-                }
-            else:
-                provider_health[name] = {"status": "unknown", "provider": name}
-
-        supabase_status = "unknown"
-        try:
-            if supabase:
-                await supabase.table('agents').select('id').limit(1).execute()
-                supabase_status = "ok"
-            else:
-                supabase_status = "error: client not initialized"
-        except Exception as e:
-            supabase_status = f"error: {str(e)}"
+        # Explicit cleanup for transcription headers since transcriptions.stream_session_id
+        # may be nullable after stream deletion depending on DB FK mode.
+        await supabase.table('transcriptions').delete().eq('user_id', user_id).eq('stream_session_id', stream_id).execute()
+        await supabase.table('stream_sessions').delete().eq('id', stream_id).in_('user_session_id', session_ids).execute()
 
         return web.json_response({
-            "status": "ok",
-            "service": "transcription",
-            "compute_providers": provider_health,
-            "supabase": supabase_status,
-            "timestamp": int(time.time())
+            'message': 'Stream deleted successfully',
+            'stream_id': stream_id,
         })
-
     except Exception as e:
-        logger.error(f"Error in transcription health check: {e}")
+        logger.error(f"Error deleting stream: {e}")
         return web.json_response({"error": str(e), "status": "error"}, status=500)
+

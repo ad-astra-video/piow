@@ -6,6 +6,7 @@ CRUD endpoints for notes and todos attached to individual transcription sentence
 
 import logging
 import uuid
+from typing import Optional
 from aiohttp import web
 
 from auth import require_user_auth
@@ -16,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 def setup_routes(app):
     """Setup annotation-related routes."""
-    app.router.add_get('/api/v1/transcriptions/{id}/annotations', list_annotations)
-    app.router.add_post('/api/v1/transcriptions/{id}/annotations', create_annotation)
+    app.router.add_get('/api/v1/streams/{id}/annotations', list_annotations)
+    app.router.add_post('/api/v1/streams/{id}/annotations', create_annotation)
     app.router.add_put('/api/v1/annotations/{annotation_id}', update_annotation)
     app.router.add_delete('/api/v1/annotations/{annotation_id}', delete_annotation)
 
@@ -40,6 +41,25 @@ async def _verify_transcription_ownership(transcription_id: str, user_id: str) -
         return False
 
 
+async def _resolve_transcription_for_stream(stream_id: str, user_id: str) -> Optional[str]:
+    """Resolve a user's transcription header row for a stream session."""
+    try:
+        result = (
+            await supabase.table('transcriptions')
+            .select('id')
+            .eq('stream_session_id', stream_id)
+            .eq('user_id', user_id)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            return None
+        return result.data[0].get('id')
+    except Exception as e:
+        logger.warning(f"Failed to resolve transcription for stream {stream_id}: {e}")
+        return None
+
+
 async def _verify_annotation_ownership(annotation_id: str, user_id: str) -> bool:
     """Return True if the annotation's transcription belongs to the user."""
     try:
@@ -55,7 +75,7 @@ async def _verify_annotation_ownership(annotation_id: str, user_id: str) -> bool
 
 @require_user_auth
 async def list_annotations(request):
-    """GET /api/v1/transcriptions/{id}/annotations
+    """GET /api/v1/streams/{id}/annotations
 
     List all annotations for a transcription.
     """
@@ -63,11 +83,12 @@ async def list_annotations(request):
     if not user_id:
         return web.json_response({'error': 'Authentication required'}, status=401)
 
-    transcription_id = request.match_info.get('id')
-    if not transcription_id:
-        return web.json_response({'error': 'Missing transcription ID'}, status=400)
+    stream_id = request.match_info.get('id')
+    if not stream_id:
+        return web.json_response({'error': 'Missing stream ID'}, status=400)
 
-    if not await _verify_transcription_ownership(transcription_id, user_id):
+    transcription_id = await _resolve_transcription_for_stream(stream_id, user_id)
+    if not transcription_id:
         return web.json_response({'error': 'Transcription not found or access denied'}, status=404)
 
     try:
@@ -81,7 +102,7 @@ async def list_annotations(request):
 
 @require_user_auth
 async def create_annotation(request):
-    """POST /api/v1/transcriptions/{id}/annotations
+    """POST /api/v1/streams/{id}/annotations
 
     Create a new annotation for a sentence.
     Request body:
@@ -96,11 +117,12 @@ async def create_annotation(request):
     if not user_id:
         return web.json_response({'error': 'Authentication required'}, status=401)
 
-    transcription_id = request.match_info.get('id')
-    if not transcription_id:
-        return web.json_response({'error': 'Missing transcription ID'}, status=400)
+    stream_id = request.match_info.get('id')
+    if not stream_id:
+        return web.json_response({'error': 'Missing stream ID'}, status=400)
 
-    if not await _verify_transcription_ownership(transcription_id, user_id):
+    transcription_id = await _resolve_transcription_for_stream(stream_id, user_id)
+    if not transcription_id:
         return web.json_response({'error': 'Transcription not found or access denied'}, status=404)
 
     try:

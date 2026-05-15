@@ -40,7 +40,8 @@ export default function HistoryPage() {
     let annotationsByIndex = {};
     if (item._type === 'transcription' && item.id && (format === 'md' || format === 'notes-md' || format === 'annotations')) {
       try {
-        const res = await api.getAnnotations(item.id);
+        const streamId = item.stream_session_id || item.stream_id || item.id;
+        const res = await api.getAnnotations(streamId);
         annotationsByIndex = (res.annotations || []).reduce((acc, a) => {
           acc[a.sentence_index] = acc[a.sentence_index] || [];
           acc[a.sentence_index].push(a);
@@ -56,7 +57,8 @@ export default function HistoryPage() {
   const handleDelete = async (item) => {
     if (!confirm('Delete this item?')) return;
     try {
-      await api.deleteTranscription(item.id);
+      const streamId = item.stream_session_id || item.stream_id || item.id;
+      await api.deleteStream(streamId);
       load();
     } catch (e) {
       alert('Failed to delete: ' + e.message);
@@ -74,9 +76,11 @@ export default function HistoryPage() {
     setModalAnalysisError('');
     setModalAnalysisLoading(true);
 
+    const streamId = item.stream_session_id || item.stream_id || item.id;
+
     const [sentencesResult, analysisResult] = await Promise.allSettled([
-      api.getSentences(item.id),
-      api.getTranscriptionAnalysis(item.id),
+      api.getSentences(streamId),
+      api.getStreamAnalysis(streamId),
     ]);
 
     if (sentencesResult.status === 'fulfilled') {
@@ -360,7 +364,7 @@ export default function HistoryPage() {
                 ))}
               </div>
               <SentenceList
-                transcriptionId={modalItem.id}
+                transcriptionId={modalItem.stream_session_id || modalItem.stream_id || modalItem.id}
                 sentences={getModalSentencesForLanguage()}
                 readOnly={!showModalTranscript}
               />

@@ -86,8 +86,21 @@ class VLLMRealtimeClient:
         self._transcription_completed = asyncio.Event()
         self._connect_time: float = 0.0
 
-    async def connect(self, max_retries=30, retry_delay=5):
-        """Connect to VLLM WebSocket endpoint with retry logic."""
+    async def connect(self, max_retries: Optional[int] = None, retry_delay: Optional[float] = None):
+        """Connect to VLLM WebSocket endpoint with retry logic.
+
+        Defaults stay production-safe, but are shortened automatically under pytest
+        to keep failing connection tests from taking minutes.
+        """
+        if max_retries is None:
+            max_retries = int(os.environ.get("VLLM_CONNECT_MAX_RETRIES", "30"))
+        if retry_delay is None:
+            retry_delay = float(os.environ.get("VLLM_CONNECT_RETRY_DELAY_SECONDS", "5"))
+
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            max_retries = int(os.environ.get("VLLM_TEST_CONNECT_MAX_RETRIES", str(min(max_retries, 2))))
+            retry_delay = float(os.environ.get("VLLM_TEST_CONNECT_RETRY_DELAY_SECONDS", "0.01"))
+
         self._closing = False
         for attempt in range(max_retries):
             if self._closing:
@@ -95,7 +108,11 @@ class VLLMRealtimeClient:
                 return
 
             try:
-                self.websocket = await websockets.connect(self.ws_url, additional_headers={})
+                maybe_websocket = websockets.connect(self.ws_url, additional_headers={})
+                if inspect.isawaitable(maybe_websocket):
+                    self.websocket = await maybe_websocket
+                else:
+                    self.websocket = maybe_websocket
                 self.is_connected = True
                 self._connect_time = time.monotonic()
                 logger.info(f"Connected to VLLM at {self.ws_url}")
@@ -140,8 +157,9 @@ class VLLMRealtimeClient:
                     logger.warning(f"Failed to connect to VLLM (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
                     await asyncio.sleep(retry_delay)
                 else:
-                    logger.error(f"Failed to connect to VLLM after {max_retries} attempts: {e}")
-                    raise
+                    message = f"Failed to connect to VLLM after {max_retries} attempts: {e}"
+                    logger.error(message)
+                    raise RuntimeError(message) from e
 
     async def send_audio(self, audio_data: bytes, commit: bool = False) -> None:
         """

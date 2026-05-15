@@ -68,7 +68,7 @@ The system utilizes a **multi-provider compute architecture** 🔄 where compute
 | Compute routing | Single `GPU_RUNNER_URL` | Multi-provider `ComputeProviderManager` with scoring | 🔄 |
 | Streaming data flow | Frontend → SSE `data_url` directly | Frontend → WebSocket `/ws` → `SSERelay` → Provider SSE | 🔄 |
 | WHIP connection | Frontend → Provider WHIP directly | Frontend → Backend WHIP proxy → Provider WHIP | 🔄 |
-| API paths | `/api/v1/stream/process`, `/api/v1/transcriptions`, `/api/v1/languages` | `/api/v1/stream/process`, `/api/v1/transcriptions`, `/api/v1/languages` | ✅ |
+| API paths | `/api/v1/stream/process`, `/api/v1/streams`, `/api/v1/languages` | `/api/v1/stream/process`, `/api/v1/streams`, `/api/v1/languages` | ✅ |
 | Agent auth | OAuth 2.0 + x402 wallet | HMAC-SHA256 with API key/secret | 🔄 |
 | User auth | Custom SIWE + Supabase | Supabase Auth (JWT) with Web3/SIWE provider | 🔄 |
 | Session storage | `stream_sessions` DB table | Database-backed `SessionStore` with write-through cache | ✅ |
@@ -429,10 +429,9 @@ flowchart TB
 |--------|----------|------|-------------|--------|
 | POST | `/api/v1/stream/process` | Any | Create streaming transcription session | ✅ |
 | POST | `/api/v1/stream/{stream_id}/whip` | Any | WHIP SDP proxy for WebRTC | ✅ |
-| GET | `/api/v1/transcriptions` | Any | List user transcriptions | ✅ |
-| GET | `/api/v1/transcriptions/{id}` | Any | Get transcription by ID | ✅ |
-| DELETE | `/api/v1/transcriptions/{id}` | Any | Delete transcription | ✅ |
-| GET | `/api/v1/transcribe/health` | Any | Transcription service health check | ✅ |
+| GET | `/api/v1/streams` | Any | List user streams | ✅ |
+| GET | `/api/v1/streams/{id}` | Any | Get stream by ID | ✅ |
+| DELETE | `/api/v1/streams/{id}` | Any | Delete stream | ✅ |
 
 ### Translation Endpoints ⚠️
 

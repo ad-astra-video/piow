@@ -171,9 +171,9 @@ While agent management is under `/api/v1/agents/`, the core transcription and tr
 | Method | Endpoint | Description | Payment Required |
 |--------|----------|-------------|------------------|
 | POST | `/api/v1/stream/process` | Start real-time transcription streaming | 🔒 Subscription only |
-| GET | `/api/v1/transcriptions` | List user's transcriptions | 🔒 Subscription only |
-| GET | `/api/v1/transcriptions/{id}` | Get transcription by ID | 🔒 Subscription only |
-| DELETE | `/api/v1/transcriptions/{id}` | Delete subscription | 🔒 Subscription only |
+| GET | `/api/v1/streams` | List user's streams | 🔒 Subscription only |
+| GET | `/api/v1/streams/{id}` | Get stream by ID | 🔒 Subscription only |
+| DELETE | `/api/v1/streams/{id}` | Delete stream | 🔒 Subscription only |
 | GET | `/api/v1/languages` | Get supported languages | ❌ No payment needed |
 
 ### Payment Methods Explained
@@ -288,7 +288,6 @@ When you receive a 429 response:
 - **Track Usage:** Periodically call `/api/v1/agents/me/usage` to monitor consumption
 - **Set Alerts:** Create alerts when approaching subscription limits
 - **Log Metadata:** Log request IDs, timestamps, and outcome (but never secrets)
-- **Health Checks:** Use `/api/v1/transcribe/health` to check service availability
 - **Distributed Tracing:** Add trace IDs to requests if your system supports it
 
 ### Error Recovery

@@ -34,7 +34,7 @@ export interface TranslationResult {
 }
 
 export interface TranscriptionListResponse {
-  transcriptions: Array<{
+  streams: Array<{
     id: string;
     text: string;
     language: string;
@@ -140,7 +140,7 @@ export class AgentClient {
     format?: 'txt' | 'json' | 'srt' | 'vtt';
     streaming?: boolean;
   }): Promise<TranscriptionResult> {
-    const response = await this.axiosInstance.post('/api/v1/transcribe', params);
+    const response = await this.axiosInstance.post('/api/v1/stream/process', params);
     return response.data;
   }
 
@@ -167,7 +167,7 @@ export class AgentClient {
    * Get transcription by ID
    */
   async getTranscription(id: string): Promise<TranscriptionResult> {
-    const response = await this.axiosInstance.get(`/api/v1/transcriptions/${id}`);
+    const response = await this.axiosInstance.get(`/api/v1/streams/${id}`);
     return response.data;
   }
 
@@ -179,7 +179,7 @@ export class AgentClient {
     offset?: number;
     language?: string;
   } = {}): Promise<TranscriptionListResponse> {
-    const response = await this.axiosInstance.get('/api/v1/transcriptions', { params });
+    const response = await this.axiosInstance.get('/api/v1/streams', { params });
     return response.data;
   }
 
@@ -187,7 +187,7 @@ export class AgentClient {
    * Delete a transcription
    */
   async deleteTranscription(id: string): Promise<void> {
-    await this.axiosInstance.delete(`/api/v1/transcriptions/${id}`);
+    await this.axiosInstance.delete(`/api/v1/streams/${id}`);
   }
 
   /**

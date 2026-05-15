@@ -148,9 +148,9 @@ live-transcription-app/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/v1/stream/process` | Real-time streaming transcription |
-| GET | `/api/v1/transcriptions` | List user transcriptions |
-| GET | `/api/v1/transcriptions/:id` | Get transcription by ID |
-| DELETE | `/api/v1/transcriptions/:id` | Delete transcription |
+| GET | `/api/v1/streams` | List user streams |
+| GET | `/api/v1/streams/:id` | Get stream by ID |
+| DELETE | `/api/v1/streams/:id` | Delete stream |
 
 ### Secondary: Translation
 

@@ -599,7 +599,7 @@ class TestRecordUsage(unittest.TestCase):
             'agent': None,
             'user': mock_user,
         }.get(k, d)
-        request.path = '/api/v1/transcriptions'
+        request.path = '/api/v1/streams'
         request.method = 'POST'
         request.headers.get.return_value = 'Mozilla/5.0'
 

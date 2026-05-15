@@ -46,9 +46,11 @@ class TestVLLMRealtimeClient(unittest.TestCase):
         # Test invalid ws_url
         with self.assertRaises(ValueError):
             VLLMRealtimeClient(ws_url="", source_lang="en", target_lang="es")
-        
-        with self.assertRaises(ValueError):
-            VLLMRealtimeClient(ws_url=None, source_lang="en", target_lang="es")
+
+        # None is valid and falls back to env/default URL
+        client = VLLMRealtimeClient(ws_url=None, source_lang="en", target_lang="es")
+        self.assertIsInstance(client.ws_url, str)
+        self.assertTrue(client.ws_url)
             
         # Test invalid source_lang
         with self.assertRaises(ValueError):
@@ -124,18 +126,36 @@ class TestVLLMRealtimeClient(unittest.TestCase):
         
         # Check that session.update was sent with correct model
         calls = mock_websocket.send.call_args_list
-        session_update_sent = any(
-            '"type":"session.update"' in str(call) and 
-            '"model":"mistralai/Voxtral-Mini-4B-Realtime-2602"' in str(call)
-            for call in calls
-        )
+        session_update_sent = False
+        for call in calls:
+            payload = call.args[0]
+            if not isinstance(payload, str):
+                continue
+            try:
+                event = json.loads(payload)
+            except Exception:
+                continue
+            if (
+                event.get("type") == "session.update"
+                and event.get("model") == "mistralai/Voxtral-Mini-4B-Realtime-2602"
+            ):
+                session_update_sent = True
+                break
         self.assertTrue(session_update_sent)
         
         # Check that initial commit was sent
-        initial_commit_sent = any(
-            '"type":"input_audio_buffer.commit"' in str(call)
-            for call in calls
-        )
+        initial_commit_sent = False
+        for call in calls:
+            payload = call.args[0]
+            if not isinstance(payload, str):
+                continue
+            try:
+                event = json.loads(payload)
+            except Exception:
+                continue
+            if event.get("type") == "input_audio_buffer.commit":
+                initial_commit_sent = True
+                break
         self.assertTrue(initial_commit_sent)
     
     @patch('vllm_client.websockets.connect')

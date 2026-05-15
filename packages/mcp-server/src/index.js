@@ -159,23 +159,23 @@ server.addTool('transcribe_stream', {
   }
 });
 
-// MCP Tool: get_transcription
-server.addTool('get_transcription', {
-  description: 'Get transcription by ID',
+// MCP Tool: get_stream
+server.addTool('get_stream', {
+  description: 'Get stream by ID',
   parameters: {
     type: 'object',
     properties: {
-      transcription_id: {
+      stream_id: {
         type: 'string',
-        description: 'ID of the transcription to retrieve'
+        description: 'ID of the stream to retrieve'
       }
     },
-    required: ['transcription_id']
+    required: ['stream_id']
   },
   handler: async (params) => {
     try {
       const result = await backendRequest(
-        `/api/v1/transcriptions/${params.transcription_id}`
+        `/api/v1/streams/${params.stream_id}`
       );
       
       return {
@@ -200,15 +200,15 @@ server.addTool('get_transcription', {
   }
 });
 
-// MCP Tool: list_transcriptions
-server.addTool('list_transcriptions', {
-  description: 'List user transcriptions',
+// MCP Tool: list_streams
+server.addTool('list_streams', {
+  description: 'List user streams',
   parameters: {
     type: 'object',
     properties: {
       limit: {
         type: 'integer',
-        description: 'Maximum number of transcriptions to return',
+        description: 'Maximum number of streams to return',
         default: 10
       },
       offset: {
@@ -229,7 +229,7 @@ server.addTool('list_transcriptions', {
       if (params.offset) queryParams.append('offset', params.offset.toString());
       if (params.language) queryParams.append('language', params.language);
       
-      const endpoint = `/api/v1/transcriptions?${queryParams.toString()}`;
+      const endpoint = `/api/v1/streams?${queryParams.toString()}`;
       const result = await backendRequest(endpoint);
       
       return {
