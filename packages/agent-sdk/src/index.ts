@@ -160,8 +160,7 @@ export class AgentClient {
     source_lang: string;
     target_lang: string;
   }): Promise<TranslationResult> {
-    const response = await this.axiosInstance.post('/api/v1/translate', params);
-    return response.data;
+    throw new Error('Translate action endpoint is not wired in the current frontend-facing API.');
   }
 
   /**

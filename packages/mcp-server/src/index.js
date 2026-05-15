@@ -73,9 +73,7 @@ server.addTool('transcribe', {
   },
   handler: async (params) => {
     try {
-      const endpoint = params.streaming 
-        ? '/api/v1/stream/process' 
-        : '/api/v1/transcribe';
+      const endpoint = '/api/v1/stream/process';
       
       const result = await backendRequest(endpoint, 'POST', {
         audio_url: params.audio_url,
@@ -233,110 +231,6 @@ server.addTool('list_transcriptions', {
       
       const endpoint = `/api/v1/transcriptions?${queryParams.toString()}`;
       const result = await backendRequest(endpoint);
-      
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2)
-          }
-        ]
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error: ${error.message}`
-          }
-        ],
-        isError: true
-      };
-    }
-  }
-});
-
-// MCP Tool: translate
-server.addTool('translate', {
-  description: 'Translate text from one language to another',
-  parameters: {
-    type: 'object',
-    properties: {
-      text: {
-        type: 'string',
-        description: 'Text to translate'
-      },
-      source_lang: {
-        type: 'string',
-        description: 'Source language code (e.g., "en")',
-        default: 'en'
-      },
-      target_lang: {
-        type: 'string',
-        description: 'Target language code (e.g., "es", "fr", "de")',
-        required: true
-      }
-    },
-    required: ['text', 'target_lang']
-  },
-  handler: async (params) => {
-    try {
-      const result = await backendRequest('/api/v1/translate', 'POST', {
-        text: params.text,
-        source_lang: params.source_lang,
-        target_lang: params.target_lang
-      });
-      
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2)
-          }
-        ]
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error: ${error.message}`
-          }
-        ],
-        isError: true
-      };
-    }
-  }
-});
-
-// MCP Tool: translate_transcription
-server.addTool('translate_transcription', {
-  description: 'Translate an existing transcription',
-  parameters: {
-    type: 'object',
-    properties: {
-      transcription_id: {
-        type: 'string',
-        description: 'ID of the transcription to translate'
-      },
-      target_lang: {
-        type: 'string',
-        description: 'Target language code (e.g., "es", "fr", "de")',
-        required: true
-      }
-    },
-    required: ['transcription_id', 'target_lang']
-  },
-  handler: async (params) => {
-    try {
-      const result = await backendRequest(
-        `/api/v1/translate/transcription`,
-        'POST',
-        {
-          transcription_id: params.transcription_id,
-          target_lang: params.target_lang
-        }
-      );
       
       return {
         content: [

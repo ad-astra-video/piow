@@ -147,7 +147,6 @@ live-transcription-app/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/transcribe` | Transcribe audio/video |
 | POST | `/api/v1/stream/process` | Real-time streaming transcription |
 | GET | `/api/v1/transcriptions` | List user transcriptions |
 | GET | `/api/v1/transcriptions/:id` | Get transcription by ID |
@@ -157,8 +156,6 @@ live-transcription-app/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/translate` | Translate text |
-| POST | `/api/v1/translate/transcription` | Translate transcription |
 | GET | `/api/v1/languages` | Get supported languages |
 
 ### Agent API

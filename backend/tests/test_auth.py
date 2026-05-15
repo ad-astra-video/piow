@@ -178,7 +178,7 @@ class TestVerifyAgentRequest(unittest.TestCase):
             'X-Signature': 'some-signature',
         }.get(h)
         request.method = 'GET'
-        request.path = '/api/v1/transcribe/file'
+        request.path = '/api/v1/stream/process'
 
         verified, result = verify_agent_request(request)
         self.assertFalse(verified)
@@ -573,7 +573,7 @@ class TestRecordUsage(unittest.TestCase):
             'agent': {'id': 'agent-1', 'agent_name': 'test-agent'},
             'user': None,
         }.get(k, d)
-        request.path = '/api/v1/transcribe/file'
+        request.path = '/api/v1/stream/process'
         request.method = 'POST'
         request.headers.get.return_value = 'test-agent/1.0'
 
@@ -585,7 +585,7 @@ class TestRecordUsage(unittest.TestCase):
         mock_supabase.table.return_value.insert.assert_called_once()
         call_args = mock_supabase.table.return_value.insert.call_args[0][0]
         self.assertEqual(call_args['agent_id'], 'agent-1')
-        self.assertEqual(call_args['endpoint'], '/api/v1/transcribe/file')
+        self.assertEqual(call_args['endpoint'], '/api/v1/stream/process')
         self.assertEqual(call_args['method'], 'POST')
         self.assertTrue(call_args['success'])
 
@@ -599,7 +599,7 @@ class TestRecordUsage(unittest.TestCase):
             'agent': None,
             'user': mock_user,
         }.get(k, d)
-        request.path = '/api/v1/translate/text'
+        request.path = '/api/v1/transcriptions'
         request.method = 'POST'
         request.headers.get.return_value = 'Mozilla/5.0'
 

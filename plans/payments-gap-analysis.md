@@ -100,12 +100,8 @@ Each requirement from the following sources was traced to implementation:
 
 | Endpoint | Method | Auth | Payment | Status |
 |----------|--------|------|---------|--------|
-| `/api/v1/transcribe/file` | POST | ✅ | ✅ `@x402_or_subscription('transcribe_cpu')` | ✅ |
-| `/api/v1/transcribe/url` | POST | ✅ | ✅ `@x402_or_subscription('transcribe_cpu')` | ✅ |
-| `/api/v1/transcribe/stream` | POST | ✅ | ✅ `@x402_or_subscription('transcribe_gpu')` | ✅ |
-| `/api/v1/transcribe/whip` | POST | ✅ | ✅ `@x402_or_subscription('transcribe_gpu')` | ✅ **WAS MISSING** |
-| `/api/v1/translate/text` | POST | ✅ | ✅ `@x402_or_subscription('translate')` | ✅ |
-| `/api/v1/translate/transcription` | POST | ✅ | ✅ `@x402_or_subscription('translate')` | ✅ |
+| `/api/v1/stream/process` | POST | ✅ | ✅ `@x402_or_subscription('transcribe_gpu')` | ✅ |
+| `/api/v1/stream/{stream_id}/whip` | POST | ✅ | ✅ `@x402_or_subscription('transcribe_gpu')` | ✅ |
 | `/api/v1/billing/create-checkout-session` | POST | ✅ user | N/A | ✅ New |
 | `/api/v1/billing/subscription` | GET | ✅ user | N/A | ✅ New |
 | `/api/v1/billing/cancel` | POST | ✅ user | N/A | ✅ New |

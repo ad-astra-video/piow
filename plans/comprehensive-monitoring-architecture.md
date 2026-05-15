@@ -598,7 +598,7 @@ def get_partition_key(event_type: str, event_data: dict) -> str:
       "job_id": "uuid",
       "stream_id": "uuid",
       "user_id": "string",
-      "request_path": "/api/v1/transcribe/file"
+      "request_path": "/api/v1/stream/process"
     }
   }
 }
@@ -1403,7 +1403,7 @@ async def shutdown_event():
     await vllm_client.close()
 
 
-@app.post("/api/v1/transcribe/file")
+@app.post("/api/v1/stream/process")
 async def transcribe_file(file: UploadFile = File(...), language: str = Form("en")):
     """Handle file upload for transcription with full monitoring."""
     
@@ -1990,14 +1990,14 @@ async def call_worker_transcribe(audio_data, context: MonitoringContext):
     }
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            'http://worker:8001/api/v1/transcribe/file',
+            'http://worker:8001/api/v1/stream/process',
             data=audio_data,
             headers=headers
         ) as resp:
             return await resp.json()
 
 # 3. Worker extracts context from incoming request
-@app.post("/api/v1/transcribe/file")
+@app.post("/api/v1/stream/process")
 async def transcribe_file(request: Request):
     trace_id = request.headers.get('X-Trace-ID', str(uuid.uuid4()))
     parent_span_id = request.headers.get('X-Span-ID')

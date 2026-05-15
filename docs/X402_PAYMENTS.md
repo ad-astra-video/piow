@@ -87,7 +87,7 @@ sequenceDiagram
     participant Chain as Blockchain
 
     Note over Agent,Server: Phase 1: Payment Discovery
-    Agent->>Server: GET /api/v1/transcribe
+    Agent->>Server: GET /api/v1/stream/process
     Server-->>Agent: HTTP 402 + PAYMENT-REQUIRED header
     Note right of Server: Payment requirements encoded in header
 
@@ -98,7 +98,7 @@ sequenceDiagram
     Client->>Client: Sign payment with wallet
 
     Note over Client,Server: Phase 3: Payment Submission
-    Client->>Server: GET /api/v1/transcribe + PAYMENT-SIGNATURE
+    Client->>Server: GET /api/v1/stream/process + PAYMENT-SIGNATURE
     Server->>Facilitator: POST /verify (payment payload)
     Facilitator-->>Server: Verification result
 
@@ -407,7 +407,7 @@ x402_middleware = X402PaymentMiddleware(
     default_price_usd=0.01,  # $0.01 per request
 )
 
-@app.post("/api/v1/transcribe")
+@app.post("/api/v1/stream/process")
 async def transcribe(request: Request):
     """Transcribe audio/video - requires x402 payment."""
     # Middleware handles payment verification
@@ -419,7 +419,7 @@ async def transcribe(request: Request):
     
     return JSONResponse(content=result)
 
-@app.post("/api/v1/translate")
+@app.post("/api/v1/translations")
 async def translate(request: Request):
     """Translate text - requires x402 payment."""
     body = await request.json()
@@ -430,7 +430,7 @@ async def translate(request: Request):
 @app.middleware("http")
 async def x402_payment_middleware(request: Request, call_next):
     """Apply x402 payment to specific routes."""
-    if request.url.path in ["/api/v1/transcribe", "/api/v1/translate"]:
+    if request.url.path in ["/api/v1/stream/process", "/api/v1/translations"]:
         # Extract price from request or use default
         price_usd = request.headers.get("X-Price-USD")
         if price_usd:
@@ -720,7 +720,7 @@ class X402Client:
         """Transcribe audio with automatic payment."""
         response = await self.request_with_payment(
             "POST",
-            "/api/v1/transcribe",
+            "/api/v1/stream/process",
             json={"audio_url": audio_url, "language": language, "format": format},
         )
         response.raise_for_status()
@@ -735,7 +735,7 @@ class X402Client:
         """Translate text with automatic payment."""
         response = await self.request_with_payment(
             "POST",
-            "/api/v1/translate",
+            "/api/v1/translations",
             json={
                 "text": text,
                 "source_language": source_language,
@@ -943,7 +943,7 @@ export class X402Client {
     language: string = 'en',
     format: string = 'json'
   ): Promise<any> {
-    const response = await this.requestWithPayment('POST', '/api/v1/transcribe', {
+    const response = await this.requestWithPayment('POST', '/api/v1/stream/process', {
       body: JSON.stringify({ audio_url: audioUrl, language, format }),
     });
     
@@ -959,7 +959,7 @@ export class X402Client {
     sourceLanguage: string,
     targetLanguage: string
   ): Promise<any> {
-    const response = await this.requestWithPayment('POST', '/api/v1/translate', {
+    const response = await this.requestWithPayment('POST', '/api/v1/translations', {
       body: JSON.stringify({
         text,
         source_language: sourceLanguage,
@@ -1215,7 +1215,7 @@ You can support multiple networks on the same endpoint:
 
 ```python
 routes = {
-    "POST /api/v1/transcribe": {
+    "POST /api/v1/stream/process": {
         "accepts": [
             {
                 "scheme": "exact",
@@ -1245,7 +1245,7 @@ routes = {
 ```python
 # Define pricing for different endpoints
 PRICING = {
-    "/api/v1/transcribe": {
+    "/api/v1/stream/process": {
         "base_price_usd": 0.01,  # $0.01 per request
         "per_minute_price_usd": 0.001,  # Additional $0.001 per minute
     },
@@ -1253,7 +1253,7 @@ PRICING = {
         "base_price_usd": 0.05,  # $0.05 per request (GPU)
         "per_minute_price_usd": 0.01,  # Additional $0.01 per minute
     },
-    "/api/v1/translate": {
+    "/api/v1/translations": {
         "base_price_usd": 0.001,  # $0.001 per request
         "per_char_price_usd": 0.00001,  # Additional $0.00001 per character
     },
@@ -1264,15 +1264,15 @@ async def get_price_for_request(request: Request) -> float:
     """Calculate price based on endpoint and payload."""
     body = await request.json() if request.method == "POST" else {}
     
-    if request.url.path == "/api/v1/transcribe":
+    if request.url.path == "/api/v1/stream/process":
         duration = body.get("duration_seconds", 60)
-        return PRICING["/api/v1/transcribe"]["base_price_usd"] + \
-               (duration / 60) * PRICING["/api/v1/transcribe"]["per_minute_price_usd"]
+         return PRICING["/api/v1/stream/process"]["base_price_usd"] + \
+             (duration / 60) * PRICING["/api/v1/stream/process"]["per_minute_price_usd"]
     
-    elif request.url.path == "/api/v1/translate":
+    elif request.url.path == "/api/v1/translations":
         char_count = len(body.get("text", ""))
-        return PRICING["/api/v1/translate"]["base_price_usd"] + \
-               char_count * PRICING["/api/v1/translate"]["per_char_price_usd"]
+         return PRICING["/api/v1/translations"]["base_price_usd"] + \
+             char_count * PRICING["/api/v1/translations"]["per_char_price_usd"]
     
     return 0.01  # Default price
 ```
@@ -1296,7 +1296,7 @@ from slowapi.util import get_remote_address
 
 limiter = Limiter(key_func=get_remote_address)
 
-@app.post("/api/v1/transcribe")
+@app.post("/api/v1/stream/process")
 @limiter.limit("100/minute")
 async def transcribe(request: Request):
     # Rate limit: 100 requests per minute per wallet
@@ -1375,7 +1375,7 @@ async def test_payment_required_response():
     """Test 402 response without payment."""
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            "http://localhost:8000/api/v1/transcribe",
+            "http://localhost:8000/api/v1/stream/process",
             json={"audio_url": "https://example.com/test.mp3"},
         ) as response:
             assert response.status == 402

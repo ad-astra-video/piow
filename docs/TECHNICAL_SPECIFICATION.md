@@ -68,7 +68,7 @@ The system utilizes a **multi-provider compute architecture** 🔄 where compute
 | Compute routing | Single `GPU_RUNNER_URL` | Multi-provider `ComputeProviderManager` with scoring | 🔄 |
 | Streaming data flow | Frontend → SSE `data_url` directly | Frontend → WebSocket `/ws` → `SSERelay` → Provider SSE | 🔄 |
 | WHIP connection | Frontend → Provider WHIP directly | Frontend → Backend WHIP proxy → Provider WHIP | 🔄 |
-| API paths | `/api/v1/transcribe`, `/api/v1/translate` | `/api/v1/transcribe/file`, `/api/v1/transcribe/url`, `/api/v1/translate/text` | 🔄 |
+| API paths | `/api/v1/stream/process`, `/api/v1/transcriptions`, `/api/v1/languages` | `/api/v1/stream/process`, `/api/v1/transcriptions`, `/api/v1/languages` | ✅ |
 | Agent auth | OAuth 2.0 + x402 wallet | HMAC-SHA256 with API key/secret | 🔄 |
 | User auth | Custom SIWE + Supabase | Supabase Auth (JWT) with Web3/SIWE provider | 🔄 |
 | Session storage | `stream_sessions` DB table | Database-backed `SessionStore` with write-through cache | ✅ |
@@ -427,8 +427,6 @@ flowchart TB
 
 | Method | Endpoint | Auth | Description | Status |
 |--------|----------|------|-------------|--------|
-| POST | `/api/v1/transcribe/file` | Any | Upload audio file for batch transcription | ⚠️ Calls provider; `file://` URLs only work same-host; no async job polling |
-| POST | `/api/v1/transcribe/url` | Any | Transcribe audio from URL | ⚠️ Calls provider; no async job polling or webhook callbacks |
 | POST | `/api/v1/stream/process` | Any | Create streaming transcription session | ✅ |
 | POST | `/api/v1/stream/{stream_id}/whip` | Any | WHIP SDP proxy for WebRTC | ✅ |
 | GET | `/api/v1/transcriptions` | Any | List user transcriptions | ✅ |
@@ -440,8 +438,6 @@ flowchart TB
 
 | Method | Endpoint | Auth | Description | Status |
 |--------|----------|------|-------------|--------|
-| POST | `/api/v1/translate/text` | Any | Translate text | ⚠️ Calls provider via `create_translation_job()`; end-to-end depends on provider |
-| POST | `/api/v1/translate/transcription` | Any | Translate existing transcription by ID | ⚠️ Calls provider; end-to-end depends on provider |
 | GET | `/api/v1/languages` | Any | Get supported languages (11 languages) | ✅ |
 
 ### Session Endpoints ✅
@@ -687,14 +683,9 @@ The streaming transcription flow is fully implemented:
 8. Backend creates `SSERelay` connecting to provider's `data_url`
 9. Transcription events flow: Provider SSE → SSERelay → WebSocket → Frontend
 
-### 10.2 Batch Transcription ⚠️
+### 10.2 Batch Transcription
 
-Batch transcription endpoints call real compute providers but have **infrastructure gaps**:
-
-- `POST /api/v1/transcribe/file` — Accepts multipart file upload, saves to temp file, selects provider via `ComputeProviderManager`, calls `provider.create_transcription_job()`, stores result in Supabase, returns real provider response. ⚠️ Uses `file://` URLs which only work for same-host providers; remote providers need accessible storage (e.g., Supabase Storage).
-- `POST /api/v1/transcribe/url` — Accepts audio URL, selects provider, calls `provider.create_transcription_job()`, stores result, returns real provider response. ⚠️ No async job polling or webhook callback system for long-running jobs.
-
-> ⚠️ **Needs completion**: Async job processing with polling/webhook callbacks, and audio file upload to Supabase Storage for remote provider access.
+Batch transcription upload/url endpoints are no longer part of the active API surface.
 
 ### 10.3 WHIP Proxy ✅
 
@@ -708,14 +699,9 @@ The WHIP proxy at `POST /api/v1/stream/process/{stream_id}/whip` is fully implem
 
 ## 11. Translation Service ⚠️
 
-### 11.1 Translation Endpoints ⚠️
+### 11.1 Translation Endpoints
 
-Both translation endpoints call real compute providers but **end-to-end functionality depends on provider configuration**:
-
-- `POST /api/v1/translate/text` — Accepts `text`, `source_language`, `target_language`, selects provider via `ComputeProviderManager`, calls `provider.create_translation_job()`, stores result in Supabase, returns real provider response.
-- `POST /api/v1/translate/transcription` — Looks up transcription by ID, extracts text, calls translate_text internally.
-
-> ⚠️ **Needs completion**: End-to-end testing with live compute providers; async job polling for long translations.
+Direct translation action endpoints are not wired in the current frontend-facing API surface.
 
 ### 11.2 Supported Languages ✅
 
