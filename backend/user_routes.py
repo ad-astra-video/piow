@@ -24,6 +24,7 @@ def setup_routes(app):
     app.router.add_get('/api/v1/user/history', get_user_history)
     app.router.add_get('/api/v1/user/usage-details', get_usage_details)
     app.router.add_get('/api/v1/transcriptions/{id}/sentences', get_transcription_sentences)
+    app.router.add_get('/api/v1/transcriptions/{id}/analysis', get_transcription_analysis)
 
 
 def _get_user_id(request):
@@ -161,6 +162,33 @@ async def get_user_history(request):
                     item['translated_languages'] = sorted(
                         list(langs_by_transcription.get(str(item.get('id')), set()))
                     )
+
+                analysis_result = await (
+                    supabase.table('stream_analysis')
+                    .select('transcription_id, analysis_mode, created_at')
+                    .eq('user_id', user_id)
+                    .in_('transcription_id', transcription_ids)
+                    .order('created_at', desc=True)
+                    .execute()
+                )
+
+                latest_analysis_by_transcription: Dict[str, Dict[str, Any]] = {}
+                for row in (analysis_result.data or []):
+                    transcription_id = row.get('transcription_id')
+                    if not transcription_id:
+                        continue
+                    key = str(transcription_id)
+                    if key not in latest_analysis_by_transcription:
+                        latest_analysis_by_transcription[key] = row
+
+                for item in transcriptions:
+                    analysis = latest_analysis_by_transcription.get(str(item.get('id')))
+                    item['has_analysis'] = bool(analysis)
+                    item['analysis_mode'] = analysis.get('analysis_mode') if analysis else None
+            else:
+                for item in transcriptions:
+                    item['has_analysis'] = False
+                    item['analysis_mode'] = None
 
         if item_type in ('all', 'translation'):
             tr_result = await supabase.table('translations').select('*').eq('user_id', user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
@@ -314,6 +342,49 @@ async def get_transcription_sentences(request):
         })
     except Exception as e:
         logger.error(f"Error fetching transcription sentences: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+@require_user_auth
+async def get_transcription_analysis(request):
+    """GET /api/v1/transcriptions/{id}/analysis
+
+    Return persisted analysis summaries for a transcription, newest first.
+    """
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({'error': 'Authentication required'}, status=401)
+
+    transcription_id = request.match_info.get('id')
+    if not transcription_id:
+        return web.json_response({'error': 'Transcription ID required'}, status=400)
+
+    try:
+        ownership = await (
+            supabase.table('transcriptions')
+            .select('id')
+            .eq('id', transcription_id)
+            .eq('user_id', user_id)
+            .execute()
+        )
+        if not ownership.data:
+            return web.json_response({'error': 'Not found'}, status=404)
+
+        result = await (
+            supabase.table('stream_analysis')
+            .select('id, analysis_mode, summary_text, timestamp_ms, source_event_type, created_at')
+            .eq('user_id', user_id)
+            .eq('transcription_id', transcription_id)
+            .order('created_at', desc=True)
+            .execute()
+        )
+
+        return web.json_response({
+            'analysis': result.data or [],
+            'count': len(result.data or []),
+        })
+    except Exception as e:
+        logger.error(f"Error fetching transcription analysis: {e}")
         return web.json_response({'error': str(e)}, status=500)
 
 

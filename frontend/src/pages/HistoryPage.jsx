@@ -16,6 +16,9 @@ export default function HistoryPage() {
   const [activeModalLanguage, setActiveModalLanguage] = useState(null);
   const [showModalTranscript, setShowModalTranscript] = useState(true);
   const [showModalTranslation, setShowModalTranslation] = useState(false);
+  const [modalAnalysisEntries, setModalAnalysisEntries] = useState([]);
+  const [modalAnalysisLoading, setModalAnalysisLoading] = useState(false);
+  const [modalAnalysisError, setModalAnalysisError] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -67,8 +70,17 @@ export default function HistoryPage() {
     setActiveModalLanguage(null);
     setShowModalTranscript(true);
     setShowModalTranslation(false);
-    try {
-      const res = await api.getSentences(item.id);
+    setModalAnalysisEntries([]);
+    setModalAnalysisError('');
+    setModalAnalysisLoading(true);
+
+    const [sentencesResult, analysisResult] = await Promise.allSettled([
+      api.getSentences(item.id),
+      api.getTranscriptionAnalysis(item.id),
+    ]);
+
+    if (sentencesResult.status === 'fulfilled') {
+      const res = sentencesResult.value || {};
       setModalSentences(res.sentences || null);
       setModalTranslationsByLanguage(res.translations_by_language || {});
       const translatedLanguages = res.translated_languages || [];
@@ -76,9 +88,23 @@ export default function HistoryPage() {
         setActiveModalLanguage(translatedLanguages[0]);
         setShowModalTranslation(true);
       }
-    } catch {
+    } else {
       setModalSentences(null); // fall back to parsing item.text
     }
+
+    if (analysisResult.status === 'fulfilled') {
+      const analysisRows = Array.isArray(analysisResult.value?.analysis)
+        ? analysisResult.value.analysis
+        : [];
+      setModalAnalysisEntries(
+        analysisRows.filter((entry) => typeof entry?.summary_text === 'string' && entry.summary_text.trim())
+      );
+      setModalAnalysisError('');
+    } else {
+      setModalAnalysisEntries([]);
+      setModalAnalysisError('Could not load analysis summaries for this stream.');
+    }
+    setModalAnalysisLoading(false);
   };
 
   const closeModal = () => {
@@ -88,6 +114,9 @@ export default function HistoryPage() {
     setActiveModalLanguage(null);
     setShowModalTranscript(true);
     setShowModalTranslation(false);
+    setModalAnalysisEntries([]);
+    setModalAnalysisError('');
+    setModalAnalysisLoading(false);
   };
 
   const filtered = items.filter((item) => {
@@ -180,6 +209,16 @@ export default function HistoryPage() {
     return showModalTranslation && activeModalLanguage === language;
   };
 
+  const formatAnalysisMode = (mode) => {
+    if (mode === 'audio_only') return 'audio';
+    if (mode === 'video_only') return 'video';
+    if (mode === 'multimodal') return 'multimodal';
+    return '';
+  };
+
+  const latestModalAnalysis = modalAnalysisEntries.length > 0 ? modalAnalysisEntries[0] : null;
+  const olderModalAnalyses = modalAnalysisEntries.slice(1);
+
 
 
   const sourceIcon = (type, src) => {
@@ -226,6 +265,11 @@ export default function HistoryPage() {
                   <span className={`badge ${item._type}`}>
                     {sourceIcon(item._type, item.source_type)} {item._type}
                   </span>
+                  {item.has_analysis ? (
+                    <span className="badge analysis" title="Live analysis available">
+                      Analysis{item.analysis_mode ? ` • ${formatAnalysisMode(item.analysis_mode)}` : ''}
+                    </span>
+                  ) : null}
                   <span className="history-date">{formatDate(item.created_at)}</span>
                 </div>
                 <div className="history-sentences preview" onClick={() => openModal(item)}>
@@ -324,6 +368,40 @@ export default function HistoryPage() {
                   <div className="history-translation-modal">
                     <p className="history-modal-section-label">No sentence translations for this language yet.</p>
                   </div>
+              )}
+              {(modalAnalysisLoading || latestModalAnalysis || modalAnalysisError) && (
+                <div className="history-analysis-card panel-glass">
+                  <div className="history-analysis-header">
+                    <p className="history-modal-section-label">Live Analysis</p>
+                    {latestModalAnalysis?.analysis_mode ? (
+                      <span className="lang-tag secondary">{formatAnalysisMode(latestModalAnalysis.analysis_mode)}</span>
+                    ) : null}
+                  </div>
+
+                  {modalAnalysisLoading && <p className="history-analysis-status">Loading analysis…</p>}
+                  {!modalAnalysisLoading && modalAnalysisError && <p className="history-analysis-error">{modalAnalysisError}</p>}
+
+                  {!modalAnalysisLoading && latestModalAnalysis && (
+                    <>
+                      <p className="history-analysis-text">{latestModalAnalysis.summary_text}</p>
+                      <p className="history-analysis-meta">{formatDate(latestModalAnalysis.created_at)}</p>
+                    </>
+                  )}
+
+                  {!modalAnalysisLoading && olderModalAnalyses.length > 0 && (
+                    <details className="history-analysis-older">
+                      <summary>Previous summaries ({olderModalAnalyses.length})</summary>
+                      <div className="history-analysis-older-list">
+                        {olderModalAnalyses.map((entry) => (
+                          <div key={entry.id} className="history-analysis-older-item">
+                            <p className="history-analysis-text">{entry.summary_text}</p>
+                            <p className="history-analysis-meta">{formatDate(entry.created_at)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
               )}
             </div>
             <div className="history-modal-footer">

@@ -402,6 +402,10 @@ html, body {
 }
 .badge.transcription { background: rgba(96,165,250,0.12); color: #93c5fd; }
 .badge.translation { background: rgba(52,211,153,0.12); color: #6ee7b7; }
+.badge.analysis {
+  background: rgba(251,191,36,0.16);
+  color: #fde68a;
+}
 .lang-tag { font-size: 0.75rem; color: var(--text-secondary); }
 
 /* Transcribe pages */
@@ -1381,6 +1385,67 @@ html, body {
   padding-left: 0.6rem;
   border-left: 3px solid var(--glass-border);
   margin-bottom: 0.5rem;
+}
+
+.history-analysis-card {
+  margin-top: 0.85rem;
+  padding: 0.8rem;
+  border-radius: 10px;
+}
+
+.history-analysis-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.history-analysis-status {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.history-analysis-error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--danger);
+}
+
+.history-analysis-text {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.history-analysis-meta {
+  margin: 0.45rem 0 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.history-analysis-older {
+  margin-top: 0.6rem;
+}
+
+.history-analysis-older summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.history-analysis-older-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.55rem;
+}
+
+.history-analysis-older-item {
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--glass-border);
 }
 
 .history-modal-footer {

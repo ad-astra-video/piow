@@ -892,6 +892,62 @@ class SessionStore:
                     stream_id, exc
                 )
 
+    async def store_stream_analysis(
+        self,
+        stream_id: str,
+        *,
+        analysis_mode: str,
+        summary_text: str,
+        timestamp_ms: Optional[int] = None,
+        source_event_type: str = "analysis.done",
+    ) -> bool:
+        """Persist a live analysis summary for a stream."""
+        normalized_summary = (summary_text or "").strip()
+        if not normalized_summary:
+            return False
+
+        normalized_mode = (analysis_mode or "multimodal").strip()
+        if normalized_mode not in {"multimodal", "audio_only", "video_only"}:
+            normalized_mode = "multimodal"
+
+        stream_data = self._stream_sessions_cache.get(stream_id) or await self.get_stream_session(stream_id)
+        if not stream_data:
+            logger.warning("store_stream_analysis: stream %s not found", stream_id)
+            return False
+
+        session_id = stream_data.get("session_id")
+        user_id: Optional[str] = None
+        if session_id:
+            parent = await self.get_session(session_id)
+            user_id = str(parent.get("user_id")) if parent and parent.get("user_id") else None
+        if not user_id:
+            logger.warning("store_stream_analysis: missing user_id for stream %s", stream_id)
+            return False
+
+        transcription_id: Optional[str] = stream_data.get("transcription_id")
+
+        payload: Dict[str, Any] = {
+            "user_id": user_id,
+            "stream_id": stream_id,
+            "analysis_mode": normalized_mode,
+            "summary_text": normalized_summary,
+            "source_event_type": source_event_type or "analysis.done",
+            "timestamp_ms": timestamp_ms,
+        }
+        if transcription_id:
+            payload["transcription_id"] = transcription_id
+
+        try:
+            await supabase.table("stream_analysis").insert(payload).execute()
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Failed to store stream analysis for stream %s: %s",
+                stream_id,
+                exc,
+            )
+            return False
+
     # ------------------------------------------------------------------
     # Transcription Sessions
     # ------------------------------------------------------------------

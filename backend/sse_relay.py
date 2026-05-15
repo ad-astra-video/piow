@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Awaitable, Callable, Dict, Any, Optional, Set, List, Tuple
+from typing import Awaitable, Callable, Dict, Any, Optional, Set, List, Tuple, Coroutine
 
 import aiohttp
 from aiohttp import web
@@ -74,6 +74,7 @@ class SSERelay:
         self._db_text_buffer_start_ts_ms: int = 0
         self._translation_callback: Optional[Callable[[str], Awaitable[None]]] = None
         self._pending_translation_tasks: Set[asyncio.Task] = set()
+        self._pending_analysis_store_tasks: Set[asyncio.Task] = set()
         self._translation_no_callback_drops: int = 0
         self._translation_callback_successes: int = 0
         self._translation_callback_failures: int = 0
@@ -153,13 +154,21 @@ class SSERelay:
             if timeout_seconds is None
             else timeout_seconds
         )
-        return await self.wait_for_pending_translation_tasks(timeout_seconds=timeout)
+        translation_done = await self.wait_for_pending_translation_tasks(timeout_seconds=timeout)
+        analysis_done = await self.wait_for_pending_analysis_store_tasks(timeout_seconds=timeout)
+        return translation_done and analysis_done
 
-    def _track_translation_task(self, coroutine: Awaitable[None], *, task_name: str) -> None:
+    def _track_translation_task(self, coroutine: Coroutine[Any, Any, None], *, task_name: str) -> None:
         """Schedule translation-related background work and track it for graceful stop."""
         task = asyncio.create_task(coroutine, name=task_name)
         self._pending_translation_tasks.add(task)
         task.add_done_callback(self._pending_translation_tasks.discard)
+
+    def _track_analysis_store_task(self, coroutine: Coroutine[Any, Any, None], *, task_name: str) -> None:
+        """Schedule analysis persistence work and track it for graceful stop."""
+        task = asyncio.create_task(coroutine, name=task_name)
+        self._pending_analysis_store_tasks.add(task)
+        task.add_done_callback(self._pending_analysis_store_tasks.discard)
 
     async def wait_for_pending_translation_tasks(self, timeout_seconds: float) -> bool:
         """Wait for in-flight translation-related tasks to complete before stopping."""
@@ -177,6 +186,28 @@ class SSERelay:
             pending_count = sum(1 for task in tasks if not task.done())
             logger.warning(
                 "Timed out waiting for %s translation tasks on stream %s after %.1fs",
+                pending_count,
+                self.stream_id,
+                timeout_seconds,
+            )
+            return False
+
+    async def wait_for_pending_analysis_store_tasks(self, timeout_seconds: float) -> bool:
+        """Wait for in-flight analysis persistence tasks to complete before stopping."""
+        tasks = list(self._pending_analysis_store_tasks)
+        if not tasks:
+            return True
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=timeout_seconds,
+            )
+            return True
+        except asyncio.TimeoutError:
+            pending_count = sum(1 for task in tasks if not task.done())
+            logger.warning(
+                "Timed out waiting for %s analysis store tasks on stream %s after %.1fs",
                 pending_count,
                 self.stream_id,
                 timeout_seconds,
@@ -272,9 +303,10 @@ class SSERelay:
         if self._last_event_id:
             headers["Last-Event-ID"] = self._last_event_id
 
-        self._http_session = aiohttp.ClientSession()
+        http_session = aiohttp.ClientSession()
+        self._http_session = http_session
         try:
-            async with self._http_session.get(
+            async with http_session.get(
                 self.data_url,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=None, sock_read=60)
@@ -437,6 +469,12 @@ class SSERelay:
                         task_name=f"sse-translate-store-{self.stream_id}",
                     )
 
+                if msg_type == "analysis.done":
+                    self._track_analysis_store_task(
+                        self._store_analysis_to_db(message),
+                        task_name=f"sse-analysis-store-{self.stream_id}",
+                    )
+
             # Relay messages to frontend as-is.
             await self._broadcast(message)
 
@@ -512,6 +550,54 @@ class SSERelay:
         except Exception as exc:
             logger.warning(
                 "Failed to store translation to DB for stream %s: %s",
+                self.stream_id,
+                exc,
+            )
+
+    async def _store_analysis_to_db(self, message: Dict[str, Any]) -> None:
+        """Persist a completed analysis summary to the stream_analysis table."""
+        if self._session_store is None:
+            return
+
+        raw_text = message.get("text")
+        summary_text = raw_text if isinstance(raw_text, str) else ""
+        if not summary_text:
+            raw_summary = message.get("summary")
+            summary_text = raw_summary if isinstance(raw_summary, str) else ""
+        summary_text = summary_text.strip()
+        if not summary_text:
+            return
+
+        analysis_mode = message.get("mode") if isinstance(message.get("mode"), str) else "multimodal"
+        timestamp_ms_raw = message.get("timestamp_ms")
+        timestamp_ms: Optional[int] = timestamp_ms_raw if isinstance(timestamp_ms_raw, int) else None
+
+        # Analysis events can arrive before the first transcription flush creates a
+        # transcription_id. Flush pending segments to link the analysis record.
+        try:
+            stream_data = self._session_store._stream_sessions_cache.get(self.stream_id)  # type: ignore[attr-defined]
+            if not stream_data:
+                stream_data = await self._session_store.get_stream_session(self.stream_id)
+            if stream_data and not stream_data.get("transcription_id") and self._pending_transcription_sentences:
+                await self._flush_pending_segments()
+        except Exception as exc:
+            logger.warning(
+                "Pre-analysis flush failed for stream %s: %s",
+                self.stream_id,
+                exc,
+            )
+
+        try:
+            await self._session_store.store_stream_analysis(
+                self.stream_id,
+                analysis_mode=analysis_mode,
+                summary_text=summary_text,
+                timestamp_ms=timestamp_ms,
+                source_event_type="analysis.done",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to store analysis to DB for stream %s: %s",
                 self.stream_id,
                 exc,
             )
