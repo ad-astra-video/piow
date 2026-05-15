@@ -45,7 +45,7 @@ flowchart TB
         LP["LivepeerProvider"]
         RP["RunpodProvider"]
         WK["Worker Service<br/>Port 8001"]
-        GT["Granite Transcriber<br/>CPU / ONNX"]
+        GT["Gemma Translator<br/>CPU / GPU"]
         VC["VLLM Client<br/>GPU / WebSocket"]
     end
 
@@ -89,7 +89,7 @@ flowchart TB
 
 | # | Critical Path | Components | Failure Impact |
 |---|---------------|------------|----------------|
-| 1 | **File Upload Transcription** | Frontend → Backend `/transcribe/file` → Provider Manager → Livepeer/Runpod/Worker → Granite | User cannot transcribe uploaded audio |
+| 1 | **File Upload Transcription** | Frontend → Backend `/transcribe/file` → Provider Manager → Livepeer/Runpod/Worker → Gemma runtime | User cannot transcribe uploaded audio |
 | 2 | **URL Transcription** | Frontend → Backend `/transcribe/url` → Provider Manager → Provider → Result | Batch jobs fail silently |
 | 3 | **Streaming Transcription** | Frontend → Backend `/transcribe/stream` → WHIP Proxy → Provider → SSE Relay → WebSocket → Frontend | Real-time feature completely broken |
 | 4 | **Translation** | Frontend → Backend `/translate/text` → Provider Manager → Worker/Provider | Post-transcription workflow fails |
@@ -526,7 +526,7 @@ def get_partition_key(event_type: str, event_data: dict) -> str:
     "source_type": "file | url | stream | whip",
     "language": "en",
     "provider_name": "livepeer | runpod | worker",
-    "model": "granite-4.0-1b | voxtral-mini-4b",
+    "model": "gemma-vllm | voxtral-mini-4b",
     "hardware": "cpu | gpu",
     "audio_duration_seconds": 120.5,
     "processing_time_seconds": 45.2,
@@ -1203,7 +1203,7 @@ async def send_monitoring_event(
         ctx = MonitoringContext(user_id="user-123", job_id="job-456")
         await send_monitoring_event(
             EventType.TRANSCRIPTION_STARTED,
-            {"language": "en", "model": "granite-4.0-1b"},
+            {"language": "en", "model": "gemma-vllm"},
             context=ctx
         )
         
@@ -1428,7 +1428,7 @@ async def transcribe_file(file: UploadFile = File(...), language: str = Form("en
     start_time = time.time()
     try:
         # ... existing transcription logic ...
-        result = granite_transcriber.transcribe(temp_path, language)
+        result = gemma_translator.translate(temp_path, language)
         processing_time = time.time() - start_time
         
         await send_monitoring_event(
@@ -2359,7 +2359,7 @@ scrape_configs:
 - [ ] Implement `send_monitoring_event()` convenience function
 - [ ] Implement `@monitored` decorator for automatic instrumentation
 - [ ] Integrate event emission into `worker/app.py` endpoints
-- [ ] Integrate event emission into `worker/granite_transcriber.py`
+- [ ] Integrate event emission into `worker/gemma_client.py`
 - [ ] Integrate event emission into `worker/vllm_client.py`
 - [ ] Add context propagation from backend -> worker via HTTP headers
 - [ ] Test retry semantics and circuit breaker behavior

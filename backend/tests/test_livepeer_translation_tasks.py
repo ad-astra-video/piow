@@ -68,7 +68,7 @@ class TestLivepeerTranslationProvider(unittest.IsolatedAsyncioTestCase):
             "source_language": "en",
             "target_language": "es",
             "token_count": 12,
-            "model": "granite-4.0-1b",
+            "model": "gemma-4-e4b",
             "hardware": "cpu",
         }
 

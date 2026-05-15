@@ -722,7 +722,7 @@ class SessionStore:
                 "source_type": "stream",
             }
             # Only include constrained columns when we have DB-valid values
-            if model in ("granite-4.0-1b", "voxtral-realtime"):
+            if model in ("gemma-4-e4b", "voxtral-realtime"):
                 insert_payload["model_used"] = model
             if hardware in ("cpu", "gpu"):
                 insert_payload["hardware"] = hardware

@@ -95,7 +95,6 @@ _live_price_per_unit = LIVE_CAPABILITY_PRICE_PER_UNIT
 gemma_translator = GemmaClient()
 vllm_client: Optional[VLLMRealtimeClient] = None
 processor: Any = None
-granite_transcriber: Any = None
 
 # Legacy batch-job storage kept only so the disabled helper functions still parse.
 transcriptions_db: Dict[str, Dict[str, Any]] = {}
@@ -323,7 +322,7 @@ def _normalize_transcription_result(result: Dict[str, Any], job_id: str, languag
             "words": result.get("words"),
             "speakers": result.get("speakers"),
             "word_count": result.get("word_count"),
-            "model": result.get("model", "granite-speech-4.1-2b-plus"),
+            "model": result.get("model", "gemma-4-e4b"),
             "hardware": result.get("hardware", "cpu"),
             "provider": "worker",
             "raw_response": result,
@@ -339,7 +338,7 @@ def _normalize_transcription_result(result: Dict[str, Any], job_id: str, languag
         "words": result.get("words"),
         "speakers": result.get("speakers"),
         "word_count": result.get("word_count"),
-        "model": result.get("model", "granite-speech-4.1-2b-plus"),
+        "model": result.get("model", "gemma-4-e4b"),
         "hardware": result.get("hardware", "cpu"),
         "provider": "worker",
         "raw_response": result,
@@ -358,7 +357,7 @@ def _normalize_translation_result(
         "source_language": result.get("source_language", source_lang),
         "target_language": result.get("target_language", target_lang),
         "token_count": result.get("token_count"),
-        "model": result.get("model", "granite-speech-4.1-2b-plus"),
+        "model": result.get("model", "gemma-4-e4b"),
         "hardware": result.get("hardware", "cpu"),
         "provider": "worker",
         "raw_response": result,

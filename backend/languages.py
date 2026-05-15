@@ -22,7 +22,7 @@ async def get_languages(request):
     """Get supported languages."""
     logger.info("Received get languages request")
 
-    # Return a list of supported languages (Granite 4.0 1B Speech model)
+    # Return a list of supported languages (Gemma 4 E4B)
     languages = [
         {"code": "en", "name": "English"},
         {"code": "es", "name": "Spanish"},

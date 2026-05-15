@@ -11,9 +11,9 @@
 **Architecture:** Backend Proxy with Multi-Provider Compute Abstraction & SSE→WebSocket Relay
 
 **Model Architecture:**
-- **Batch Transcription (`/transcribe`)**: Granite 4.0 1B Speech ONNX (CPU Worker) — via Compute Providers
+- **Batch Transcription (`/transcribe`)**: Gemma 4 E4B (CPU/GPU provider dependent) — via Compute Providers
 - **Real-time Streaming (`/stream/process`)**: VLLM Voxtral Realtime (GPU Worker) — via Compute Providers
-- **Translation (`/translate`)**: Granite 4.0 1B Speech ONNX (CPU Worker) — via Compute Providers
+- **Translation (`/translate`)**: Gemma 4 E4B (CPU/GPU provider dependent) — via Compute Providers
 
 > **Implementation Status Key:**
 > - ✅ **IMPLEMENTED** — Feature is built and functional in the codebase
@@ -162,7 +162,7 @@ After transcription, users can:
 │   COMPUTE PROVIDERS          │     │   WORKER SERVICE             │
 │  (Selected by Manager)       │     │  (Separate docker-compose)   │
 │  ┌───────────────────────┐  │     │  ┌───────────────────────┐   │
-│  │  Livepeer Gateway     │  │     │  │  Granite Transcriber  │   │
+│  │  Livepeer Gateway     │  │     │  │  Gemma 4 E4B Client   │   │
 │  │  • BYOC AI Stream API │  │     │  │  • ONNX CPU inference │   │
 │  │  • WHIP ingest        │  │     │  │  • vllm_client.py     │   │
 │  │  • SSE data output    │  │     │  │  • webrtc/ components │   │
@@ -785,7 +785,7 @@ worker/
 ├── docker-compose.yml        # Worker-specific Docker Compose
 ├── Dockerfile                # Worker Docker image
 ├── Dockerfile.vllm           # VLLM-specific Docker image
-├── granite_transcriber.py    # Granite 4.0 ONNX CPU transcriber
+├── gemma_client.py           # Gemma translation and analysis client
 ├── vllm_client.py            # VLLM Voxtral GPU client
 ├── patch_vllm.py             # VLLM patching utilities
 ├── requirements.txt          # Python dependencies
@@ -793,7 +793,7 @@ worker/
 ├── .dockerignore
 ├── tests/
 │   ├── __init__.py
-│   ├── test_granite_transcriber.py
+│   ├── test_gemma_client.py
 │   ├── test_integration.py
 │   └── test_vllm_client.py
 └── webrtc/
@@ -806,7 +806,7 @@ worker/
 
 | Model | Hardware | File | Status |
 |-------|----------|------|--------|
-| Granite 4.0 1B Speech ONNX | CPU | `granite_transcriber.py` | ⚠️ Exists, not connected to backend |
+| Gemma 4 E4B | CPU/GPU | `gemma_client.py` | ✅ Active in worker analysis and translation flow |
 | VLLM Voxtral Realtime | GPU | `vllm_client.py` | ⚠️ Exists, not connected to backend |
 
 > ⚠️ The worker runs independently but is not yet called by the backend's compute provider system. The backend currently returns mock responses for batch transcription and translation.
@@ -815,9 +815,9 @@ worker/
 
 ## 15. Model Architecture
 
-### 15.1 Granite 4.0 1B Speech ONNX (CPU)
+### 15.1 Gemma 4 E4B
 
-**Model:** [forkjoin-ai/granite-4.0-1b-speech-onnx](https://huggingface.co/forkjoin-ai/granite-4.0-1b-speech-onnx)
+**Model:** `cyankiwi/gemma-4-E4B-it-AWQ-INT4` (configurable)
 
 **Use Cases:**
 - Batch transcription of uploaded audio/video files
@@ -856,8 +856,8 @@ worker/
 
 Model selection is handled by the `ComputeProviderManager` which routes based on job type:
 - `transcribe_stream` → GPU provider (Voxtral)
-- `transcribe_batch` → CPU provider (Granite)
-- `translate` → CPU provider (Granite)
+- `transcribe_batch` → provider-specific runtime
+- `translate` → Gemma 4 E4B
 
 ---
 
@@ -919,7 +919,7 @@ live-translation-app/
 │   └── .env.template
 ├── worker/                           # Separate worker service
 │   ├── app.py
-│   ├── granite_transcriber.py
+│   ├── gemma_client.py
 │   ├── vllm_client.py
 │   ├── Dockerfile
 │   ├── docker-compose.yml

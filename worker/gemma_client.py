@@ -149,7 +149,7 @@ class GemmaClient:
                 "source_language": source_lang,
                 "target_language": target_lang,
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
 
         if not self.is_configured:
@@ -160,7 +160,7 @@ class GemmaClient:
                 "source_language": source_lang,
                 "target_language": target_lang,
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
 
         system_prompt = (
@@ -185,7 +185,7 @@ class GemmaClient:
                     "source_language": source_lang,
                     "target_language": target_lang,
                     "model": self.model,
-                    "backend": "gemma-vllm",
+                    "backend": "gemma-4-e4b",
                     "response": data.get("response", ""),
                 }
 
@@ -199,7 +199,7 @@ class GemmaClient:
                 "target_language": target_lang,
                 "processing_time": processing_time,
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
         except Exception as exc:
             logger.exception("Gemma translation request failed")
@@ -210,11 +210,11 @@ class GemmaClient:
                 "source_language": source_lang,
                 "target_language": target_lang,
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
 
     async def analyze(self, text: str, prompt: Optional[str] = None, mode: str = "multimodal", response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Run live-analysis text generation on the Gemma runtime."""
+        """Run live-analysis text generation on Gemma 4 E4B."""
         start_time = time.time()
 
         if not text or not text.strip():
@@ -222,15 +222,15 @@ class GemmaClient:
                 "error": "Missing text",
                 "analysis_text": "",
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
 
         if not self.is_configured:
             return {
-                "error": "Gemma runtime is not configured",
+                "error": "Gemma 4 E4B is not configured",
                 "analysis_text": "",
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
 
         default_prompt = self._default_analysis_prompt(mode)
@@ -251,7 +251,7 @@ class GemmaClient:
                     "error": data.get("error"),
                     "analysis_text": "",
                     "model": self.model,
-                    "backend": "gemma-vllm",
+                    "backend": "gemma-4-e4b",
                     "response": data.get("response", ""),
                 }
 
@@ -262,14 +262,14 @@ class GemmaClient:
                     "suppressed": True,
                     "suppression_reason": "no_update",
                     "model": self.model,
-                    "backend": "gemma-vllm",
+                    "backend": "gemma-4-e4b",
                 }
 
             processing_time = time.time() - start_time
             return {
                 "analysis_text": analysis_text,
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
                 "processing_time": processing_time,
             }
         except Exception as exc:
@@ -278,7 +278,7 @@ class GemmaClient:
                 "error": str(exc),
                 "analysis_text": "",
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
 
     async def analyze_audio(
@@ -296,15 +296,15 @@ class GemmaClient:
                 "error": "Missing audio",
                 "analysis_text": "",
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
 
         if not self.is_configured:
             return {
-                "error": "Gemma runtime is not configured",
+                "error": "Gemma 4 E4B is not configured",
                 "analysis_text": "",
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
 
         if not self.audio_analysis_supported:
@@ -312,7 +312,7 @@ class GemmaClient:
                 "error": "Gemma audio-direct analysis disabled via GEMMA_AUDIO_ANALYSIS_ENABLED=false.",
                 "analysis_text": "",
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }
 
         default_prompt = self._default_analysis_prompt(mode)
@@ -358,7 +358,7 @@ class GemmaClient:
                     "error": data.get("error"),
                     "analysis_text": "",
                     "model": self.model,
-                    "backend": "gemma-vllm",
+                    "backend": "gemma-4-e4b",
                     "response": data.get("response", ""),
                 }
 
@@ -370,14 +370,14 @@ class GemmaClient:
                     "suppressed": True,
                     "suppression_reason": "no_update",
                     "model": self.model,
-                    "backend": "gemma-vllm",
+                    "backend": "gemma-4-e4b",
                 }
 
             processing_time = time.time() - start_time
             return {
                 "analysis_text": analysis_text,
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
                 "processing_time": processing_time,
             }
         except Exception as exc:
@@ -386,5 +386,5 @@ class GemmaClient:
                 "error": str(exc),
                 "analysis_text": "",
                 "model": self.model,
-                "backend": "gemma-vllm",
+                "backend": "gemma-4-e4b",
             }

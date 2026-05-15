@@ -44,7 +44,7 @@ const backendRequest = async (endpoint, method = 'GET', data = null) => {
 
 // MCP Tool: transcribe
 server.addTool('transcribe', {
-  description: 'Transcribe audio/video to text using Granite 4.0 (CPU) or Voxtral (GPU)',
+  description: 'Transcribe audio/video to text using Gemma 4 E4B (CPU) or Voxtral (GPU)',
   parameters: {
     type: 'object',
     properties: {
