@@ -3121,7 +3121,7 @@ html, body {
 
 .sentence-row {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   gap: 0.6rem;
   padding: 0.35rem 0.5rem;
 }
@@ -3132,7 +3132,8 @@ html, body {
   font-size: 0.78rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-  padding-top: 0.15rem;
+  line-height: 1.55;
+  padding-top: 0;
 }
 
 .sentence-row .entry-text {
@@ -3172,7 +3173,8 @@ html, body {
   opacity: 0;
   transition: opacity 0.15s;
   flex-shrink: 0;
-  padding-top: 0.15rem;
+  align-self: flex-start;
+  padding-top: 0;
 }
 
 .sentence-wrapper:hover .sentence-actions {
