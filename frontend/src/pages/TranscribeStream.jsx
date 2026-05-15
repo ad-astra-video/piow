@@ -100,6 +100,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   const [analysisResponseFormat, setAnalysisResponseFormat] = useState(null);
   const [showResponseFormatModal, setShowResponseFormatModal] = useState(false);
   const [responseFormatDraft, setResponseFormatDraft] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [fileHasVideo, setFileHasVideo] = useState(false);
 
   // Fetch available languages on mount
@@ -577,21 +578,35 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                   {!isModeSupported(analysisMode, runtimeTrackAvailability) && (
                     <small className="analysis-mode-help">{modeDisabledReason(analysisMode)}</small>
                   )}
-                  <div className="form-row analysis-response-format-row">
-                    <label>Structured Output</label>
+                  <div className="advanced-dropdown">
                     <button
                       type="button"
-                      className="secondary-button structured-output-btn"
-                      onClick={() => {
-                        setResponseFormatDraft(analysisResponseFormat ? JSON.stringify(analysisResponseFormat, null, 2) : '');
-                        setShowResponseFormatModal(true);
-                      }}
+                      className="advanced-dropdown-toggle"
+                      onClick={() => setShowAdvanced((v) => !v)}
                     >
-                      <FileCode size={14} />
-                      {analysisResponseFormat ? 'Edit JSON Schema' : 'Set JSON Schema'}
+                      <span>Advanced</span>
+                      {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                     </button>
-                    {analysisResponseFormat && (
-                      <span className="response-format-badge">Schema active</span>
+                    {showAdvanced && (
+                      <div className="advanced-dropdown-content">
+                        <div className="form-row analysis-response-format-row">
+                          <label>Structured Output</label>
+                          <button
+                            type="button"
+                            className="secondary-button structured-output-btn"
+                            onClick={() => {
+                              setResponseFormatDraft(analysisResponseFormat ? JSON.stringify(analysisResponseFormat, null, 2) : '');
+                              setShowResponseFormatModal(true);
+                            }}
+                          >
+                            <FileCode size={14} />
+                            {analysisResponseFormat ? 'Edit JSON Schema' : 'Set JSON Schema'}
+                          </button>
+                          {analysisResponseFormat && (
+                            <span className="response-format-badge">Schema active</span>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
                   <div className="form-row analysis-prompt-row">
