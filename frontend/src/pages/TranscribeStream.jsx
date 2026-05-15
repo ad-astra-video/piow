@@ -715,7 +715,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
             </div>
             <p className="modal-hint">
               Paste a JSON schema to enforce structured output from the analysis LLM.
-              Example: <code>{"type": "json_object", "schema": {"probability": {"type": "number"}}}</code>
+              Example: <code>{'{"type": "json_object", "schema": {"probability": {"type": "number"}}}'}</code>
             </p>
             <textarea
               className="modal-textarea"

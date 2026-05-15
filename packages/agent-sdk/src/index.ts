@@ -1,5 +1,4 @@
-import axios, { AxiosInstance } from 'axios';
-import { v4 as uuidv4 } from 'uuid';
+import axios, { AxiosHeaders, AxiosInstance } from 'axios';
 import crypto from 'crypto';
 
 // Types for our SDK
@@ -102,16 +101,17 @@ export class AgentClient {
     // Add request interceptor to sign requests
     this.axiosInstance.interceptors.request.use((config) => {
       const timestamp = Math.floor(Date.now() / 1000);
-      const nonce = uuidv4().replace(/-/g, '');
+      const nonce = crypto.randomUUID().replace(/-/g, '');
       const signature = this.signRequest(config.method?.toUpperCase() || 'GET', config.url || '', timestamp, nonce, config.data);
 
-      config.headers = {
-        ...config.headers,
-        'X-API-Key': this.apiKey,
-        'X-Timestamp': timestamp.toString(),
-        'X-Nonce': nonce,
-        'X-Signature': signature
-      };
+      if (!config.headers) {
+        config.headers = new AxiosHeaders();
+      }
+      const headers = config.headers as AxiosHeaders;
+      headers.set('X-API-Key', this.apiKey);
+      headers.set('X-Timestamp', timestamp.toString());
+      headers.set('X-Nonce', nonce);
+      headers.set('X-Signature', signature);
 
       return config;
     });

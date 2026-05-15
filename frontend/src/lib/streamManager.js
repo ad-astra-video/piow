@@ -988,10 +988,6 @@ class StreamManager {
               const errorText = typeof message.error === 'string' ? message.error : 'Translation failed';
               this._setState({ errorMessage: errorText });
             } else if (msgType === 'analysis.delta' || msgType === 'analysis.done' || msgType === 'analysis.signal') {
-              const rawAnalysisText = typeof message.text === 'string'
-                ? message.text
-                : (typeof message.summary === 'string' ? message.summary : '');
-              const normalizedAnalysisText = sanitizeAnalysisText(rawAnalysisText);
               const isSignal = msgType === 'analysis.signal';
               const rawAnalysisText = isSignal
                 ? JSON.stringify(message.data || {})
