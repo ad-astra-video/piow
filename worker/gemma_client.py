@@ -287,6 +287,7 @@ class GemmaClient:
         sample_rate_hz: int = 16000,
         prompt: Optional[str] = None,
         mode: str = "audio_only",
+        response_format: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Run live analysis directly from PCM16 audio payloads."""
         start_time = time.time()
@@ -348,7 +349,7 @@ class GemmaClient:
                         },
                     ],
                 },
-            ])
+            ], response_format=response_format)
             if isinstance(data, dict) and data.get("error"):
                 logger.warning(
                     "Gemma analyze_audio upstream error: %s",

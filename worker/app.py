@@ -482,6 +482,24 @@ class LiveTranscriptionWorker:
 
         return 0
 
+    def _parse_structured_analysis_text(self, analysis_text: str) -> Optional[Any]:
+        """Parse structured JSON output from analysis text, including fenced JSON blocks."""
+        if not analysis_text:
+            return None
+
+        candidate = analysis_text.strip()
+        if candidate.startswith("```"):
+            lines = candidate.splitlines()
+            if len(lines) >= 3 and lines[-1].strip() == "```":
+                candidate = "\n".join(lines[1:-1]).strip()
+                if candidate.lower().startswith("json"):
+                    candidate = candidate[4:].strip()
+
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+
     @model_loader
     async def load(self, **kwargs: dict) -> None:
         """Called once at worker startup. The VLLM websocket connection is
@@ -862,15 +880,15 @@ class LiveTranscriptionWorker:
             if analysis_text and processor is not None:
                 resolved_timestamp_ms = self._resolve_analysis_timestamp_ms(timestamp_ms)
                 if self.analysis_response_format:
-                    try:
-                        structured_data = json.loads(analysis_text)
+                    structured_data = self._parse_structured_analysis_text(analysis_text)
+                    if structured_data is not None:
                         payload = {
                             "type": "analysis.signal",
                             "mode": self.analysis_mode,
                             "data": structured_data,
                             "timestamp_ms": resolved_timestamp_ms,
                         }
-                    except json.JSONDecodeError:
+                    else:
                         payload = {
                             "type": "analysis.done",
                             "mode": self.analysis_mode,
@@ -924,6 +942,7 @@ class LiveTranscriptionWorker:
                 sample_rate_hz=16000,
                 prompt=self.analysis_prompt,
                 mode=self.analysis_mode,
+                response_format=self.analysis_response_format,
             )
             analysis_text = ""
             suppressed = False
@@ -952,12 +971,29 @@ class LiveTranscriptionWorker:
 
             if analysis_text and processor is not None:
                 resolved_timestamp_ms = self._resolve_analysis_timestamp_ms(timestamp_ms)
-                payload = {
-                    "type": "analysis.done",
-                    "mode": self.analysis_mode,
-                    "text": analysis_text,
-                    "timestamp_ms": resolved_timestamp_ms,
-                }
+                if self.analysis_response_format:
+                    structured_data = self._parse_structured_analysis_text(analysis_text)
+                    if structured_data is not None:
+                        payload = {
+                            "type": "analysis.signal",
+                            "mode": self.analysis_mode,
+                            "data": structured_data,
+                            "timestamp_ms": resolved_timestamp_ms,
+                        }
+                    else:
+                        payload = {
+                            "type": "analysis.done",
+                            "mode": self.analysis_mode,
+                            "text": analysis_text,
+                            "timestamp_ms": resolved_timestamp_ms,
+                        }
+                else:
+                    payload = {
+                        "type": "analysis.done",
+                        "mode": self.analysis_mode,
+                        "text": analysis_text,
+                        "timestamp_ms": resolved_timestamp_ms,
+                    }
                 await processor.send_data(json.dumps(payload))
                 logger.info(
                     "Audio analysis emitted #%d: text_len=%d timestamp_ms=%s",
