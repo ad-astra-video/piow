@@ -116,6 +116,11 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
 
   const analysisErrorEntries = analysisEntries.filter((entry) => entry.type === 'analysis.error');
   const analysisDisplayEntries = analysisEntries.filter((entry) => entry.type !== 'analysis.error');
+  const analysisSignalRows = analysisDisplayEntries.flatMap((entry) => {
+    if (entry.type !== 'analysis.signal') return [];
+    return Array.isArray(entry.signalRows) ? entry.signalRows : [];
+  });
+  const analysisNarrativeEntries = analysisDisplayEntries.filter((entry) => entry.type !== 'analysis.signal');
 
   // Fetch available languages on mount
   useEffect(() => {
@@ -965,16 +970,49 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                     <span>Events will appear here once analysis is active.</span>
                   </div>
                 ) : (
-                  analysisDisplayEntries.map((entry) => (
-                    <article key={entry.id} className="analysis-entry">
-                      <div className="analysis-entry-meta">
-                        <span className="analysis-entry-type">{entry.type.replace('analysis.', '')}</span>
-                        <span className="analysis-entry-mode">{getAnalysisModeLabel(entry.mode)}</span>
-                        <span className="analysis-entry-ts">{formatDuration(entry.timestampMs || 0)}</span>
-                      </div>
-                      <MarkdownText content={entry.text} />
-                    </article>
-                  ))
+                  <>
+                    {analysisSignalRows.length > 0 && (
+                      <article className="analysis-entry analysis-signals-table-wrap">
+                        <div className="analysis-entry-meta">
+                          <span className="analysis-entry-type">signal</span>
+                          <span className="analysis-entry-mode">{getAnalysisModeLabel(analysisMode)}</span>
+                          <span className="analysis-entry-ts">{analysisSignalRows.length} rows</span>
+                        </div>
+                        <div className="analysis-signals-table-scroll">
+                          <table className="analysis-signals-table">
+                            <thead>
+                              <tr>
+                                <th>Timestamp</th>
+                                <th>Category</th>
+                                <th>Item</th>
+                                <th>Priority</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {analysisSignalRows.map((row, idx) => (
+                                <tr key={`signal-row-${idx}`}>
+                                  <td>{row.timestamp}</td>
+                                  <td>{row.category}</td>
+                                  <td>{row.item}</td>
+                                  <td>{row.priority}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </article>
+                    )}
+                    {analysisNarrativeEntries.map((entry) => (
+                      <article key={entry.id} className="analysis-entry">
+                        <div className="analysis-entry-meta">
+                          <span className="analysis-entry-type">{entry.type.replace('analysis.', '')}</span>
+                          <span className="analysis-entry-mode">{getAnalysisModeLabel(entry.mode)}</span>
+                          <span className="analysis-entry-ts">{formatDuration(entry.timestampMs || 0)}</span>
+                        </div>
+                        <MarkdownText content={entry.text} />
+                      </article>
+                    ))}
+                  </>
                 )}
               </div>
             </section>

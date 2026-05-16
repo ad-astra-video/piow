@@ -511,6 +511,51 @@ class LiveTranscriptionWorker:
             "_raw_text": analysis_text,
         }
 
+    @staticmethod
+    def _is_placeholder_signal_timestamp(value: Any) -> bool:
+        if not isinstance(value, str):
+            return True
+        normalized = value.strip()
+        return normalized in {"", "0", "0:00", "00:00", "00:0", "0:0"}
+
+    @staticmethod
+    def _format_signal_timestamp(ms: int) -> str:
+        safe_ms = max(int(ms or 0), 0)
+        total_seconds = safe_ms // 1000
+        hh = total_seconds // 3600
+        mm = (total_seconds % 3600) // 60
+        ss = total_seconds % 60
+        return f"{hh:02d}:{mm:02d}:{ss:02d}"
+
+    def _normalize_signal_item_timestamps(self, signal_data: Any, fallback_timestamp_ms: int) -> Any:
+        """Replace placeholder per-item timestamps with the resolved event timestamp."""
+        if not isinstance(signal_data, dict):
+            return signal_data
+
+        items = signal_data.get("items")
+        if not isinstance(items, list):
+            return signal_data
+
+        normalized_items = []
+        replaced_any = False
+        replacement_ts = self._format_signal_timestamp(fallback_timestamp_ms)
+        for item in items:
+            if not isinstance(item, dict):
+                normalized_items.append(item)
+                continue
+            normalized_item = dict(item)
+            if self._is_placeholder_signal_timestamp(normalized_item.get("timestamp")):
+                normalized_item["timestamp"] = replacement_ts
+                replaced_any = True
+            normalized_items.append(normalized_item)
+
+        if not replaced_any:
+            return signal_data
+
+        normalized_signal = dict(signal_data)
+        normalized_signal["items"] = normalized_items
+        return normalized_signal
+
     @model_loader
     async def load(self, **kwargs: dict) -> None:
         """Called once at worker startup. The VLLM websocket connection is
@@ -912,6 +957,7 @@ class LiveTranscriptionWorker:
                             "timestamp_ms": resolved_timestamp_ms,
                         }
                     else:
+                        signal_data = self._normalize_signal_item_timestamps(signal_data, resolved_timestamp_ms)
                         payload = {
                             "type": "analysis.signal",
                             "mode": self.analysis_mode,
@@ -1007,6 +1053,7 @@ class LiveTranscriptionWorker:
                             "timestamp_ms": resolved_timestamp_ms,
                         }
                     else:
+                        signal_data = self._normalize_signal_item_timestamps(signal_data, resolved_timestamp_ms)
                         payload = {
                             "type": "analysis.signal",
                             "mode": self.analysis_mode,

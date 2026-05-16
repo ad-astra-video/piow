@@ -143,6 +143,60 @@ function sanitizeAnalysisText(rawText) {
   return normalized;
 }
 
+function isPlaceholderSignalTimestamp(value) {
+  if (typeof value !== 'string') return true;
+  const normalized = value.trim();
+  return normalized === ''
+    || normalized === '0:00'
+    || normalized === '00:00'
+    || normalized === '0'
+    || normalized === '00:0';
+}
+
+function escapePipe(value) {
+  return String(value ?? '').replace(/\|/g, '\\|');
+}
+
+function extractAnalysisSignalRows(signalData, fallbackTimestampMs) {
+  if (!signalData || !Array.isArray(signalData.items)) {
+    return [];
+  }
+
+  return signalData.items
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const rowTimestamp = isPlaceholderSignalTimestamp(item.timestamp)
+        ? formatDuration(fallbackTimestampMs || 0)
+        : String(item.timestamp);
+      return {
+        timestamp: rowTimestamp,
+        category: String(item.category || ''),
+        item: String(item.item || ''),
+        priority: item.priority == null || item.priority === '' ? 'null' : String(item.priority),
+      };
+    })
+    .filter(Boolean);
+}
+
+function formatAnalysisSignalData(signalData, fallbackTimestampMs) {
+  const signalRows = extractAnalysisSignalRows(signalData, fallbackTimestampMs);
+  if (signalRows.length > 0) {
+    const rows = signalRows.map((row) => (
+      `| ${escapePipe(row.timestamp)} | ${escapePipe(row.category)} | ${escapePipe(row.item)} | ${escapePipe(row.priority)} |`
+    ));
+
+    if (rows.length > 0) {
+      return [
+        '| Timestamp | Category | Item | Priority |',
+        '| --- | --- | --- | --- |',
+        ...rows,
+      ].join('\n');
+    }
+  }
+
+  return `\`\`\`json\n${JSON.stringify(signalData || {}, null, 2)}\n\`\`\``;
+}
+
 class StreamManager {
   constructor() {
     this.state = {
@@ -992,8 +1046,11 @@ class StreamManager {
               this._setState({ errorMessage: errorText });
             } else if (msgType === 'analysis.delta' || msgType === 'analysis.done' || msgType === 'analysis.signal') {
               const isSignal = msgType === 'analysis.signal';
+              const resolvedTimestampMs = typeof message.timestamp_ms === 'number'
+                ? message.timestamp_ms
+                : (typeof message.window_end_ms === 'number' ? message.window_end_ms : this.state.elapsedMs);
               const rawAnalysisText = isSignal
-                ? JSON.stringify(message.data || {})
+                ? formatAnalysisSignalData(message.data || {}, resolvedTimestampMs)
                 : (typeof message.text === 'string'
                   ? message.text
                   : (typeof message.summary === 'string' ? message.summary : ''));
@@ -1003,9 +1060,8 @@ class StreamManager {
                 type: msgType,
                 mode: typeof message.mode === 'string' ? message.mode : this.state.analysisMode,
                 text: normalizedAnalysisText,
-                timestampMs: typeof message.timestamp_ms === 'number'
-                  ? message.timestamp_ms
-                  : (typeof message.window_end_ms === 'number' ? message.window_end_ms : this.state.elapsedMs),
+                timestampMs: resolvedTimestampMs,
+                signalRows: isSignal ? extractAnalysisSignalRows(message.data || {}, resolvedTimestampMs) : null,
               };
               if (entry.text) {
                 this._setState({

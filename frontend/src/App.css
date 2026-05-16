@@ -1133,6 +1133,58 @@ html, body {
   line-height: 1.45;
 }
 
+.analysis-signals-table-wrap {
+  border-left-color: #60a5fa;
+}
+
+.analysis-signals-table-scroll {
+  overflow-x: auto;
+}
+
+.analysis-signals-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.analysis-signals-table th,
+.analysis-signals-table td {
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  padding: 0.38rem 0.45rem;
+  font-size: 0.8rem;
+  vertical-align: top;
+  text-align: left;
+}
+
+.analysis-signals-table th {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(255,255,255,0.03);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.analysis-signals-table th:nth-child(1),
+.analysis-signals-table td:nth-child(1) {
+  width: 90px;
+  white-space: nowrap;
+}
+
+.analysis-signals-table th:nth-child(2),
+.analysis-signals-table td:nth-child(2) {
+  width: 95px;
+  white-space: nowrap;
+}
+
+.analysis-signals-table th:nth-child(4),
+.analysis-signals-table td:nth-child(4) {
+  width: 90px;
+  white-space: nowrap;
+}
+
 .markdown-text {
   color: inherit;
   white-space: pre-wrap;

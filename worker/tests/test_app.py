@@ -395,6 +395,54 @@ async def test_run_live_audio_analysis_async_emits_signal_when_schema_set():
     }
 
 
+async def test_run_live_audio_analysis_async_normalizes_placeholder_item_timestamp():
+    worker = worker_app.LiveTranscriptionWorker()
+    worker.analysis_enabled = True
+    worker.analysis_mode = "audio_only"
+    worker.live_transcription_enabled = False
+    worker.analysis_prompt = "Track decision changes"
+    worker.analysis_response_format = {
+        "type": "json_object",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "items": {"type": "array"}
+            }
+        },
+    }
+
+    mock_processor = MagicMock()
+    mock_processor.send_data = AsyncMock()
+
+    original_processor = worker_app.processor
+    original_gemma = worker_app.gemma_translator
+    worker_app.processor = mock_processor
+    gemma_mock = MagicMock()
+    gemma_mock.analyze_audio = AsyncMock(return_value={
+        "analysis_text": json.dumps({
+            "items": [
+                {
+                    "timestamp": "0:00",
+                    "category": "Action",
+                    "item": "Do the thing",
+                    "priority": None,
+                }
+            ]
+        })
+    })
+    try:
+        worker_app.gemma_translator = gemma_mock
+        await worker._run_live_audio_analysis_async(b"\x00\x00\x01\x01", 40400)
+    finally:
+        worker_app.processor = original_processor
+        worker_app.gemma_translator = original_gemma
+
+    payload = json.loads(mock_processor.send_data.call_args[0][0])
+    assert payload["type"] == "analysis.signal"
+    assert payload["timestamp_ms"] == 40400
+    assert payload["data"]["items"][0]["timestamp"] == "00:00:40"
+
+
 async def test_run_live_audio_analysis_async_emits_analysis_error_when_schema_json_invalid():
     worker = worker_app.LiveTranscriptionWorker()
     worker.analysis_enabled = True
