@@ -832,6 +832,7 @@ class SSERelay:
         """Extract one or more frontend-compatible messages from provider payloads."""
         payload = self._decode_possible_json(payload)
         messages: List[Dict[str, Any]] = []
+        normalized_event_type = event_type if isinstance(event_type, str) else "message"
 
         if payload is None:
             return messages
@@ -858,6 +859,7 @@ class SSERelay:
                 "translation",
                 "analysis.delta",
                 "analysis.done",
+                "analysis.signal",
                 "analysis.error",
                 "analysis.status",
             ):
@@ -889,6 +891,22 @@ class SSERelay:
                         messages.extend(self._extract_messages(payload.get(key), event_type))
                 if messages:
                     return messages
+
+        if not isinstance(msg_type, str) and normalized_event_type in (
+            "analysis.delta",
+            "analysis.done",
+            "analysis.signal",
+            "analysis.error",
+            "analysis.status",
+        ):
+            if normalized_event_type == "analysis.signal" and payload.get("_parse_error"):
+                return [{
+                    "type": "analysis.error",
+                    "error": "Analysis response was not valid JSON",
+                    "parse_error": payload.get("_parse_error"),
+                    "raw_text": payload.get("_raw_text"),
+                }]
+            return [{"type": normalized_event_type, **payload}]
 
         # Batch item envelopes are common in provider stream payloads.
         if isinstance(payload.get("items"), list):

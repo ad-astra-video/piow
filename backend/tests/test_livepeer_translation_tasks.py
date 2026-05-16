@@ -18,6 +18,8 @@ class _MockResponse:
     def __init__(self, status, payload):
         self.status = status
         self._payload = payload
+        self.headers = {}
+        self.request_info = type("_ReqInfo", (), {"headers": {}})()
 
     async def __aenter__(self):
         return self
@@ -115,3 +117,32 @@ class TestLivepeerTranslationProvider(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.posts[0]["json"]["with_word_timestamps"], True)
         self.assertEqual(result["words"], response_payload["words"])
         self.assertEqual(result["speakers"], response_payload["speakers"])
+
+    async def test_create_streaming_session_forwards_analysis_max_tokens(self):
+        provider = LivepeerComputeProvider({"name": "livepeer", "gpu_runner_url": "http://worker:9935", "enabled": True})
+        response_payload = {
+            "stream_id": "provider-stream-1",
+            "whip_url": "https://example.test/whip",
+            "data_url": "https://example.test/data",
+            "update_url": "https://example.test/update",
+            "status_url": "https://example.test/status",
+            "stop_url": "https://example.test/stop",
+        }
+        session = _MockSession(_MockResponse(200, response_payload))
+
+        with patch("compute_providers.livepeer.livepeer.aiohttp.ClientSession", return_value=session):
+            result = await provider.create_streaming_session(
+                session_id="stream-123",
+                language="en",
+                analysis_enabled=True,
+                analysis_mode="audio_only",
+                analysis_audio_chunk_seconds=20,
+                analysis_video_chunk_seconds=10,
+                analysis_max_tokens=2048,
+                analysis_video_fps=3,
+            )
+
+        posted = session.posts[0]["json"]
+        posted_params = json.loads(posted["params"])
+        self.assertEqual(posted_params["analysis_max_tokens"], 2048)
+        self.assertEqual(result["provider_stream_id"], "provider-stream-1")

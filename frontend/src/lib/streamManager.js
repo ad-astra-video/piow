@@ -1025,7 +1025,27 @@ class StreamManager {
               }
             } else if (msgType === 'analysis.error') {
               const errorText = typeof message.error === 'string' ? message.error : 'Analysis failed';
-              this._setState({ errorMessage: errorText });
+              const parseError = typeof message.parse_error === 'string' ? message.parse_error : '';
+              const rawText = typeof message.raw_text === 'string' ? message.raw_text : '';
+              const detailLines = [errorText];
+              if (parseError) {
+                detailLines.push(`Parse error: ${parseError}`);
+              }
+              if (rawText) {
+                detailLines.push('', 'Raw response:', '```', rawText, '```');
+              }
+              const entry = {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                type: 'analysis.error',
+                mode: typeof message.mode === 'string' ? message.mode : this.state.analysisMode,
+                text: detailLines.join('\n'),
+                timestampMs: typeof message.timestamp_ms === 'number'
+                  ? message.timestamp_ms
+                  : this.state.elapsedMs,
+              };
+              this._setState({
+                analysisEntries: [...this.state.analysisEntries, entry].slice(-200),
+              });
             } else if (msgType === 'status') {
               this._setState({ status: message.text });
             } else if (msgType === 'error') {

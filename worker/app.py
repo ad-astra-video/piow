@@ -901,12 +901,23 @@ class LiveTranscriptionWorker:
             if analysis_text and processor is not None:
                 resolved_timestamp_ms = self._resolve_analysis_timestamp_ms(timestamp_ms)
                 if self.analysis_response_format:
-                    payload = {
-                        "type": "analysis.signal",
-                        "mode": self.analysis_mode,
-                        "data": self._coerce_signal_data(analysis_text),
-                        "timestamp_ms": resolved_timestamp_ms,
-                    }
+                    signal_data = self._coerce_signal_data(analysis_text)
+                    if isinstance(signal_data, dict) and signal_data.get("_parse_error"):
+                        payload = {
+                            "type": "analysis.error",
+                            "mode": self.analysis_mode,
+                            "error": "Analysis response was not valid JSON",
+                            "parse_error": signal_data.get("_parse_error"),
+                            "raw_text": signal_data.get("_raw_text"),
+                            "timestamp_ms": resolved_timestamp_ms,
+                        }
+                    else:
+                        payload = {
+                            "type": "analysis.signal",
+                            "mode": self.analysis_mode,
+                            "data": signal_data,
+                            "timestamp_ms": resolved_timestamp_ms,
+                        }
                 else:
                     payload = {
                         "type": "analysis.done",
@@ -985,12 +996,23 @@ class LiveTranscriptionWorker:
             if analysis_text and processor is not None:
                 resolved_timestamp_ms = self._resolve_analysis_timestamp_ms(timestamp_ms)
                 if self.analysis_response_format:
-                    payload = {
-                        "type": "analysis.signal",
-                        "mode": self.analysis_mode,
-                        "data": self._coerce_signal_data(analysis_text),
-                        "timestamp_ms": resolved_timestamp_ms,
-                    }
+                    signal_data = self._coerce_signal_data(analysis_text)
+                    if isinstance(signal_data, dict) and signal_data.get("_parse_error"):
+                        payload = {
+                            "type": "analysis.error",
+                            "mode": self.analysis_mode,
+                            "error": "Analysis response was not valid JSON",
+                            "parse_error": signal_data.get("_parse_error"),
+                            "raw_text": signal_data.get("_raw_text"),
+                            "timestamp_ms": resolved_timestamp_ms,
+                        }
+                    else:
+                        payload = {
+                            "type": "analysis.signal",
+                            "mode": self.analysis_mode,
+                            "data": signal_data,
+                            "timestamp_ms": resolved_timestamp_ms,
+                        }
                 else:
                     payload = {
                         "type": "analysis.done",

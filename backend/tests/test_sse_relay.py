@@ -428,6 +428,33 @@ class TestSSERelayHandleEvent(unittest.IsolatedAsyncioTestCase):
 
         ws.send_json.assert_called_once_with(event["data"])
 
+    async def test_handle_analysis_signal_parse_error_event_normalized_to_analysis_error(self):
+        """Untyped analysis.signal parse errors should relay as analysis.error."""
+        from sse_relay import SSERelay
+        relay = SSERelay(data_url="http://localhost:9999/stream/data", stream_id="test-stream")
+
+        ws = AsyncMock()
+        ws.closed = False
+        relay.add_client(ws)
+
+        event = {
+            "event": "analysis.signal",
+            "data": {
+                "_parse_error": "invalid_json",
+                "_raw_text": '{"items": [',
+            },
+            "id": None,
+        }
+
+        await relay._handle_event(event)
+
+        ws.send_json.assert_called_once_with({
+            "type": "analysis.error",
+            "error": "Analysis response was not valid JSON",
+            "parse_error": "invalid_json",
+            "raw_text": '{"items": [',
+        })
+
 
 class TestSSERelayPersistence(unittest.IsolatedAsyncioTestCase):
     """Test DB buffering behavior for transcription and timestamp segments."""

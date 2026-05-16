@@ -109,9 +109,13 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   const [analysisPromptTouched, setAnalysisPromptTouched] = useState(false);
   const [analysisResponseFormat, setAnalysisResponseFormat] = useState(null);
   const [showResponseFormatModal, setShowResponseFormatModal] = useState(false);
+  const [showAnalysisErrorsModal, setShowAnalysisErrorsModal] = useState(false);
   const [responseFormatDraft, setResponseFormatDraft] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fileHasVideo, setFileHasVideo] = useState(false);
+
+  const analysisErrorEntries = analysisEntries.filter((entry) => entry.type === 'analysis.error');
+  const analysisDisplayEntries = analysisEntries.filter((entry) => entry.type !== 'analysis.error');
 
   // Fetch available languages on mount
   useEffect(() => {
@@ -244,6 +248,12 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     if (!isStarted) {
       setPlayerHidden(false);
       setPlayerFullscreen(false);
+    }
+  }, [isStarted]);
+
+  useEffect(() => {
+    if (!isStarted) {
+      setShowAnalysisErrorsModal(false);
     }
   }, [isStarted]);
 
@@ -814,6 +824,43 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
           </div>
         )}
 
+        {showAnalysisErrorsModal && (
+          <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowAnalysisErrorsModal(false); }}>
+            <div className="modal-content panel-glass analysis-error-modal">
+              <div className="modal-header">
+                <h3>Analysis Errors ({analysisErrorEntries.length})</h3>
+                <button className="icon-btn" onClick={() => setShowAnalysisErrorsModal(false)}>
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="modal-hint">
+                Errors emitted by live analysis are shown here, including any raw model output when parsing fails.
+              </p>
+              <div className="analysis-error-modal-list">
+                {analysisErrorEntries.length === 0 ? (
+                  <div className="empty-state compact">
+                    <p>No analysis errors in this session.</p>
+                  </div>
+                ) : (
+                  analysisErrorEntries.map((entry) => (
+                    <article key={entry.id} className="analysis-entry error">
+                      <div className="analysis-entry-meta">
+                        <span className="analysis-entry-type">error</span>
+                        <span className="analysis-entry-mode">{getAnalysisModeLabel(entry.mode)}</span>
+                        <span className="analysis-entry-ts">{formatDuration(entry.timestampMs || 0)}</span>
+                      </div>
+                      <MarkdownText content={entry.text} />
+                    </article>
+                  ))
+                )}
+              </div>
+              <div className="modal-actions">
+                <button className="secondary-button" onClick={() => setShowAnalysisErrorsModal(false)}>Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Transcript and analysis panels — shown only when session is active */}
         {isStarted && (
             <div>
@@ -884,6 +931,15 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                 <h2>Live Analysis</h2>
                 <div className="analysis-panel-actions">
                   <button
+                    className={`analysis-error-count-btn ${analysisErrorEntries.length > 0 ? 'has-errors' : ''}`}
+                    onClick={() => setShowAnalysisErrorsModal(true)}
+                    disabled={analysisErrorEntries.length === 0}
+                    title={analysisErrorEntries.length > 0 ? 'View analysis errors' : 'No analysis errors yet'}
+                  >
+                    <AlertCircle size={14} />
+                    Errors ({analysisErrorEntries.length})
+                  </button>
+                  <button
                     className={`autoscroll-toggle ${analysisAutoScroll ? 'active' : ''}`}
                     onClick={() => setAnalysisAutoScroll((v) => !v)}
                     title={analysisAutoScroll ? 'Auto-scroll on' : 'Auto-scroll off'}
@@ -903,14 +959,14 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
               )}
 
               <div className="analysis-scroll" ref={analysisScrollRef}>
-                {analysisEntries.length === 0 ? (
+                {analysisDisplayEntries.length === 0 ? (
                   <div className="empty-state compact">
                     <p>No analysis events yet.</p>
                     <span>Events will appear here once analysis is active.</span>
                   </div>
                 ) : (
-                  analysisEntries.map((entry) => (
-                    <article key={entry.id} className={`analysis-entry ${entry.type === 'analysis.error' ? 'error' : ''}`}>
+                  analysisDisplayEntries.map((entry) => (
+                    <article key={entry.id} className="analysis-entry">
                       <div className="analysis-entry-meta">
                         <span className="analysis-entry-type">{entry.type.replace('analysis.', '')}</span>
                         <span className="analysis-entry-mode">{getAnalysisModeLabel(entry.mode)}</span>

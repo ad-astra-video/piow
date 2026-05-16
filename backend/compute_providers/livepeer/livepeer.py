@@ -339,6 +339,7 @@ class LivepeerComputeProvider(BaseComputeProvider):
             "analysis_mode": kwargs.get("analysis_mode", "multimodal"),
             "analysis_audio_chunk_seconds": float(kwargs.get("analysis_audio_chunk_seconds", 10.0)),
             "analysis_video_chunk_seconds": float(kwargs.get("analysis_video_chunk_seconds", 10.0)),
+            "analysis_max_tokens": int(kwargs.get("analysis_max_tokens", 1024)),
             "analysis_video_fps": int(kwargs.get("analysis_video_fps", 3)),
         }
         analysis_prompt = kwargs.get("analysis_prompt")
