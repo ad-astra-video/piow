@@ -34,6 +34,9 @@ compute_provider_manager.register_providers_from_definitions(PROVIDER_DEFINITION
 ANALYSIS_WINDOW_MIN_SECONDS = 1.0
 ANALYSIS_WINDOW_MAX_SECONDS = 30.0
 ANALYSIS_WINDOW_DEFAULT_SECONDS = 10.0
+ANALYSIS_MAX_TOKENS_DEFAULT = 1024
+ANALYSIS_MAX_TOKENS_MIN = 64
+ANALYSIS_MAX_TOKENS_MAX = 4096
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -56,6 +59,15 @@ def _clamp_analysis_window_seconds(value: Any, default: float = ANALYSIS_WINDOW_
     except (TypeError, ValueError):
         numeric = float(default)
     return max(ANALYSIS_WINDOW_MIN_SECONDS, min(ANALYSIS_WINDOW_MAX_SECONDS, numeric))
+
+
+def _clamp_analysis_max_tokens(value: Any, default: int = ANALYSIS_MAX_TOKENS_DEFAULT) -> int:
+    """Parse and clamp analysis token limit values into [64, 4096]."""
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        numeric = int(default)
+    return max(ANALYSIS_MAX_TOKENS_MIN, min(ANALYSIS_MAX_TOKENS_MAX, numeric))
 
 
 def setup_routes(app):
@@ -115,6 +127,9 @@ async def transcribe_stream(request):
         )
         analysis_video_chunk_seconds = _clamp_analysis_window_seconds(
             data.get('analysis_video_chunk_seconds', ANALYSIS_WINDOW_DEFAULT_SECONDS)
+        )
+        analysis_max_tokens = _clamp_analysis_max_tokens(
+            data.get('analysis_max_tokens', ANALYSIS_MAX_TOKENS_DEFAULT)
         )
         analysis_video_fps = int(data.get('analysis_video_fps') or 3)
         analysis_prompt = data.get('analysis_prompt')
@@ -218,6 +233,7 @@ async def transcribe_stream(request):
                     analysis_mode=analysis_mode,
                     analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
                     analysis_video_chunk_seconds=analysis_video_chunk_seconds,
+                    analysis_max_tokens=analysis_max_tokens,
                     analysis_video_fps=analysis_video_fps,
                     analysis_prompt=analysis_prompt,
                     analysis_response_format=analysis_response_format,
@@ -277,6 +293,7 @@ async def transcribe_stream(request):
                 analysis_mode=analysis_mode,
                 analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
                 analysis_video_chunk_seconds=analysis_video_chunk_seconds,
+                analysis_max_tokens=analysis_max_tokens,
                 analysis_video_fps=analysis_video_fps,
                 analysis_prompt=analysis_prompt,
                 analysis_response_format=analysis_response_format,
@@ -302,6 +319,7 @@ async def transcribe_stream(request):
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
+            "analysis_max_tokens": analysis_max_tokens,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
             "analysis_response_format": analysis_response_format,
@@ -477,6 +495,13 @@ async def update_stream_analysis(request):
         return web.json_response({"error": "Invalid analysis_video_chunk_seconds"}, status=400)
 
     try:
+        analysis_max_tokens = _clamp_analysis_max_tokens(
+            data.get('analysis_max_tokens', stream_session.get('analysis_max_tokens', ANALYSIS_MAX_TOKENS_DEFAULT))
+        )
+    except Exception:
+        return web.json_response({"error": "Invalid analysis_max_tokens"}, status=400)
+
+    try:
         analysis_video_fps = int(data.get('analysis_video_fps', stream_session.get('analysis_video_fps', 3)))
     except (TypeError, ValueError):
         return web.json_response({"error": "Invalid analysis_video_fps"}, status=400)
@@ -487,14 +512,28 @@ async def update_stream_analysis(request):
     if analysis_prompt is not None:
         analysis_prompt = str(analysis_prompt).strip() or None
 
+    analysis_response_format = data.get('analysis_response_format')
+    if analysis_response_format is None:
+        analysis_response_format = stream_session.get('analysis_response_format')
+    elif not isinstance(analysis_response_format, dict):
+        return web.json_response(
+            {
+                'error': 'analysis_response_format must be a JSON object (e.g., {"type": "json_object", "schema": {...}})',
+                'code': 'invalid_response_format',
+            },
+            status=400,
+        )
+
     updated_session = await session_store.update_stream_analysis_config(
         stream_id=stream_id,
         analysis_enabled=analysis_enabled,
         analysis_mode=analysis_mode,
         analysis_audio_chunk_seconds=analysis_audio_chunk_seconds,
         analysis_video_chunk_seconds=analysis_video_chunk_seconds,
+        analysis_max_tokens=analysis_max_tokens,
         analysis_video_fps=analysis_video_fps,
         analysis_prompt=analysis_prompt,
+        analysis_response_format=analysis_response_format,
     )
 
     provider_session = (updated_session or stream_session).get('provider_session', {})
@@ -515,8 +554,10 @@ async def update_stream_analysis(request):
                         'analysis_mode': analysis_mode,
                         'analysis_audio_chunk_seconds': analysis_audio_chunk_seconds,
                         'analysis_video_chunk_seconds': analysis_video_chunk_seconds,
+                        'analysis_max_tokens': analysis_max_tokens,
                         'analysis_video_fps': analysis_video_fps,
                         'analysis_prompt': analysis_prompt,
+                        'analysis_response_format': analysis_response_format,
                     },
                     capability='live-transcription',
                     timeout_seconds=30,
@@ -534,8 +575,10 @@ async def update_stream_analysis(request):
         'analysis_mode': analysis_mode,
         'analysis_audio_chunk_seconds': analysis_audio_chunk_seconds,
         'analysis_video_chunk_seconds': analysis_video_chunk_seconds,
+        'analysis_max_tokens': analysis_max_tokens,
         'analysis_video_fps': analysis_video_fps,
         'analysis_prompt': analysis_prompt,
+        'analysis_response_format': analysis_response_format,
         'message': 'Stream analysis configuration updated',
     })
 

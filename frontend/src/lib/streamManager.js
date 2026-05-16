@@ -531,11 +531,14 @@ class StreamManager {
       if (typeof analysisConfig.analysis_video_fps === 'number') {
         body.analysis_video_fps = analysisConfig.analysis_video_fps;
       }
+      if (typeof analysisConfig.analysis_max_tokens === 'number') {
+        body.analysis_max_tokens = analysisConfig.analysis_max_tokens;
+      }
       if (typeof analysisConfig.analysis_prompt === 'string') {
         body.analysis_prompt = analysisConfig.analysis_prompt;
+      }
       if (analysisConfig.analysis_response_format != null) {
         body.analysis_response_format = analysisConfig.analysis_response_format;
-      }
       }
     }
     const response = await fetch(`${API_BASE}/stream/process`, {

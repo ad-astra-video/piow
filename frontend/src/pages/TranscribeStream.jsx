@@ -33,11 +33,20 @@ const getAnalysisModeLabel = (mode) => (
 const ANALYSIS_WINDOW_MIN_SECONDS = 1;
 const ANALYSIS_WINDOW_MAX_SECONDS = 30;
 const ANALYSIS_WINDOW_DEFAULT_SECONDS = 10;
+const ANALYSIS_MAX_TOKENS_DEFAULT = 1024;
+const ANALYSIS_MAX_TOKENS_MIN = 64;
+const ANALYSIS_MAX_TOKENS_MAX = 4096;
 
 const clampAnalysisWindowSeconds = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return ANALYSIS_WINDOW_DEFAULT_SECONDS;
   return Math.min(ANALYSIS_WINDOW_MAX_SECONDS, Math.max(ANALYSIS_WINDOW_MIN_SECONDS, Math.round(numeric)));
+};
+
+const clampAnalysisMaxTokens = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return ANALYSIS_MAX_TOKENS_DEFAULT;
+  return Math.min(ANALYSIS_MAX_TOKENS_MAX, Math.max(ANALYSIS_MAX_TOKENS_MIN, Math.round(numeric)));
 };
 
 const SOURCE_META = {
@@ -95,6 +104,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   const [analysisMode, setAnalysisMode] = useState('multimodal');
   const [analysisAudioWindowSeconds, setAnalysisAudioWindowSeconds] = useState(ANALYSIS_WINDOW_DEFAULT_SECONDS);
   const [analysisVideoWindowSeconds, setAnalysisVideoWindowSeconds] = useState(ANALYSIS_WINDOW_DEFAULT_SECONDS);
+  const [analysisMaxTokens, setAnalysisMaxTokens] = useState(ANALYSIS_MAX_TOKENS_DEFAULT);
   const [analysisPrompt, setAnalysisPrompt] = useState(getDefaultAnalysisPrompt('multimodal'));
   const [analysisPromptTouched, setAnalysisPromptTouched] = useState(false);
   const [analysisResponseFormat, setAnalysisResponseFormat] = useState(null);
@@ -158,6 +168,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
       analysis_audio_chunk_seconds: clampAnalysisWindowSeconds(analysisAudioWindowSeconds),
       analysis_video_chunk_seconds: clampAnalysisWindowSeconds(analysisVideoWindowSeconds),
       analysis_video_fps: 3,
+      analysis_max_tokens: clampAnalysisMaxTokens(analysisMaxTokens),
       analysis_prompt: analysisPrompt,
       analysis_response_format: analysisResponseFormat,
     });
@@ -167,6 +178,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     analysisMode,
     analysisAudioWindowSeconds,
     analysisVideoWindowSeconds,
+    analysisMaxTokens,
     analysisPrompt,
   ]);
 
@@ -250,6 +262,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
       analysis_audio_chunk_seconds: clampAnalysisWindowSeconds(analysisAudioWindowSeconds),
       analysis_video_chunk_seconds: clampAnalysisWindowSeconds(analysisVideoWindowSeconds),
       analysis_video_fps: 3,
+      analysis_max_tokens: clampAnalysisMaxTokens(analysisMaxTokens),
       analysis_prompt: analysisPrompt,
       analysis_response_format: analysisResponseFormat,
     };
@@ -605,6 +618,23 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                           {analysisResponseFormat && (
                             <span className="response-format-badge">Schema active</span>
                           )}
+                        </div>
+                        <div className="form-row analysis-window-row">
+                          <label htmlFor="analysis_max_tokens">
+                            Analysis max tokens ({ANALYSIS_MAX_TOKENS_MIN}-{ANALYSIS_MAX_TOKENS_MAX})
+                          </label>
+                          <div className="analysis-window-controls">
+                            <input
+                              id="analysis_max_tokens"
+                              type="number"
+                              min={ANALYSIS_MAX_TOKENS_MIN}
+                              max={ANALYSIS_MAX_TOKENS_MAX}
+                              step={1}
+                              value={clampAnalysisMaxTokens(analysisMaxTokens)}
+                              onChange={(e) => setAnalysisMaxTokens(clampAnalysisMaxTokens(e.target.value))}
+                            />
+                            <span>tokens</span>
+                          </div>
                         </div>
                       </div>
                     )}

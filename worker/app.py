@@ -451,6 +451,7 @@ class LiveTranscriptionWorker:
         self.analysis_mode: str = "multimodal"
         self.analysis_audio_chunk_seconds: float = 10.0
         self.analysis_video_chunk_seconds: float = 10.0
+        self.analysis_max_tokens: int = 1024
         self.live_transcription_enabled: bool = True
         self.analysis_prompt: str = self._default_analysis_prompt(self.analysis_mode)
         self.analysis_prompt_custom: bool = False
@@ -499,6 +500,16 @@ class LiveTranscriptionWorker:
             return json.loads(candidate)
         except json.JSONDecodeError:
             return None
+
+    def _coerce_signal_data(self, analysis_text: str) -> Any:
+        """Return structured signal data, or an error envelope when JSON parsing fails."""
+        structured_data = self._parse_structured_analysis_text(analysis_text)
+        if structured_data is not None:
+            return structured_data
+        return {
+            "_parse_error": "invalid_json",
+            "_raw_text": analysis_text,
+        }
 
     @model_loader
     async def load(self, **kwargs: dict) -> None:
@@ -758,6 +769,15 @@ class LiveTranscriptionWorker:
             except (TypeError, ValueError):
                 logger.warning("Ignoring invalid analysis_video_chunk_seconds: %s", analysis_video_chunk_seconds)
 
+        analysis_max_tokens = params.get("analysis_max_tokens")
+        if analysis_max_tokens is not None:
+            try:
+                max_tokens = int(analysis_max_tokens)
+                if max_tokens > 0:
+                    self.analysis_max_tokens = max_tokens
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid analysis_max_tokens: %s", analysis_max_tokens)
+
         analysis_prompt = params.get("analysis_prompt")
         if analysis_prompt is not None:
             prompt_text = str(analysis_prompt).strip()
@@ -861,6 +881,7 @@ class LiveTranscriptionWorker:
                 text=text,
                 prompt=self.analysis_prompt,
                 mode=self.analysis_mode,
+                max_tokens=self.analysis_max_tokens,
                 response_format=self.analysis_response_format,
             )
             analysis_text = ""
@@ -880,21 +901,12 @@ class LiveTranscriptionWorker:
             if analysis_text and processor is not None:
                 resolved_timestamp_ms = self._resolve_analysis_timestamp_ms(timestamp_ms)
                 if self.analysis_response_format:
-                    structured_data = self._parse_structured_analysis_text(analysis_text)
-                    if structured_data is not None:
-                        payload = {
-                            "type": "analysis.signal",
-                            "mode": self.analysis_mode,
-                            "data": structured_data,
-                            "timestamp_ms": resolved_timestamp_ms,
-                        }
-                    else:
-                        payload = {
-                            "type": "analysis.done",
-                            "mode": self.analysis_mode,
-                            "text": analysis_text,
-                            "timestamp_ms": resolved_timestamp_ms,
-                        }
+                    payload = {
+                        "type": "analysis.signal",
+                        "mode": self.analysis_mode,
+                        "data": self._coerce_signal_data(analysis_text),
+                        "timestamp_ms": resolved_timestamp_ms,
+                    }
                 else:
                     payload = {
                         "type": "analysis.done",
@@ -942,6 +954,7 @@ class LiveTranscriptionWorker:
                 sample_rate_hz=16000,
                 prompt=self.analysis_prompt,
                 mode=self.analysis_mode,
+                max_tokens=self.analysis_max_tokens,
                 response_format=self.analysis_response_format,
             )
             analysis_text = ""
@@ -972,21 +985,12 @@ class LiveTranscriptionWorker:
             if analysis_text and processor is not None:
                 resolved_timestamp_ms = self._resolve_analysis_timestamp_ms(timestamp_ms)
                 if self.analysis_response_format:
-                    structured_data = self._parse_structured_analysis_text(analysis_text)
-                    if structured_data is not None:
-                        payload = {
-                            "type": "analysis.signal",
-                            "mode": self.analysis_mode,
-                            "data": structured_data,
-                            "timestamp_ms": resolved_timestamp_ms,
-                        }
-                    else:
-                        payload = {
-                            "type": "analysis.done",
-                            "mode": self.analysis_mode,
-                            "text": analysis_text,
-                            "timestamp_ms": resolved_timestamp_ms,
-                        }
+                    payload = {
+                        "type": "analysis.signal",
+                        "mode": self.analysis_mode,
+                        "data": self._coerce_signal_data(analysis_text),
+                        "timestamp_ms": resolved_timestamp_ms,
+                    }
                 else:
                     payload = {
                         "type": "analysis.done",

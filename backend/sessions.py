@@ -316,6 +316,7 @@ class SessionStore:
         analysis_mode: str = "multimodal",
         analysis_audio_chunk_seconds: float = 10.0,
         analysis_video_chunk_seconds: float = 10.0,
+        analysis_max_tokens: int = 1024,
         analysis_video_fps: int = 3,
         analysis_prompt: Optional[str] = None,
         analysis_response_format: Optional[Dict[str, Any]] = None,
@@ -340,6 +341,7 @@ class SessionStore:
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
+            "analysis_max_tokens": analysis_max_tokens,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
             "analysis_response_format": analysis_response_format,
@@ -362,6 +364,7 @@ class SessionStore:
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
+            "analysis_max_tokens": analysis_max_tokens,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
             "analysis_response_format": analysis_response_format,
@@ -551,6 +554,7 @@ class SessionStore:
         analysis_mode: str,
         analysis_audio_chunk_seconds: float,
         analysis_video_chunk_seconds: float,
+        analysis_max_tokens: int,
         analysis_video_fps: int,
         analysis_prompt: Optional[str],
         analysis_response_format: Optional[Dict[str, Any]] = None,
@@ -571,6 +575,7 @@ class SessionStore:
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
+            "analysis_max_tokens": analysis_max_tokens,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
             "analysis_response_format": analysis_response_format,
@@ -580,6 +585,7 @@ class SessionStore:
         provider_session["analysis_mode"] = analysis_mode
         provider_session["analysis_audio_chunk_seconds"] = analysis_audio_chunk_seconds
         provider_session["analysis_video_chunk_seconds"] = analysis_video_chunk_seconds
+        provider_session["analysis_max_tokens"] = analysis_max_tokens
         provider_session["analysis_video_fps"] = analysis_video_fps
         provider_session["analysis_prompt"] = analysis_prompt
         provider_session["analysis_response_format"] = analysis_response_format
@@ -588,6 +594,7 @@ class SessionStore:
         stream_session["analysis_mode"] = analysis_mode
         stream_session["analysis_audio_chunk_seconds"] = analysis_audio_chunk_seconds
         stream_session["analysis_video_chunk_seconds"] = analysis_video_chunk_seconds
+        stream_session["analysis_max_tokens"] = analysis_max_tokens
         stream_session["analysis_video_fps"] = analysis_video_fps
         stream_session["analysis_prompt"] = analysis_prompt
         stream_session["analysis_response_format"] = analysis_response_format
@@ -995,6 +1002,12 @@ class SessionStore:
             or metadata.get("analysis_video_chunk_seconds")
             or 10.0
         )
+        analysis_max_tokens = (
+            row.get("analysis_max_tokens")
+            or (provider_session.get("analysis_max_tokens") if isinstance(provider_session, dict) else None)
+            or metadata.get("analysis_max_tokens")
+            or 1024
+        )
         analysis_video_fps = (
             row.get("analysis_video_fps")
             or (provider_session.get("analysis_video_fps") if isinstance(provider_session, dict) else None)
@@ -1019,6 +1032,7 @@ class SessionStore:
             "analysis_mode": analysis_mode,
             "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
             "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
+            "analysis_max_tokens": analysis_max_tokens,
             "analysis_video_fps": analysis_video_fps,
             "analysis_prompt": analysis_prompt,
             "status": row.get("status", "active"),

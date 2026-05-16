@@ -263,6 +263,7 @@ class TestTranscribeStreamOptions(unittest.IsolatedAsyncioTestCase):
             "analysis_mode": "audio_only",
             "analysis_audio_chunk_seconds": 10.0,
             "analysis_video_chunk_seconds": 10.0,
+            "analysis_max_tokens": 1024,
             "analysis_video_fps": 3,
             "analysis_prompt": "Summarize risks",
             "provider_session": {
@@ -276,6 +277,7 @@ class TestTranscribeStreamOptions(unittest.IsolatedAsyncioTestCase):
             "analysis_mode": "video_only",
             "analysis_audio_chunk_seconds": 1.0,
             "analysis_video_chunk_seconds": 30.0,
+            "analysis_max_tokens": 1024,
             "analysis_video_fps": 5,
             "analysis_prompt": "Focus on visual safety issues",
             "provider_session": {
@@ -300,6 +302,7 @@ class TestTranscribeStreamOptions(unittest.IsolatedAsyncioTestCase):
         payload = await response.json()
         self.assertEqual(payload["analysis_audio_chunk_seconds"], 1.0)
         self.assertEqual(payload["analysis_video_chunk_seconds"], 30.0)
+        self.assertEqual(payload["analysis_max_tokens"], 1024)
 
         sessions_module.session_store.update_stream_analysis_config.assert_awaited_once_with(
             stream_id="stream-2",
@@ -307,8 +310,10 @@ class TestTranscribeStreamOptions(unittest.IsolatedAsyncioTestCase):
             analysis_mode="video_only",
             analysis_audio_chunk_seconds=1.0,
             analysis_video_chunk_seconds=30.0,
+            analysis_max_tokens=1024,
             analysis_video_fps=5,
             analysis_prompt="Focus on visual safety issues",
+            analysis_response_format=None,
         )
 
         self.provider.update_streaming_session.assert_awaited_once_with(
@@ -318,8 +323,10 @@ class TestTranscribeStreamOptions(unittest.IsolatedAsyncioTestCase):
                 "analysis_mode": "video_only",
                 "analysis_audio_chunk_seconds": 1.0,
                 "analysis_video_chunk_seconds": 30.0,
+                "analysis_max_tokens": 1024,
                 "analysis_video_fps": 5,
                 "analysis_prompt": "Focus on visual safety issues",
+                "analysis_response_format": None,
             },
             capability="live-transcription",
             timeout_seconds=30,

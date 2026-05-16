@@ -29,13 +29,14 @@ class GemmaClient:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         temperature: float = 0.0,
-        max_tokens: int = 256,
+        max_tokens: Optional[int] = None,
         timeout_seconds: float = 60.0,
     ):
         self.base_url = (base_url or os.environ.get("GEMMA_VLLM_BASE_URL", "http://gemma-vllm:6100")).rstrip("/")
         self.model = model or os.environ.get("GEMMA_VLLM_MODEL", "cyankiwi/gemma-4-E4B-it-AWQ-INT4")
         self.temperature = float(temperature)
-        self.max_tokens = int(max_tokens)
+        configured_max_tokens = max_tokens if max_tokens is not None else os.environ.get("GEMMA_VLLM_MAX_TOKENS", "1024")
+        self.max_tokens = int(configured_max_tokens)
         self.timeout_seconds = float(timeout_seconds)
 
     @property
@@ -48,12 +49,17 @@ class GemmaClient:
         raw = os.environ.get("GEMMA_AUDIO_ANALYSIS_ENABLED", "true").strip().lower()
         return raw not in ("0", "false", "no", "off")
 
-    async def _chat_completion(self, messages: list[dict[str, Any]], response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def _chat_completion(
+        self,
+        messages: list[dict[str, Any]],
+        response_format: Optional[Dict[str, Any]] = None,
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
         payload = {
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "max_tokens": int(max_tokens) if max_tokens is not None else self.max_tokens,
             "stream": False,
         }
         if response_format is not None:
@@ -213,7 +219,14 @@ class GemmaClient:
                 "backend": "gemma-4-e4b",
             }
 
-    async def analyze(self, text: str, prompt: Optional[str] = None, mode: str = "multimodal", response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def analyze(
+        self,
+        text: str,
+        prompt: Optional[str] = None,
+        mode: str = "multimodal",
+        response_format: Optional[Dict[str, Any]] = None,
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Run live-analysis text generation on Gemma 4 E4B."""
         start_time = time.time()
 
@@ -245,6 +258,7 @@ class GemmaClient:
             data = await self._chat_completion(
                 [{"role": "user", "content": user_prompt}],
                 response_format=response_format,
+                max_tokens=max_tokens,
             )
             if isinstance(data, dict) and data.get("error"):
                 return {
@@ -288,6 +302,7 @@ class GemmaClient:
         prompt: Optional[str] = None,
         mode: str = "audio_only",
         response_format: Optional[Dict[str, Any]] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Run live analysis directly from PCM16 audio payloads."""
         start_time = time.time()
@@ -349,7 +364,7 @@ class GemmaClient:
                         },
                     ],
                 },
-            ], response_format=response_format)
+            ], response_format=response_format, max_tokens=max_tokens)
             if isinstance(data, dict) and data.get("error"):
                 logger.warning(
                     "Gemma analyze_audio upstream error: %s",
