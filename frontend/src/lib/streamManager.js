@@ -153,8 +153,58 @@ function isPlaceholderSignalTimestamp(value) {
     || normalized === '00:0';
 }
 
+function parseSignalTimestampToMs(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().replace(/^\[/, '').replace(/\]$/, '');
+  if (!normalized) return null;
+
+  const parts = normalized.split(':').map((segment) => Number.parseInt(segment, 10));
+  if (parts.some((part) => Number.isNaN(part) || part < 0)) {
+    return null;
+  }
+
+  if (parts.length === 2) {
+    const [mm, ss] = parts;
+    if (ss > 59) return null;
+    return ((mm * 60) + ss) * 1000;
+  }
+
+  if (parts.length === 3) {
+    const [hh, mm, ss] = parts;
+    if (mm > 59 || ss > 59) return null;
+    return (((hh * 60) + mm) * 60 + ss) * 1000;
+  }
+
+  return null;
+}
+
+function normalizeSignalTimestamp(value, fallbackTimestampMs) {
+  const fallbackMs = Math.max(Number(fallbackTimestampMs) || 0, 0);
+  if (isPlaceholderSignalTimestamp(value)) {
+    return formatDuration(fallbackMs);
+  }
+
+  const parsedMs = parseSignalTimestampToMs(value);
+  if (parsedMs == null) {
+    return formatDuration(fallbackMs);
+  }
+
+  // Keep model-provided timestamps only when they are close to the event time.
+  // Large drift means the model likely emitted a non-stream-relative value.
+  const MAX_TIMESTAMP_DRIFT_MS = 45000;
+  if (Math.abs(parsedMs - fallbackMs) > MAX_TIMESTAMP_DRIFT_MS) {
+    return formatDuration(fallbackMs);
+  }
+
+  return formatDuration(parsedMs);
+}
+
 function escapePipe(value) {
   return String(value ?? '').replace(/\|/g, '\\|');
+}
+
+function normalizeSignalCellValue(value) {
+  return value == null ? '' : String(value);
 }
 
 function extractAnalysisSignalRows(signalData, fallbackTimestampMs) {
@@ -165,14 +215,12 @@ function extractAnalysisSignalRows(signalData, fallbackTimestampMs) {
   return signalData.items
     .map((item) => {
       if (!item || typeof item !== 'object') return null;
-      const rowTimestamp = isPlaceholderSignalTimestamp(item.timestamp)
-        ? formatDuration(fallbackTimestampMs || 0)
-        : String(item.timestamp);
+      const rowTimestamp = normalizeSignalTimestamp(item.timestamp, fallbackTimestampMs || 0);
       return {
         timestamp: rowTimestamp,
-        category: String(item.category || ''),
-        item: String(item.item || ''),
-        priority: item.priority == null || item.priority === '' ? 'null' : String(item.priority),
+        category: normalizeSignalCellValue(item.category),
+        item: normalizeSignalCellValue(item.item),
+        priority: normalizeSignalCellValue(item.priority),
       };
     })
     .filter(Boolean);
