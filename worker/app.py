@@ -459,6 +459,7 @@ class LiveTranscriptionWorker:
         self._analysis_pending_text: str = ""
         self._analysis_pending_audio: bytes = b""
         self._analysis_audio_samples_total: int = 0
+        self._transcription_audio_samples_sent: int = 0
         self._analysis_last_run_ts_ms: int = 0
         self._analysis_last_seen_ts_ms: int = 0
         self._analysis_audio_request_count: int = 0
@@ -482,6 +483,16 @@ class LiveTranscriptionWorker:
             return max(elapsed_ms, 0)
 
         return 0
+
+    def _transcription_sent_timestamp_ms(self) -> int:
+        """Return transcription timeline time derived from sent PCM16 samples."""
+        return int((self._transcription_audio_samples_sent * 1000) / 16000)
+
+    def _mark_transcription_audio_sent(self, audio_pcm16: bytes) -> None:
+        """Advance transcription timeline by the number of sent PCM16 samples."""
+        if not audio_pcm16:
+            return
+        self._transcription_audio_samples_sent += len(audio_pcm16) // 2
 
     def _parse_structured_analysis_text(self, analysis_text: str) -> Optional[Any]:
         """Parse structured JSON output from analysis text, including fenced JSON blocks."""
@@ -670,6 +681,7 @@ class LiveTranscriptionWorker:
         self._analysis_pending_text = ""
         self._analysis_pending_audio = b""
         self._analysis_audio_samples_total = 0
+        self._transcription_audio_samples_sent = 0
         self._analysis_last_run_ts_ms = 0
         self._analysis_last_seen_ts_ms = 0
         self._stream_started_monotonic_s = time.monotonic()
@@ -689,17 +701,12 @@ class LiveTranscriptionWorker:
             target_lang=VLLM_TARGET_LANG,
         )
 
-        # Voxtral generates one token every 80ms.  Count each
-        # transcription.delta to derive elapsed generation time.
-        _delta_count = 0
-
         async def _on_transcription(message: Any, is_final: bool = False, **kw) -> None:
             """Forward vLLM events to the pytrickle data channel.
 
-            For transcription.delta, inject timestamp_ms (80ms per delta) on
-            the worker side — the vLLM server no longer patches this.
+            For transcription.delta, inject timestamp_ms from the sent-audio
+            sample clock to keep transcription and analysis on one timeline.
             """
-            nonlocal _delta_count
             if processor is None:
                 return
 
@@ -709,20 +716,19 @@ class LiveTranscriptionWorker:
             if isinstance(message, dict):
                 msg_type = message.get("type")
                 if msg_type == "transcription.delta":
-                    _delta_count += 1
-                    # Use the delta count for timestamp tracking, but only
-                    # forward to the data channel when there's actual text.
+                    # Only forward deltas with text.
                     # Empty deltas are heartbeat signals from vLLM for timing.
                     delta = message.get("delta", "")
                     if not delta:
                         return
-                    message["timestamp_ms"] = _delta_count * 80
+                    timestamp_ms = self._transcription_sent_timestamp_ms()
+                    message["timestamp_ms"] = timestamp_ms
                 payload = json.dumps(message)
                 await processor.send_data(payload)
                 if msg_type == "transcription.delta":
                     self._queue_live_analysis(
                         message.get("delta", ""),
-                        _delta_count * 80,
+                        message.get("timestamp_ms", self._transcription_sent_timestamp_ms()),
                         is_final=False,
                     )
                 return
@@ -730,18 +736,18 @@ class LiveTranscriptionWorker:
             text = message if isinstance(message, str) else str(message)
             if not text or not text.strip():
                 return
-            _delta_count += 1
+            timestamp_ms = self._transcription_sent_timestamp_ms()
             payload = json.dumps({
                 "type": "transcription",
                 "text": text,
                 "is_final": is_final,
-                "timestamp_ms": _delta_count * 80,
+                "timestamp_ms": timestamp_ms,
             })
             logger.info(
                 f"Sending transcription on data channel: is_final={is_final}, len={len(text)}"
             )
             await processor.send_data(payload)
-            self._queue_live_analysis(text.strip(), _delta_count * 80, is_final=is_final)
+            self._queue_live_analysis(text.strip(), timestamp_ms, is_final=is_final)
 
         vllm_client.set_text_callback(_on_transcription)
 
@@ -802,6 +808,7 @@ class LiveTranscriptionWorker:
                                 f"rms={rms:.1f}, peak={peak}"
                             )
                         await vllm_client.send_audio(chunk)
+                        self._mark_transcription_audio_sent(chunk)
 
                         # Cycle VLLM WebSocket connection every 15 minutes.
                         # Flush remaining buffered audio before reconnecting so the
@@ -850,6 +857,7 @@ class LiveTranscriptionWorker:
         if remaining_audio:
             try:
                 await vllm_client.send_audio(remaining_audio)
+                self._mark_transcription_audio_sent(remaining_audio)
             except Exception as exc:
                 logger.warning(f"VLLM send remaining audio after reconnect: {exc}")
 
