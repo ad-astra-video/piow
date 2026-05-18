@@ -68,6 +68,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     localAnnotations,
     analysisEntries,
     transcriptionEnabled: activeTranscriptionEnabled,
+    analysisEnabled: activeAnalysisEnabled,
     hasAudioTrack,
     hasVideoTrack,
     start,
@@ -262,6 +263,12 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     }
   }, [isStarted]);
 
+  useEffect(() => {
+    if (!isStarted) return;
+    setTranscriptionServiceEnabled(Boolean(activeTranscriptionEnabled));
+    setAnalysisEnabled(Boolean(activeAnalysisEnabled));
+  }, [isStarted, activeTranscriptionEnabled, activeAnalysisEnabled]);
+
   const handleStart = useCallback(() => {
     const sourceConfig = { type: audioSource };
     if (audioSource === 'file') {
@@ -374,7 +381,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
 
   const livePanelsClassName = [
     'stream-live-panels',
-    analysisEnabled && activeTranscriptionEnabled ? 'analysis-open' : '',
+    activeAnalysisEnabled && activeTranscriptionEnabled ? 'analysis-open' : '',
   ].filter(Boolean).join(' ');
 
   const transcriptContent = (
@@ -930,7 +937,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
           </section>
           )}
 
-          {analysisEnabled && (
+          {activeAnalysisEnabled && (
             <section className="panel-glass analysis-panel">
               <div className="analysis-panel-header">
                 <h2>Live Analysis</h2>

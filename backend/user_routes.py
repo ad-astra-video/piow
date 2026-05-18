@@ -170,7 +170,7 @@ async def get_user_history(request):
 
                 analysis_result = await (
                     supabase.table('stream_analysis')
-                    .select('stream_session_id, analysis_mode, created_at')
+                    .select('stream_session_id, analysis_mode, summary_text, created_at')
                     .eq('user_id', user_id)
                     .in_('stream_session_id', stream_session_ids)
                     .order('created_at', desc=True)
@@ -190,11 +190,13 @@ async def get_user_history(request):
                     analysis = latest_analysis_by_stream_session.get(str(item.get('stream_session_id')))
                     item['has_analysis'] = bool(analysis)
                     item['analysis_mode'] = analysis.get('analysis_mode') if analysis else None
+                    item['analysis_summary_text'] = analysis.get('summary_text') if analysis else None
             else:
                 for item in transcriptions:
                     item['translated_languages'] = []
                     item['has_analysis'] = False
                     item['analysis_mode'] = None
+                    item['analysis_summary_text'] = None
 
         if item_type in ('all', 'translation'):
             tr_result = await supabase.table('translations').select('*').eq('user_id', user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()

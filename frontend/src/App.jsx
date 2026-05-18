@@ -18,7 +18,7 @@ import UsagePage from './pages/UsagePage';
 
 import {
   LayoutDashboard, Mic,
-  History, BarChart3, CreditCard, Menu, X, Radio, MicOff, ArrowRight, AlertCircle, Clock
+  History, BarChart3, CreditCard, Menu, X, Radio, MicOff, ArrowRight, AlertCircle, Clock, Brain
 } from 'lucide-react';
 import { formatDuration } from './lib/streamManager';
 import Sentence from './components/Sentence';
@@ -68,6 +68,8 @@ function LiveTranscriptSidebar({ onStreamStopped }) {
     transcriptEntries,
     partialTranscript,
     partialTranscriptTimestamp,
+    analysisEntries,
+    analysisEnabled,
     errorMessage,
     elapsedMs,
     localAnnotations,
@@ -78,6 +80,14 @@ function LiveTranscriptSidebar({ onStreamStopped }) {
     toggleLocalTodo,
   } = useLiveTranscription();
   const wasStartedRef = React.useRef(false);
+  const [sidebarTab, setSidebarTab] = useState('transcription');
+
+  const analysisDisplayEntries = analysisEntries.filter((entry) => entry.type !== 'analysis.error');
+
+  const getAnalysisModeLabel = (mode) => {
+    if (!mode || typeof mode !== 'string') return 'analysis';
+    return mode.replace(/_/g, ' ');
+  };
 
   useEffect(() => {
     if (wasStartedRef.current && !isStarted) {
@@ -85,6 +95,12 @@ function LiveTranscriptSidebar({ onStreamStopped }) {
     }
     wasStartedRef.current = isStarted;
   }, [isStarted, onStreamStopped]);
+
+  useEffect(() => {
+    if (!analysisEnabled && sidebarTab === 'analysis') {
+      setSidebarTab('transcription');
+    }
+  }, [analysisEnabled, sidebarTab]);
 
   if (!isStarted) return null;
 
@@ -110,38 +126,81 @@ function LiveTranscriptSidebar({ onStreamStopped }) {
           <Clock size={12} /> {formatDuration(elapsedMs)}
         </span>
       </div>
+      {analysisEnabled && (
+        <div className="live-sidebar-tabs" role="tablist" aria-label="Live sidebar data view">
+          <button
+            type="button"
+            className={`live-sidebar-tab ${sidebarTab === 'transcription' ? 'active' : ''}`}
+            aria-pressed={sidebarTab === 'transcription'}
+            onClick={() => setSidebarTab('transcription')}
+          >
+            <Mic size={12} /> Transcription
+          </button>
+          <button
+            type="button"
+            className={`live-sidebar-tab ${sidebarTab === 'analysis' ? 'active' : ''}`}
+            aria-pressed={sidebarTab === 'analysis'}
+            onClick={() => setSidebarTab('analysis')}
+          >
+            <Brain size={12} /> Analysis
+          </button>
+        </div>
+      )}
       <div className="live-sidebar-scroll">
-        {transcriptEntries.length === 0 && !partialTranscript ? (
+        {sidebarTab === 'transcription' && transcriptEntries.length === 0 && !partialTranscript ? (
           <div className="empty-state compact">
             <p>Listening…</p>
           </div>
         ) : null}
-        {transcriptEntries.map((entry, index) => (
-          <Sentence
-            key={`${entry.timestamp}-${index}`}
-            index={index}
-            text={entry.text}
-            timestamp={entry.timestamp}
-            annotations={localAnnotations[index] || []}
-            readOnly={false}
-            onCreateAnnotation={(idx, text, ts, type, content) => addLocalAnnotation(idx, ts, type, content)}
-            onUpdateAnnotation={(id, updates) => updateLocalAnnotation(id, updates)}
-            onDeleteAnnotation={(id) => deleteLocalAnnotation(id)}
-            onToggleTodo={(id) => toggleLocalTodo(id)}
-          />
-        ))}
-        {partialTranscript ? (
-          <article className="live-sidebar-entry partial-entry">
-            <div className="entry-row">
-              {partialTranscriptTimestamp ? (
-                <time className="entry-timestamp-col">[{partialTranscriptTimestamp}]</time>
-              ) : (
-                <span className="entry-timestamp-col placeholder" />
-              )}
-              <MarkdownText className="entry-text" content={partialTranscript} />
-            </div>
-          </article>
-        ) : null}
+        {sidebarTab === 'transcription' ? (
+          <>
+            {transcriptEntries.map((entry, index) => (
+              <Sentence
+                key={`${entry.timestamp}-${index}`}
+                index={index}
+                text={entry.text}
+                timestamp={entry.timestamp}
+                annotations={localAnnotations[index] || []}
+                readOnly={false}
+                onCreateAnnotation={(idx, text, ts, type, content) => addLocalAnnotation(idx, ts, type, content)}
+                onUpdateAnnotation={(id, updates) => updateLocalAnnotation(id, updates)}
+                onDeleteAnnotation={(id) => deleteLocalAnnotation(id)}
+                onToggleTodo={(id) => toggleLocalTodo(id)}
+              />
+            ))}
+            {partialTranscript ? (
+              <article className="live-sidebar-entry partial-entry">
+                <div className="entry-row">
+                  {partialTranscriptTimestamp ? (
+                    <time className="entry-timestamp-col">[{partialTranscriptTimestamp}]</time>
+                  ) : (
+                    <span className="entry-timestamp-col placeholder" />
+                  )}
+                  <MarkdownText className="entry-text" content={partialTranscript} />
+                </div>
+              </article>
+            ) : null}
+          </>
+        ) : (
+          <>
+            {analysisDisplayEntries.length === 0 ? (
+              <div className="empty-state compact">
+                <p>No analysis events yet.</p>
+              </div>
+            ) : (
+              analysisDisplayEntries.map((entry) => (
+                <article key={entry.id} className="live-sidebar-entry live-sidebar-analysis-entry">
+                  <div className="live-sidebar-analysis-meta">
+                    <span className="analysis-entry-type">{entry.type.replace('analysis.', '')}</span>
+                    <span className="analysis-entry-mode">{getAnalysisModeLabel(entry.mode)}</span>
+                    <span className="analysis-entry-ts">{formatDuration(entry.timestampMs || 0)}</span>
+                  </div>
+                  <MarkdownText className="entry-text" content={entry.text} />
+                </article>
+              ))
+            )}
+          </>
+        )}
       </div>
       {errorMessage && (
         <div className="live-sidebar-error">

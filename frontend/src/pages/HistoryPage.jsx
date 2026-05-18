@@ -10,6 +10,7 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('transcription');
   const [search, setSearch] = useState('');
+  const [cardViewById, setCardViewById] = useState({});
   const [modalItem, setModalItem] = useState(null);
   const [modalSentences, setModalSentences] = useState(null); // null = not loaded yet
   const [modalTranslationsByLanguage, setModalTranslationsByLanguage] = useState({});
@@ -132,6 +133,21 @@ export default function HistoryPage() {
 
   const formatDate = (d) => new Date(d).toLocaleString();
   const formatDuration = (s) => s ? `${Math.floor(s / 60)}m ${s % 60}s` : '';
+
+  const getCardId = (item) => String(item.stream_session_id || item.stream_id || item.id);
+
+  const getCardView = (item) => {
+    const cardId = getCardId(item);
+    return cardViewById[cardId] || 'transcription';
+  };
+
+  const setCardView = (item, view) => {
+    const cardId = getCardId(item);
+    setCardViewById((current) => ({
+      ...current,
+      [cardId]: view,
+    }));
+  };
 
   const getModalSentencesForLanguage = () => {
     const baseSentences = modalSentences !== null
@@ -269,19 +285,58 @@ export default function HistoryPage() {
                   <span className={`badge ${item._type}`}>
                     {sourceIcon(item._type, item.source_type)} {item._type}
                   </span>
-                  {item.has_analysis ? (
-                    <span className="badge analysis" title="Live analysis available">
-                      Analysis{item.analysis_mode ? ` • ${formatAnalysisMode(item.analysis_mode)}` : ''}
-                    </span>
-                  ) : null}
+                  <div className="history-data-type-badges" aria-label="Available data types">
+                    <span className="badge transcription">Transcription</span>
+                    {item.has_analysis ? (
+                      <span className="badge analysis" title="Live analysis available">
+                        Analysis{item.analysis_mode ? ` • ${formatAnalysisMode(item.analysis_mode)}` : ''}
+                      </span>
+                    ) : null}
+                  </div>
                   <span className="history-date">{formatDate(item.created_at)}</span>
                 </div>
+                {item.has_analysis ? (
+                  <div className="history-card-view-switch" role="tablist" aria-label="History card view">
+                    <button
+                      type="button"
+                      className={`history-card-view-btn ${getCardView(item) === 'transcription' ? 'active' : ''}`}
+                      onClick={() => setCardView(item, 'transcription')}
+                      aria-pressed={getCardView(item) === 'transcription'}
+                    >
+                      Transcription
+                    </button>
+                    <button
+                      type="button"
+                      className={`history-card-view-btn ${getCardView(item) === 'analysis' ? 'active' : ''}`}
+                      onClick={() => setCardView(item, 'analysis')}
+                      aria-pressed={getCardView(item) === 'analysis'}
+                    >
+                      Analysis
+                    </button>
+                  </div>
+                ) : null}
                 <div className="history-sentences preview" onClick={() => openModal(item)}>
-                  {splitSentences(item.text).slice(0, 5).map((sentence, i) => (
-                    <p key={i} className="history-sentence">{sentence}</p>
-                  ))}
-                  {splitSentences(item.text).length > 5 && (
-                    <p className="history-more">+{splitSentences(item.text).length - 5} more…</p>
+                  {getCardView(item) === 'analysis' && item.has_analysis ? (
+                    item.analysis_summary_text ? (
+                      <div className="history-analysis-preview">
+                        <p className="history-analysis-preview-label">Latest analysis</p>
+                        <p className="history-analysis-preview-text">{item.analysis_summary_text}</p>
+                      </div>
+                    ) : (
+                      <div className="history-analysis-preview">
+                        <p className="history-analysis-preview-label">Latest analysis</p>
+                        <p className="history-analysis-preview-text">Analysis is available. Open the item for full history.</p>
+                      </div>
+                    )
+                  ) : (
+                    <>
+                      {splitSentences(item.text).slice(0, 5).map((sentence, i) => (
+                        <p key={i} className="history-sentence">{sentence}</p>
+                      ))}
+                      {splitSentences(item.text).length > 5 && (
+                        <p className="history-more">+{splitSentences(item.text).length - 5} more…</p>
+                      )}
+                    </>
                   )}
                 </div>
                 <div className="history-footer">
