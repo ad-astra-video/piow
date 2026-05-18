@@ -283,7 +283,7 @@ export default function HistoryPage() {
               <div className="history-main">
                 <div className="history-header">
                   <span className={`badge ${item._type}`}>
-                    {sourceIcon(item._type, item.source_type)} {item._type}
+                    {sourceIcon(item._type, item.source_type)} {item.source_type || item._type}
                   </span>
                   <div className="history-data-type-badges" aria-label="Available data types">
                     <span className="badge transcription">Transcription</span>

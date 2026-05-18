@@ -154,6 +154,13 @@ async def get_user_history(request):
                     .execute()
                 )
 
+                stream_session_result = await (
+                    supabase.table('stream_sessions')
+                    .select('id, analysis_enabled')
+                    .in_('id', stream_session_ids)
+                    .execute()
+                )
+
                 langs_by_stream_session: Dict[str, set] = {}
                 for row in (tr_lang_result.data or []):
                     stream_session_id = row.get('stream_session_id')
@@ -186,9 +193,17 @@ async def get_user_history(request):
                     if key not in latest_analysis_by_stream_session:
                         latest_analysis_by_stream_session[key] = row
 
+                analysis_enabled_by_stream_session: Dict[str, bool] = {}
+                for row in (stream_session_result.data or []):
+                    stream_session_id = row.get('id')
+                    if not stream_session_id:
+                        continue
+                    analysis_enabled_by_stream_session[str(stream_session_id)] = bool(row.get('analysis_enabled'))
+
                 for item in transcriptions:
-                    analysis = latest_analysis_by_stream_session.get(str(item.get('stream_session_id')))
-                    item['has_analysis'] = bool(analysis)
+                    stream_session_id = str(item.get('stream_session_id'))
+                    analysis = latest_analysis_by_stream_session.get(stream_session_id)
+                    item['has_analysis'] = bool(analysis) or analysis_enabled_by_stream_session.get(stream_session_id, False)
                     item['analysis_mode'] = analysis.get('analysis_mode') if analysis else None
                     item['analysis_summary_text'] = analysis.get('summary_text') if analysis else None
             else:
