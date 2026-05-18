@@ -496,10 +496,99 @@ class LiveTranscriptionWorker:
                 if candidate.lower().startswith("json"):
                     candidate = candidate[4:].strip()
 
+        parsed = self._try_parse_json_candidate(candidate)
+        if parsed is not None:
+            return parsed
+
+        extracted_candidate = self._extract_leading_json_candidate(candidate)
+        if extracted_candidate and extracted_candidate != candidate:
+            parsed = self._try_parse_json_candidate(extracted_candidate)
+            if parsed is not None:
+                return parsed
+
+        repaired_candidate = self._repair_truncated_json(candidate)
+        if repaired_candidate and repaired_candidate != candidate:
+            parsed = self._try_parse_json_candidate(repaired_candidate)
+            if parsed is not None:
+                return parsed
+
+        if extracted_candidate:
+            repaired_extracted = self._repair_truncated_json(extracted_candidate)
+            if repaired_extracted and repaired_extracted != extracted_candidate:
+                return self._try_parse_json_candidate(repaired_extracted)
+
+        return None
+
+    @staticmethod
+    def _try_parse_json_candidate(candidate: str) -> Optional[Any]:
+        if not candidate:
+            return None
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
             return None
+
+    @staticmethod
+    def _extract_leading_json_candidate(text: str) -> Optional[str]:
+        if not text:
+            return None
+
+        stripped = text.lstrip()
+        decoder = json.JSONDecoder()
+        try:
+            _, end = decoder.raw_decode(stripped)
+            return stripped[:end]
+        except json.JSONDecodeError:
+            pass
+
+        brace_idx = stripped.find("{")
+        bracket_idx = stripped.find("[")
+        candidates = [idx for idx in (brace_idx, bracket_idx) if idx >= 0]
+        if not candidates:
+            return None
+        start = min(candidates)
+        return stripped[start:].strip()
+
+    @staticmethod
+    def _repair_truncated_json(text: str) -> Optional[str]:
+        if not text:
+            return None
+
+        stack: list[str] = []
+        in_string = False
+        escape = False
+        for ch in text:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch in "[{":
+                stack.append(ch)
+            elif ch in "]}":
+                if stack:
+                    opener = stack[-1]
+                    if (opener == "[" and ch == "]") or (opener == "{" and ch == "}"):
+                        stack.pop()
+
+        if in_string:
+            # If truncation happened mid-string, don't guess missing content.
+            return None
+
+        if not stack:
+            return text
+
+        closers = []
+        while stack:
+            opener = stack.pop()
+            closers.append("]" if opener == "[" else "}")
+        return text + "".join(closers)
 
     def _coerce_signal_data(self, analysis_text: str) -> Any:
         """Return structured signal data, or an error envelope when JSON parsing fails."""
