@@ -40,6 +40,12 @@ export const api = {
     const q = new URLSearchParams(params);
     return _fetch(`/user/history?${q}`);
   },
+  getHistoryAnalysisPreviews: (streamSessionIds = []) => {
+    const ids = (Array.isArray(streamSessionIds) ? streamSessionIds : []).filter(Boolean);
+    if (ids.length === 0) return Promise.resolve({ previews: {} });
+    const q = new URLSearchParams({ stream_session_ids: ids.join(',') });
+    return _fetch(`/user/history-analysis-previews?${q}`);
+  },
   getUsageDetails: (days = 30) => _fetch(`/user/usage-details?days=${days}`),
 
   // Streams

@@ -22,6 +22,7 @@ def setup_routes(app):
     """Setup user-related routes."""
     app.router.add_get('/api/v1/user/profile', get_user_profile)
     app.router.add_get('/api/v1/user/history', get_user_history)
+    app.router.add_get('/api/v1/user/history-analysis-previews', get_user_history_analysis_previews)
     app.router.add_get('/api/v1/user/usage-details', get_usage_details)
     app.router.add_get('/api/v1/streams/{id}/sentences', get_stream_sentences)
     app.router.add_get('/api/v1/streams/{id}/analysis', get_stream_analysis)
@@ -256,6 +257,58 @@ async def get_user_history(request):
 
     except Exception as e:
         logger.error(f"Error getting user history: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+@require_user_auth
+async def get_user_history_analysis_previews(request):
+    """GET /api/v1/user/history-analysis-previews
+
+    Return latest analysis preview text per stream_session_id for the user.
+    Query params:
+      - stream_session_ids: comma-separated stream IDs
+    """
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({'error': 'Authentication required'}, status=401)
+
+    try:
+        raw_ids = request.query.get('stream_session_ids', '')
+        stream_session_ids = [s.strip() for s in raw_ids.split(',') if s.strip()]
+        if not stream_session_ids:
+            return web.json_response({'previews': {}})
+
+        result = await (
+            supabase.table('stream_analysis')
+            .select('stream_session_id, analysis_mode, summary_text, created_at')
+            .eq('user_id', user_id)
+            .in_('stream_session_id', stream_session_ids)
+            .order('created_at', desc=True)
+            .execute()
+        )
+
+        previews: Dict[str, Dict[str, Any]] = {}
+        for row in (result.data or []):
+            stream_session_id = row.get('stream_session_id')
+            summary_text = row.get('summary_text')
+            if not stream_session_id:
+                continue
+            if not isinstance(summary_text, str) or not summary_text.strip():
+                continue
+
+            key = str(stream_session_id)
+            if key in previews:
+                continue
+
+            previews[key] = {
+                'summary_text': summary_text,
+                'analysis_mode': row.get('analysis_mode'),
+                'created_at': row.get('created_at'),
+            }
+
+        return web.json_response({'previews': previews})
+    except Exception as e:
+        logger.error(f"Error getting history analysis previews: {e}")
         return web.json_response({'error': str(e)}, status=500)
 
 

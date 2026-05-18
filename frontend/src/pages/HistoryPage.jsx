@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Trash2, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, X, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
@@ -52,7 +52,9 @@ export default function HistoryPage() {
   const [cardViewById, setCardViewById] = useState({});
   const [cardAnalysisPreviewById, setCardAnalysisPreviewById] = useState({});
   const [cardAnalysisLoadingById, setCardAnalysisLoadingById] = useState({});
+  const [cardAnalysisErrorById, setCardAnalysisErrorById] = useState({});
   const [modalItem, setModalItem] = useState(null);
+  const [modalStreamTab, setModalStreamTab] = useState('transcription');
   const [modalSentences, setModalSentences] = useState(null); // null = not loaded yet
   const [modalTranslationsByLanguage, setModalTranslationsByLanguage] = useState({});
   const [activeModalLanguage, setActiveModalLanguage] = useState(null);
@@ -109,6 +111,7 @@ export default function HistoryPage() {
 
   const openModal = async (item) => {
     setModalItem(item);
+    setModalStreamTab('transcription');
     setModalSentences(null);
     setModalTranslationsByLanguage({});
     setActiveModalLanguage(null);
@@ -155,6 +158,7 @@ export default function HistoryPage() {
 
   const closeModal = () => {
     setModalItem(null);
+    setModalStreamTab('transcription');
     setModalSentences(null);
     setModalTranslationsByLanguage({});
     setActiveModalLanguage(null);
@@ -165,21 +169,13 @@ export default function HistoryPage() {
     setModalAnalysisLoading(false);
   };
 
-  const filtered = items.filter((item) => {
+  const filtered = useMemo(() => items.filter((item) => {
     if (filter === 'analysis' && !item.has_analysis) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     const text = (item.text || item.original_text || '').toLowerCase();
     return text.includes(q);
-  });
-
-  useEffect(() => {
-    filtered.forEach((item) => {
-      if (item.has_analysis) {
-        ensureCardAnalysisPreview(item);
-      }
-    });
-  }, [filtered, cardViewById]);
+  }), [items, filter, search]);
 
   const formatDate = (d) => new Date(d).toLocaleString();
   const formatDuration = (s) => s ? `${Math.floor(s / 60)}m ${s % 60}s` : '';
@@ -203,33 +199,71 @@ export default function HistoryPage() {
     }));
 
     if (view === 'analysis') {
-      ensureCardAnalysisPreview(item);
+      loadAnalysisPreviewsForItems([item], { force: true });
     }
   };
 
-  const ensureCardAnalysisPreview = async (item) => {
-    const cardId = getCardId(item);
-    if (!item?.has_analysis) return;
-    if (item.analysis_summary_text) return;
-    if (cardAnalysisPreviewById[cardId]) return;
-    if (cardAnalysisLoadingById[cardId]) return;
+  const loadAnalysisPreviewsForItems = async (itemsToLoad, options = {}) => {
+    const force = options.force === true;
+    const requests = [];
 
-    setCardAnalysisLoadingById((current) => ({ ...current, [cardId]: true }));
-    try {
+    for (const item of itemsToLoad || []) {
+      if (!item?.has_analysis) continue;
+      const cardId = getCardId(item);
       const streamId = item.stream_session_id || item.stream_id || item.id;
-      const res = await api.getStreamAnalysis(streamId);
-      const analysisRows = Array.isArray(res?.analysis) ? res.analysis : [];
-      const latest = analysisRows.find((entry) => typeof entry?.summary_text === 'string' && entry.summary_text.trim());
-      setCardAnalysisPreviewById((current) => ({
-        ...current,
-        [cardId]: latest?.summary_text || '',
-      }));
+      if (!streamId) continue;
+
+      const hasExisting = Boolean(item.analysis_summary_text || cardAnalysisPreviewById[cardId]);
+      if (!force && hasExisting) continue;
+      if (cardAnalysisLoadingById[cardId]) continue;
+
+      requests.push({ cardId, streamId: String(streamId) });
+    }
+
+    if (requests.length === 0) return;
+
+    const cardIds = requests.map((r) => r.cardId);
+    const streamIds = [...new Set(requests.map((r) => r.streamId))];
+
+    setCardAnalysisLoadingById((current) => {
+      const next = { ...current };
+      cardIds.forEach((id) => { next[id] = true; });
+      return next;
+    });
+    setCardAnalysisErrorById((current) => {
+      const next = { ...current };
+      cardIds.forEach((id) => { next[id] = ''; });
+      return next;
+    });
+
+    try {
+      const res = await api.getHistoryAnalysisPreviews(streamIds);
+      const previews = res?.previews || {};
+      setCardAnalysisPreviewById((current) => {
+        const next = { ...current };
+        requests.forEach(({ cardId, streamId }) => {
+          next[cardId] = previews?.[streamId]?.summary_text || '';
+        });
+        return next;
+      });
     } catch (_err) {
-      setCardAnalysisPreviewById((current) => ({ ...current, [cardId]: '' }));
+      setCardAnalysisErrorById((current) => {
+        const next = { ...current };
+        cardIds.forEach((id) => { next[id] = 'Could not load analysis preview.'; });
+        return next;
+      });
     } finally {
-      setCardAnalysisLoadingById((current) => ({ ...current, [cardId]: false }));
+      setCardAnalysisLoadingById((current) => {
+        const next = { ...current };
+        cardIds.forEach((id) => { next[id] = false; });
+        return next;
+      });
     }
   };
+
+  useEffect(() => {
+    loadAnalysisPreviewsForItems(filtered);
+  }, [filtered]);
 
   const getModalSentencesForLanguage = () => {
     const baseSentences = modalSentences !== null
@@ -324,6 +358,23 @@ export default function HistoryPage() {
   const getCardAnalysisPreviewText = (item) => {
     const cardId = getCardId(item);
     return item.analysis_summary_text || cardAnalysisPreviewById[cardId] || '';
+  };
+
+  const getFullTranscriptionText = () => {
+    if (modalSentences !== null) {
+      return (modalSentences || []).map((row) => row.text).filter(Boolean).join('\n');
+    }
+    return (modalItem?.text || '').trim();
+  };
+
+  const getFullAnalysisText = () => {
+    if (modalAnalysisEntries.length > 0) {
+      return modalAnalysisEntries
+        .map((entry) => (typeof entry?.summary_text === 'string' ? entry.summary_text.trim() : ''))
+        .filter(Boolean)
+        .join('\n\n');
+    }
+    return (modalItem?.analysis_summary_text || getCardAnalysisPreviewText(modalItem || {}) || '').trim();
   };
 
   const renderAnalysisContent = (rawText) => {
@@ -431,6 +482,11 @@ export default function HistoryPage() {
                         <p className="history-analysis-preview-label">Latest analysis</p>
                         <p className="history-analysis-preview-text">Loading analysis preview…</p>
                       </div>
+                    ) : cardAnalysisErrorById[getCardId(item)] ? (
+                      <div className="history-analysis-preview">
+                        <p className="history-analysis-preview-label">Latest analysis</p>
+                        <p className="history-analysis-preview-text">{cardAnalysisErrorById[getCardId(item)]}</p>
+                      </div>
                     ) : (
                       <div className="history-analysis-preview">
                         <p className="history-analysis-preview-label">Latest analysis</p>
@@ -496,8 +552,8 @@ export default function HistoryPage() {
           <div className="history-modal panel-glass" onClick={(e) => e.stopPropagation()}>
             <div className="history-modal-header">
               <div className="history-modal-title">
-                <span className={`badge ${modalItem._type}`}>
-                  {sourceIcon(modalItem._type, modalItem.source_type)} {modalItem._type}
+                <span className="badge transcription">
+                  {sourceIcon(modalItem._type, modalItem.source_type)} stream
                 </span>
                 <span className="history-date">{formatDate(modalItem.created_at)}</span>
               </div>
@@ -506,38 +562,66 @@ export default function HistoryPage() {
               </button>
             </div>
             <div className="history-modal-body">
-              <div className="history-language-tabs" aria-label="Transcript and translations display options">
+              <div className="history-stream-tabs" role="tablist" aria-label="Stream modal view">
                 <button
-                  className={`history-language-tab ${showModalTranscript ? 'active' : ''}`}
-                  onClick={toggleModalTranscript}
                   type="button"
-                  aria-pressed={showModalTranscript}
+                  className={`history-stream-tab ${modalStreamTab === 'transcription' ? 'active' : ''}`}
+                  aria-pressed={modalStreamTab === 'transcription'}
+                  onClick={() => setModalStreamTab('transcription')}
                 >
-                  Transcript
+                  Transcription
                 </button>
-                {Object.keys(modalTranslationsByLanguage).map((lang) => (
-                  <button
-                    key={lang}
-                    className={`history-language-tab ${getTranslationButtonActive(lang) ? 'active' : ''}`}
-                    onClick={() => toggleModalTranslationLanguage(lang)}
-                    type="button"
-                    aria-pressed={getTranslationButtonActive(lang)}
-                  >
-                    {lang.toUpperCase()}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  className={`history-stream-tab ${modalStreamTab === 'analysis' ? 'active' : ''}`}
+                  aria-pressed={modalStreamTab === 'analysis'}
+                  onClick={() => setModalStreamTab('analysis')}
+                  disabled={!modalItem.has_analysis}
+                  title={!modalItem.has_analysis ? 'Analysis not available for this stream' : undefined}
+                >
+                  Analysis{modalItem.analysis_mode ? ` • ${formatAnalysisMode(modalItem.analysis_mode)}` : ''}
+                </button>
               </div>
-              <SentenceList
-                transcriptionId={modalItem.stream_session_id || modalItem.stream_id || modalItem.id}
-                sentences={getModalSentencesForLanguage()}
-                readOnly={!showModalTranscript}
-              />
-              {isShowingTranslationOnly && !hasActiveTranslationRows && (
-                  <div className="history-translation-modal">
-                    <p className="history-modal-section-label">No sentence translations for this language yet.</p>
+
+              {modalStreamTab === 'transcription' ? (
+                <>
+                  <div className="history-language-tabs" aria-label="Transcript and translations display options">
+                    <button
+                      className={`history-language-tab ${showModalTranscript ? 'active' : ''}`}
+                      onClick={toggleModalTranscript}
+                      type="button"
+                      aria-pressed={showModalTranscript}
+                    >
+                      Transcript
+                    </button>
+                    {Object.keys(modalTranslationsByLanguage).map((lang) => (
+                      <button
+                        key={lang}
+                        className={`history-language-tab ${getTranslationButtonActive(lang) ? 'active' : ''}`}
+                        onClick={() => toggleModalTranslationLanguage(lang)}
+                        type="button"
+                        aria-pressed={getTranslationButtonActive(lang)}
+                      >
+                        {lang.toUpperCase()}
+                      </button>
+                    ))}
                   </div>
-              )}
-              {(modalItem.has_analysis || modalAnalysisLoading || latestModalAnalysis || modalAnalysisError) && (
+                  <SentenceList
+                    transcriptionId={modalItem.stream_session_id || modalItem.stream_id || modalItem.id}
+                    sentences={getModalSentencesForLanguage()}
+                    readOnly={!showModalTranscript}
+                  />
+                  {isShowingTranslationOnly && !hasActiveTranslationRows && (
+                      <div className="history-translation-modal">
+                        <p className="history-modal-section-label">No sentence translations for this language yet.</p>
+                      </div>
+                  )}
+                  <div className="history-full-text-block">
+                    <p className="history-modal-section-label">Full transcription</p>
+                    <pre className="history-analysis-json">{getFullTranscriptionText() || 'No transcription text available.'}</pre>
+                  </div>
+                </>
+              ) : (
                 <div className="history-analysis-card panel-glass">
                   <div className="history-analysis-header">
                     <p className="history-modal-section-label">Live Analysis</p>
@@ -549,19 +633,13 @@ export default function HistoryPage() {
                   {modalAnalysisLoading && <p className="history-analysis-status">Loading analysis…</p>}
                   {!modalAnalysisLoading && modalAnalysisError && <p className="history-analysis-error">{modalAnalysisError}</p>}
 
-                  {!modalAnalysisLoading && latestModalAnalysis && (
-                    <>
-                      <div className="history-analysis-text">{renderAnalysisContent(latestModalAnalysis.summary_text)}</div>
-                      <p className="history-analysis-meta">{formatDate(latestModalAnalysis.created_at)}</p>
-                    </>
-                  )}
-
-                  {!modalAnalysisLoading && !latestModalAnalysis && !modalAnalysisError && modalItem.has_analysis && (
-                    <>
+                  {!modalAnalysisLoading && (latestModalAnalysis || getFullAnalysisText()) && (
+                    <div className="history-full-text-block">
+                      <p className="history-modal-section-label">Full analysis</p>
                       <div className="history-analysis-text">
-                        {renderAnalysisContent(modalItem.analysis_summary_text || getCardAnalysisPreviewText(modalItem) || 'Analysis is enabled for this stream, but no persisted summary text is available yet.')}
+                        {renderAnalysisContent(getFullAnalysisText() || 'No analysis text available.')}
                       </div>
-                    </>
+                    </div>
                   )}
 
                   {!modalAnalysisLoading && olderModalAnalyses.length > 0 && (

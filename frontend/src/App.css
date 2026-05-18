@@ -1408,6 +1408,42 @@ html, body {
   cursor: not-allowed;
 }
 
+.history-stream-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.6rem;
+}
+
+.history-stream-tab {
+  border: 1px solid var(--line, #2a3242);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted, #8a96a8);
+  border-radius: 999px;
+  padding: 0.25rem 0.62rem;
+  font-size: 0.74rem;
+  line-height: 1.1;
+  cursor: pointer;
+}
+
+.history-stream-tab.active {
+  border-color: var(--accent, #6c8cff);
+  color: var(--text, #e9edf5);
+  background: rgba(108, 140, 255, 0.14);
+}
+
+.history-stream-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.history-full-text-block {
+  margin-top: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 .history-translation-preview { display: flex; flex-direction: column; gap: 0.25rem; cursor: pointer; }
 .history-text-original { color: var(--text-muted, #8a96a8); }
 .history-text-translated { font-style: italic; border-left: 2px solid var(--accent, #6c8cff); padding-left: 0.45rem; }
