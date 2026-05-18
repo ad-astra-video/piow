@@ -5,6 +5,45 @@ import { downloadTranscription } from '../lib/download';
 import SentenceList from '../components/SentenceList';
 import { splitSentences, parseTranscriptSentences } from '../lib/download';
 
+function parseAnalysisDisplay(rawText) {
+  if (typeof rawText !== 'string') {
+    return { mode: 'text', text: '' };
+  }
+
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return { mode: 'text', text: '' };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items)) {
+      const rows = parsed.items
+        .map((row) => {
+          if (!row || typeof row !== 'object') return null;
+          const itemText = typeof row.item === 'string' ? row.item.trim() : '';
+          if (!itemText) return null;
+          const category = typeof row.category === 'string' ? row.category.trim() : '';
+          const priority = typeof row.priority === 'string' ? row.priority.trim() : '';
+          return {
+            category,
+            item: itemText,
+            priority,
+          };
+        })
+        .filter(Boolean);
+
+      if (rows.length > 0) {
+        return { mode: 'items', items: rows };
+      }
+    }
+
+    return { mode: 'json', text: JSON.stringify(parsed, null, 2) };
+  } catch (_err) {
+    return { mode: 'text', text: trimmed };
+  }
+}
+
 export default function HistoryPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -287,6 +326,30 @@ export default function HistoryPage() {
     return item.analysis_summary_text || cardAnalysisPreviewById[cardId] || '';
   };
 
+  const renderAnalysisContent = (rawText) => {
+    const parsed = parseAnalysisDisplay(rawText);
+
+    if (parsed.mode === 'items') {
+      return (
+        <ul className="history-analysis-items-list">
+          {parsed.items.map((row, idx) => (
+            <li key={`${row.item}-${idx}`} className="history-analysis-items-row">
+              {row.category ? <span className="history-analysis-item-category">{row.category}</span> : null}
+              <span className="history-analysis-item-text">{row.item}</span>
+              {row.priority ? <span className="history-analysis-item-priority">{row.priority}</span> : null}
+            </li>
+          ))}
+        </ul>
+      );
+    }
+
+    if (parsed.mode === 'json') {
+      return <pre className="history-analysis-json">{parsed.text}</pre>;
+    }
+
+    return <p className="history-analysis-preview-text">{parsed.text}</p>;
+  };
+
 
 
   const sourceIcon = (type, src) => {
@@ -361,7 +424,7 @@ export default function HistoryPage() {
                     getCardAnalysisPreviewText(item) ? (
                       <div className="history-analysis-preview">
                         <p className="history-analysis-preview-label">Latest analysis</p>
-                        <p className="history-analysis-preview-text">{getCardAnalysisPreviewText(item)}</p>
+                        {renderAnalysisContent(getCardAnalysisPreviewText(item))}
                       </div>
                     ) : cardAnalysisLoadingById[getCardId(item)] ? (
                       <div className="history-analysis-preview">
@@ -488,16 +551,16 @@ export default function HistoryPage() {
 
                   {!modalAnalysisLoading && latestModalAnalysis && (
                     <>
-                      <p className="history-analysis-text">{latestModalAnalysis.summary_text}</p>
+                      <div className="history-analysis-text">{renderAnalysisContent(latestModalAnalysis.summary_text)}</div>
                       <p className="history-analysis-meta">{formatDate(latestModalAnalysis.created_at)}</p>
                     </>
                   )}
 
                   {!modalAnalysisLoading && !latestModalAnalysis && !modalAnalysisError && modalItem.has_analysis && (
                     <>
-                      <p className="history-analysis-text">
-                        {modalItem.analysis_summary_text || getCardAnalysisPreviewText(modalItem) || 'Analysis is enabled for this stream, but no persisted summary text is available yet.'}
-                      </p>
+                      <div className="history-analysis-text">
+                        {renderAnalysisContent(modalItem.analysis_summary_text || getCardAnalysisPreviewText(modalItem) || 'Analysis is enabled for this stream, but no persisted summary text is available yet.')}
+                      </div>
                     </>
                   )}
 
@@ -507,7 +570,7 @@ export default function HistoryPage() {
                       <div className="history-analysis-older-list">
                         {olderModalAnalyses.map((entry) => (
                           <div key={entry.id} className="history-analysis-older-item">
-                            <p className="history-analysis-text">{entry.summary_text}</p>
+                            <div className="history-analysis-text">{renderAnalysisContent(entry.summary_text)}</div>
                             <p className="history-analysis-meta">{formatDate(entry.created_at)}</p>
                           </div>
                         ))}
