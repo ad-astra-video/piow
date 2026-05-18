@@ -11,6 +11,8 @@ export default function HistoryPage() {
   const [filter, setFilter] = useState('transcription');
   const [search, setSearch] = useState('');
   const [cardViewById, setCardViewById] = useState({});
+  const [cardAnalysisPreviewById, setCardAnalysisPreviewById] = useState({});
+  const [cardAnalysisLoadingById, setCardAnalysisLoadingById] = useState({});
   const [modalItem, setModalItem] = useState(null);
   const [modalSentences, setModalSentences] = useState(null); // null = not loaded yet
   const [modalTranslationsByLanguage, setModalTranslationsByLanguage] = useState({});
@@ -147,6 +149,34 @@ export default function HistoryPage() {
       ...current,
       [cardId]: view,
     }));
+
+    if (view === 'analysis') {
+      ensureCardAnalysisPreview(item);
+    }
+  };
+
+  const ensureCardAnalysisPreview = async (item) => {
+    const cardId = getCardId(item);
+    if (!item?.has_analysis) return;
+    if (item.analysis_summary_text) return;
+    if (cardAnalysisPreviewById[cardId]) return;
+    if (cardAnalysisLoadingById[cardId]) return;
+
+    setCardAnalysisLoadingById((current) => ({ ...current, [cardId]: true }));
+    try {
+      const streamId = item.stream_session_id || item.stream_id || item.id;
+      const res = await api.getStreamAnalysis(streamId);
+      const analysisRows = Array.isArray(res?.analysis) ? res.analysis : [];
+      const latest = analysisRows.find((entry) => typeof entry?.summary_text === 'string' && entry.summary_text.trim());
+      setCardAnalysisPreviewById((current) => ({
+        ...current,
+        [cardId]: latest?.summary_text || '',
+      }));
+    } catch (_err) {
+      setCardAnalysisPreviewById((current) => ({ ...current, [cardId]: '' }));
+    } finally {
+      setCardAnalysisLoadingById((current) => ({ ...current, [cardId]: false }));
+    }
   };
 
   const getModalSentencesForLanguage = () => {
@@ -239,6 +269,11 @@ export default function HistoryPage() {
   const latestModalAnalysis = modalAnalysisEntries.length > 0 ? modalAnalysisEntries[0] : null;
   const olderModalAnalyses = modalAnalysisEntries.slice(1);
 
+  const getCardAnalysisPreviewText = (item) => {
+    const cardId = getCardId(item);
+    return item.analysis_summary_text || cardAnalysisPreviewById[cardId] || '';
+  };
+
 
 
   const sourceIcon = (type, src) => {
@@ -317,10 +352,15 @@ export default function HistoryPage() {
                 ) : null}
                 <div className="history-sentences preview" onClick={() => openModal(item)}>
                   {getCardView(item) === 'analysis' && item.has_analysis ? (
-                    item.analysis_summary_text ? (
+                    getCardAnalysisPreviewText(item) ? (
                       <div className="history-analysis-preview">
                         <p className="history-analysis-preview-label">Latest analysis</p>
-                        <p className="history-analysis-preview-text">{item.analysis_summary_text}</p>
+                        <p className="history-analysis-preview-text">{getCardAnalysisPreviewText(item)}</p>
+                      </div>
+                    ) : cardAnalysisLoadingById[getCardId(item)] ? (
+                      <div className="history-analysis-preview">
+                        <p className="history-analysis-preview-label">Latest analysis</p>
+                        <p className="history-analysis-preview-text">Loading analysis preview…</p>
                       </div>
                     ) : (
                       <div className="history-analysis-preview">
@@ -428,12 +468,12 @@ export default function HistoryPage() {
                     <p className="history-modal-section-label">No sentence translations for this language yet.</p>
                   </div>
               )}
-              {(modalAnalysisLoading || latestModalAnalysis || modalAnalysisError) && (
+              {(modalItem.has_analysis || modalAnalysisLoading || latestModalAnalysis || modalAnalysisError) && (
                 <div className="history-analysis-card panel-glass">
                   <div className="history-analysis-header">
                     <p className="history-modal-section-label">Live Analysis</p>
-                    {latestModalAnalysis?.analysis_mode ? (
-                      <span className="lang-tag secondary">{formatAnalysisMode(latestModalAnalysis.analysis_mode)}</span>
+                    {(latestModalAnalysis?.analysis_mode || modalItem.analysis_mode) ? (
+                      <span className="lang-tag secondary">{formatAnalysisMode(latestModalAnalysis?.analysis_mode || modalItem.analysis_mode)}</span>
                     ) : null}
                   </div>
 
@@ -444,6 +484,14 @@ export default function HistoryPage() {
                     <>
                       <p className="history-analysis-text">{latestModalAnalysis.summary_text}</p>
                       <p className="history-analysis-meta">{formatDate(latestModalAnalysis.created_at)}</p>
+                    </>
+                  )}
+
+                  {!modalAnalysisLoading && !latestModalAnalysis && !modalAnalysisError && modalItem.has_analysis && (
+                    <>
+                      <p className="history-analysis-text">
+                        {modalItem.analysis_summary_text || getCardAnalysisPreviewText(modalItem) || 'Analysis is enabled for this stream, but no persisted summary text is available yet.'}
+                      </p>
                     </>
                   )}
 
