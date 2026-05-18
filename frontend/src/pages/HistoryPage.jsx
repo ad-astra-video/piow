@@ -134,6 +134,14 @@ export default function HistoryPage() {
     return text.includes(q);
   });
 
+  useEffect(() => {
+    filtered.forEach((item) => {
+      if (getCardView(item) === 'analysis' && item.has_analysis) {
+        ensureCardAnalysisPreview(item);
+      }
+    });
+  }, [filtered, cardViewById]);
+
   const formatDate = (d) => new Date(d).toLocaleString();
   const formatDuration = (s) => s ? `${Math.floor(s / 60)}m ${s % 60}s` : '';
 

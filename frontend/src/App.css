@@ -1321,13 +1321,51 @@ html, body {
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 8px;
 }
+.filter-wrap {
+  position: relative;
+  min-width: 170px;
+}
 .search-wrap input {
   border: none; background: transparent; color: var(--text);
   font-size: 0.85rem; outline: none; width: 180px;
 }
 .filter-wrap select {
-  border: none; background: transparent; color: var(--text);
-  font-size: 0.85rem; outline: none;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 500;
+  outline: none;
+  width: 100%;
+  border-radius: 7px;
+  padding: 0.38rem 1.75rem 0.38rem 0.55rem;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.filter-wrap::after {
+  content: '';
+  position: absolute;
+  right: 0.95rem;
+  top: 50%;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+}
+
+.filter-wrap select:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.filter-wrap select:focus {
+  border-color: var(--accent, #6c8cff);
+  background: rgba(108, 140, 255, 0.1);
 }
 
 .history-list { display: flex; flex-direction: column; gap: 0.5rem; }
