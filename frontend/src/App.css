@@ -1338,7 +1338,6 @@ html, body {
 }
 .history-main { flex: 1; min-width: 0; }
 .history-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
-.history-data-type-badges { display: flex; align-items: center; gap: 0.35rem; }
 .history-date { font-size: 0.75rem; color: var(--text-muted); margin-left: auto; }
 .history-text { margin: 0; font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; }
 
@@ -1364,6 +1363,11 @@ html, body {
   border-color: var(--accent, #6c8cff);
   color: var(--text, #e9edf5);
   background: rgba(108, 140, 255, 0.14);
+}
+
+.history-card-view-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .history-translation-preview { display: flex; flex-direction: column; gap: 0.25rem; cursor: pointer; }

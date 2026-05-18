@@ -27,7 +27,7 @@ export default function HistoryPage() {
     setLoading(true);
     try {
       const params = { limit: 100 };
-      params.type = filter;
+      params.type = 'transcription';
       const res = await api.getHistory(params);
       setItems((res.items || []).filter((item) => item._type === 'transcription'));
     } catch (e) {
@@ -127,6 +127,7 @@ export default function HistoryPage() {
   };
 
   const filtered = items.filter((item) => {
+    if (filter === 'analysis' && !item.has_analysis) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     const text = (item.text || item.original_text || '').toLowerCase();
@@ -140,10 +141,14 @@ export default function HistoryPage() {
 
   const getCardView = (item) => {
     const cardId = getCardId(item);
-    return cardViewById[cardId] || 'transcription';
+    if (cardViewById[cardId]) return cardViewById[cardId];
+    if (filter === 'analysis' && item.has_analysis) return 'analysis';
+    return 'transcription';
   };
 
   const setCardView = (item, view) => {
+    if (view === 'analysis' && !item.has_analysis) return;
+
     const cardId = getCardId(item);
     setCardViewById((current) => ({
       ...current,
@@ -300,7 +305,8 @@ export default function HistoryPage() {
         <div className="filter-wrap">
           <Filter size={16} />
           <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-            <option value="transcription">Transcriptions</option>
+            <option value="transcription">Transcription</option>
+            <option value="analysis">Analysis</option>
           </select>
         </div>
       </div>
@@ -320,36 +326,28 @@ export default function HistoryPage() {
                   <span className={`badge ${item._type}`}>
                     {sourceIcon(item._type, item.source_type)} {item.source_type || item._type}
                   </span>
-                  <div className="history-data-type-badges" aria-label="Available data types">
-                    <span className="badge transcription">Transcription</span>
-                    {item.has_analysis ? (
-                      <span className="badge analysis" title="Live analysis available">
-                        Analysis{item.analysis_mode ? ` • ${formatAnalysisMode(item.analysis_mode)}` : ''}
-                      </span>
-                    ) : null}
-                  </div>
                   <span className="history-date">{formatDate(item.created_at)}</span>
                 </div>
-                {item.has_analysis ? (
-                  <div className="history-card-view-switch" role="tablist" aria-label="History card view">
-                    <button
-                      type="button"
-                      className={`history-card-view-btn ${getCardView(item) === 'transcription' ? 'active' : ''}`}
-                      onClick={() => setCardView(item, 'transcription')}
-                      aria-pressed={getCardView(item) === 'transcription'}
-                    >
-                      Transcription
-                    </button>
-                    <button
-                      type="button"
-                      className={`history-card-view-btn ${getCardView(item) === 'analysis' ? 'active' : ''}`}
-                      onClick={() => setCardView(item, 'analysis')}
-                      aria-pressed={getCardView(item) === 'analysis'}
-                    >
-                      Analysis
-                    </button>
-                  </div>
-                ) : null}
+                <div className="history-card-view-switch" role="tablist" aria-label="History card view">
+                  <button
+                    type="button"
+                    className={`history-card-view-btn ${getCardView(item) === 'transcription' ? 'active' : ''}`}
+                    onClick={() => setCardView(item, 'transcription')}
+                    aria-pressed={getCardView(item) === 'transcription'}
+                  >
+                    Transcription
+                  </button>
+                  <button
+                    type="button"
+                    className={`history-card-view-btn ${getCardView(item) === 'analysis' ? 'active' : ''}`}
+                    onClick={() => setCardView(item, 'analysis')}
+                    aria-pressed={getCardView(item) === 'analysis'}
+                    disabled={!item.has_analysis}
+                    title={!item.has_analysis ? 'Analysis not available for this item' : undefined}
+                  >
+                    Analysis{item.analysis_mode ? ` • ${formatAnalysisMode(item.analysis_mode)}` : ''}
+                  </button>
+                </div>
                 <div className="history-sentences preview" onClick={() => openModal(item)}>
                   {getCardView(item) === 'analysis' && item.has_analysis ? (
                     getCardAnalysisPreviewText(item) ? (
