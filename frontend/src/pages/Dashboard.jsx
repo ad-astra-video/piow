@@ -107,6 +107,9 @@ export default function Dashboard({ usageSnapshot }) {
               <div key={`${item._type}-${item.id}`} className="recent-item panel-glass">
                 <div className="recent-meta">
                   <span className={`badge ${item._type}`}>{item._type}</span>
+                  {item._type === 'transcription' && item.has_analysis ? (
+                    <span className="badge analysis">analysis{item.analysis_mode ? ` • ${item.analysis_mode.replace('_only', '').replace('_', ' ')}` : ''}</span>
+                  ) : null}
                   <span className="recent-date">{new Date(item.created_at).toLocaleString()}</span>
                 </div>
                 <p className="recent-text">

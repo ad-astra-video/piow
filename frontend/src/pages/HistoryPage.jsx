@@ -175,7 +175,7 @@ export default function HistoryPage() {
 
   useEffect(() => {
     filtered.forEach((item) => {
-      if (getCardView(item) === 'analysis' && item.has_analysis) {
+      if (item.has_analysis) {
         ensureCardAnalysisPreview(item);
       }
     });
