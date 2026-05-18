@@ -649,6 +649,63 @@ class TestSSERelayPersistence(unittest.IsolatedAsyncioTestCase):
             ["[00:00:05] First sentence.", "[00:00:05] Second sentence."],
         )
 
+    async def test_acronym_tokens_do_not_split_sentence(self):
+        from sse_relay import SSERelay
+
+        session_store = AsyncMock()
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=session_store,
+        )
+
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {
+                    "type": "response.output_text.delta",
+                    "delta": "No, I mean, I think there's Iranian media said U.",
+                    "timestamp_ms": 842000,
+                },
+                "id": None,
+            }
+        )
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {
+                    "type": "response.output_text.delta",
+                    "delta": " S.",
+                    "timestamp_ms": 844000,
+                },
+                "id": None,
+            }
+        )
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {
+                    "type": "response.output_text.delta",
+                    "delta": " Offered interim waiver on oil sanctions.",
+                    "timestamp_ms": 845000,
+                },
+                "id": None,
+            }
+        )
+
+        await relay._flush_pending_segments()
+
+        session_store.update_stream_session.assert_called_once_with(
+            "test-stream",
+            {
+                "transcription_segment": "[00:14:02] No, I mean, I think there's Iranian media said U. S. Offered interim waiver on oil sanctions.",
+            },
+        )
+        session_store.upsert_stream_transcription.assert_called_once_with(
+            "test-stream",
+            ["[00:14:02] No, I mean, I think there's Iranian media said U. S. Offered interim waiver on oil sanctions."],
+        )
+
     async def test_flush_persists_timestamp_segments(self):
         from sse_relay import SSERelay
 

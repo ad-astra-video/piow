@@ -90,6 +90,39 @@ function formatDuration(ms) {
   return `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`;
 }
 
+function isLikelySentenceBoundary(buffer, segmentStart, matchStart, matchEnd) {
+  const punctuation = buffer.slice(matchStart, matchEnd);
+  if (/[!?]/.test(punctuation)) {
+    return true;
+  }
+
+  const leftWithPeriod = buffer.slice(0, matchEnd).trimEnd();
+  const right = buffer.slice(matchEnd);
+  const rightTrimmed = right.trimStart();
+
+  // Keep decimal values (e.g., 3.14) together.
+  const prevChar = matchStart > 0 ? buffer[matchStart - 1] : '';
+  const nextChar = rightTrimmed[0] || '';
+  if (/\d/.test(prevChar) && /\d/.test(nextChar)) {
+    return false;
+  }
+
+  const candidate = buffer.slice(segmentStart, matchEnd).trim();
+  // Avoid promoting tiny fragments like "U." or "S." to full sentences.
+  if (candidate.length < 6 || !/\s/.test(candidate)) {
+    return false;
+  }
+
+  const stem = candidate.replace(/[.!?]+$/, '').trim();
+  const stemParts = stem.split(/\s+/);
+  const lastWord = stemParts[stemParts.length - 1] || '';
+  if (lastWord.length < 2) {
+    return false;
+  }
+
+  return true;
+}
+
 function isPlaceholderCellValue(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return normalized === ''
@@ -887,6 +920,9 @@ class StreamManager {
               let match;
               let lastEnd = 0;
               while ((match = regex.exec(buffer)) !== null) {
+                if (!isLikelySentenceBoundary(buffer, lastEnd, match.index, match.index + match[0].length)) {
+                  continue;
+                }
                 const sentence = buffer.slice(lastEnd, match.index + match[0].length).trim();
                 if (sentence) {
                   const ts = formatDuration(sentenceStartMs);

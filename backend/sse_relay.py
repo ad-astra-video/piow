@@ -590,6 +590,8 @@ class SSERelay:
         sentences: List[str] = []
         last_end = 0
         for match in re.finditer(r"[.!?]+", buffer):
+            if not SSERelay._is_likely_sentence_boundary(buffer, last_end, match.start(), match.end()):
+                continue
             sentence = buffer[last_end:match.end()].strip()
             if sentence:
                 sentences.append(sentence)
@@ -597,6 +599,41 @@ class SSERelay:
 
         remaining = buffer[last_end:].lstrip()
         return sentences, remaining
+
+    @staticmethod
+    def _is_likely_sentence_boundary(
+        buffer: str,
+        segment_start: int,
+        match_start: int,
+        match_end: int,
+    ) -> bool:
+        """Heuristic sentence boundary detection that avoids acronym/abbreviation splits."""
+        punctuation = buffer[match_start:match_end]
+        if "!" in punctuation or "?" in punctuation:
+            return True
+
+        left_with_period = buffer[:match_end].rstrip()
+        right = buffer[match_end:]
+        right_trimmed = right.lstrip()
+
+        # Keep decimal numbers together (e.g., 3.14).
+        prev_char = buffer[match_start - 1] if match_start > 0 else ""
+        next_char = right_trimmed[0] if right_trimmed else ""
+        if prev_char.isdigit() and next_char.isdigit():
+            return False
+
+        candidate = buffer[segment_start:match_end].strip()
+        # Avoid promoting tiny fragments like "U." or "S." to full sentences.
+        if len(candidate) < 6 or not re.search(r"\s", candidate):
+            return False
+
+        stem = re.sub(r"[.!?]+$", "", candidate).strip()
+        stem_parts = re.split(r"\s+", stem)
+        last_word = stem_parts[-1] if stem_parts else ""
+        if len(last_word) < 2:
+            return False
+
+        return True
 
     def _buffer_transcription_for_db(self, message: Dict[str, Any]) -> List[str]:
         """Build DB sentences and return newly completed raw sentences."""
@@ -630,6 +667,8 @@ class SSERelay:
             sentence_start_ts = start_ts_ms or current_ts_ms
             last_end = 0
             for match in re.finditer(r"[.!?]+", buffer):
+                if not self._is_likely_sentence_boundary(buffer, last_end, match.start(), match.end()):
+                    continue
                 sentence = buffer[last_end:match.end()].strip()
                 if sentence:
                     raw_sentences.append(sentence)
