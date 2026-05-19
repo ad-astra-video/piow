@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Trash2, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, X, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import { downloadTranscription } from '../lib/download';
@@ -576,7 +577,7 @@ export default function HistoryPage() {
         </div>
       )}
 
-      {modalItem && (
+      {modalItem && createPortal((
         <div className="history-modal-overlay" onClick={closeModal}>
           <div className="history-modal panel-glass" onClick={(e) => e.stopPropagation()}>
             <div className="history-modal-header">
@@ -723,7 +724,7 @@ export default function HistoryPage() {
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
     </div>
   );
 }
