@@ -646,13 +646,15 @@ class SessionStore:
         self._stream_sessions_cache: Dict[str, Dict] = {}
 ```
 
-**Supabase tables** (migration [`20260418_01_create_session_tables.sql`](supabase/migrations/20260418_01_create_session_tables.sql)):
+**Supabase tables** (migrations [`20260418_01_create_session_tables.sql`](supabase/migrations/20260418_01_create_session_tables.sql), [`20260518_01_consolidate_stream_settings_and_analysis_schema.sql`](supabase/migrations/20260518_01_consolidate_stream_settings_and_analysis_schema.sql)):
 - `user_sessions` — User session tracking with settings JSONB
-- `stream_sessions` — Live streaming session data with provider_session JSONB
+- `stream_sessions` — Live streaming session data with `user_id` ownership and canonical `stream_settings` JSONB
 
 **Session data includes:**
 - User session tracking with stream ID arrays
-- Stream session with provider session data (whip_url, data_url, update_url, stop_url) stored as JSONB
+- Stream session provider transport data (`whip_url`, `data_url`, `update_url`, `stop_url`) in `provider_session` JSONB
+- Stream runtime/transcription/translation/analysis config in `stream_settings` JSONB (`transcription`, `translation`, `analysis` sections)
+- Persisted analysis summaries in `stream_analysis` with `analysis_source` constrained to `video|audio`
 
 ### 9.2 Stream Session Lifecycle ✅
 
@@ -1119,7 +1121,7 @@ CREATE TABLE agents (
 
 | Table | Status | Notes |
 |-------|--------|-------|
-| `stream_sessions` | ✅ | Migration `20260418_01`; database-backed with write-through cache |
+| `stream_sessions` | ✅ | Migrations `20260418_01` + `20260518_01`; database-backed with canonical `stream_settings` JSONB |
 | `payment_methods` | ❌ | Spec §13.6; not yet migrated |
 | `x402_payments` | ❌ | Spec §13.6; not yet migrated |
 
@@ -1130,7 +1132,8 @@ CREATE TABLE agents (
 | `compute_providers` | ✅ | Multi-provider management |
 | `api_usage` | ✅ | Per-request API tracking for both agents and users (migration `20260427_01`) |
 | `user_sessions` | ✅ | User session tracking (migration `20260418_01`) |
-| `stream_sessions` | ✅ | Live streaming session data with provider_session JSONB (migration `20260418_01`) |
+| `stream_sessions` | ✅ | Live streaming session data with `user_id` ownership + `stream_settings` JSONB (migrations `20260418_01`, `20260518_01`) |
+| `stream_analysis` | ✅ | Summary rows include `analysis_source` (`video` or `audio`); legacy `analysis_mode` column removed |
 
 ### 18.4 Schema Differences: `agents` Table 🔄
 

@@ -553,6 +553,7 @@ class SSERelay:
             return
 
         analysis_mode = message.get("mode") if isinstance(message.get("mode"), str) else "multimodal"
+        analysis_source = message.get("analysis_source") if isinstance(message.get("analysis_source"), str) else None
         timestamp_ms_raw = message.get("timestamp_ms")
         timestamp_ms: Optional[int] = timestamp_ms_raw if isinstance(timestamp_ms_raw, int) else None
 
@@ -560,6 +561,7 @@ class SSERelay:
             await self._session_store.store_stream_analysis(
                 self.stream_id,
                 analysis_mode=analysis_mode,
+                analysis_source=analysis_source,
                 summary_text=summary_text,
                 timestamp_ms=timestamp_ms,
                 source_event_type="analysis.done",

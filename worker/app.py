@@ -1065,6 +1065,7 @@ class LiveTranscriptionWorker:
                     payload = {
                         "type": "analysis.done",
                         "mode": self.analysis_mode,
+                        "analysis_source": "video",
                         "text": analysis_text,
                         "timestamp_ms": resolved_timestamp_ms,
                     }
@@ -1161,6 +1162,7 @@ class LiveTranscriptionWorker:
                     payload = {
                         "type": "analysis.done",
                         "mode": self.analysis_mode,
+                        "analysis_source": "audio",
                         "text": analysis_text,
                         "timestamp_ms": resolved_timestamp_ms,
                     }

@@ -108,7 +108,7 @@ export default function Dashboard({ usageSnapshot }) {
                 <div className="recent-meta">
                   <span className={`badge ${item._type}`}>{item._type}</span>
                   {item._type === 'transcription' && item.has_analysis ? (
-                    <span className="badge analysis">analysis{item.analysis_mode ? ` • ${item.analysis_mode.replace('_only', '').replace('_', ' ')}` : ''}</span>
+                    <span className="badge analysis">analysis{item.analysis_mode ? ` • ${item.analysis_mode.replace('_only', '').replace('_', ' ')}` : ''}{item.analysis_source ? ` • ${item.analysis_source}` : ''}</span>
                   ) : null}
                   <span className="recent-date">{new Date(item.created_at).toLocaleString()}</span>
                 </div>

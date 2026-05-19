@@ -188,29 +188,24 @@ async def _handle_start_stream(ws: web.WebSocketResponse, stream_id: str):
         })
         return
 
-    metadata = provider_session.get("metadata") if isinstance(provider_session, dict) else {}
-    if not isinstance(metadata, dict):
-        metadata = {}
+    stream_settings_raw = stream_session.get("stream_settings")
+    stream_settings = stream_settings_raw if isinstance(stream_settings_raw, dict) else {}
+    transcription_raw = stream_settings.get("transcription")
+    translation_raw = stream_settings.get("translation")
+    transcription_settings = transcription_raw if isinstance(transcription_raw, dict) else {}
+    translation_settings = translation_raw if isinstance(translation_raw, dict) else {}
     provider_name = provider_session.get("provider")
     provider_stream_id = provider_session.get("provider_stream_id")
     source_language = (
-        stream_session.get("source_language")
-        or provider_session.get("source_language")
-        or metadata.get("source_language")
+        transcription_settings.get("source_language")
         or stream_session.get("language")
         or "en"
     )
-    target_language = (
-        stream_session.get("target_language")
-        or provider_session.get("target_language")
-        or metadata.get("target_language")
-    )
+    target_language = translation_settings.get("target_language")
     live_translation_enabled = bool(
-        stream_session.get("live_translation_enabled")
-        if stream_session.get("live_translation_enabled") is not None
-        else provider_session.get("live_translation_enabled")
-        if provider_session.get("live_translation_enabled") is not None
-        else metadata.get("live_translation_enabled", False)
+        translation_settings.get("enabled")
+        if translation_settings.get("enabled") is not None
+        else False
     )
 
     logger.info(

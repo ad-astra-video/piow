@@ -22,7 +22,6 @@ def setup_routes(app):
     """Setup user-related routes."""
     app.router.add_get('/api/v1/user/profile', get_user_profile)
     app.router.add_get('/api/v1/user/history', get_user_history)
-    app.router.add_get('/api/v1/user/history-analysis-previews', get_user_history_analysis_previews)
     app.router.add_get('/api/v1/user/usage-details', get_usage_details)
     app.router.add_get('/api/v1/streams/{id}/sentences', get_stream_sentences)
     app.router.add_get('/api/v1/streams/{id}/analysis', get_stream_analysis)
@@ -133,20 +132,40 @@ async def get_user_history(request):
         translations = []
 
         if item_type in ('all', 'transcription'):
-            query = supabase.table('transcriptions').select('*').eq('user_id', user_id)
-            if source_type:
-                query = query.eq('source_type', source_type)
-            t_result = await query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
-            transcriptions = [
-                {**item, '_type': 'transcription'} for item in (t_result.data or [])
-            ]
+            stream_result = await (
+                supabase.table('stream_sessions')
+                .select('id, user_session_id, language, status, created_at, updated_at, final_text, stream_settings')
+                .eq('user_id', user_id)
+                .order('created_at', desc=True)
+                .range(offset, offset + limit - 1)
+                .execute()
+            )
+            stream_rows = stream_result.data or []
+            stream_session_ids = [str(row.get('id')) for row in stream_rows if row.get('id')]
 
-            stream_session_ids = [
-                item.get('stream_session_id')
-                for item in transcriptions
-                if item.get('stream_session_id')
-            ]
+            latest_transcription_by_stream: Dict[str, Dict[str, Any]] = {}
+            langs_by_stream_session: Dict[str, set] = {}
+            latest_analysis_by_stream_session: Dict[str, Dict[str, Any]] = {}
+            analysis_enabled_by_stream_session: Dict[str, bool] = {}
+            analysis_mode_by_stream_session: Dict[str, Any] = {}
+
             if stream_session_ids:
+                t_result = await (
+                    supabase.table('transcriptions')
+                    .select('*')
+                    .eq('user_id', user_id)
+                    .in_('stream_session_id', stream_session_ids)
+                    .order('created_at', desc=True)
+                    .execute()
+                )
+                for row in (t_result.data or []):
+                    stream_session_id = row.get('stream_session_id')
+                    if not stream_session_id:
+                        continue
+                    key = str(stream_session_id)
+                    if key not in latest_transcription_by_stream:
+                        latest_transcription_by_stream[key] = row
+
                 tr_lang_result = await (
                     supabase.table('translations')
                     .select('stream_session_id, target_language')
@@ -154,24 +173,6 @@ async def get_user_history(request):
                     .in_('stream_session_id', stream_session_ids)
                     .execute()
                 )
-
-                stream_session_rows: List[Dict[str, Any]] = []
-                try:
-                    stream_session_result = await (
-                        supabase.table('stream_sessions')
-                        .select('id, provider_session')
-                        .in_('id', stream_session_ids)
-                        .execute()
-                    )
-                    stream_session_rows = stream_session_result.data or []
-                except Exception as stream_session_error:
-                    logger.warning(
-                        "History provider_session enrichment skipped: %s",
-                        stream_session_error,
-                    )
-
-
-                langs_by_stream_session: Dict[str, set] = {}
                 for row in (tr_lang_result.data or []):
                     stream_session_id = row.get('stream_session_id')
                     target_language = row.get('target_language')
@@ -179,22 +180,14 @@ async def get_user_history(request):
                         continue
                     langs_by_stream_session.setdefault(str(stream_session_id), set()).add(target_language)
 
-                for item in transcriptions:
-                    stream_session_id = item.get('stream_session_id')
-                    item['translated_languages'] = sorted(
-                        list(langs_by_stream_session.get(str(stream_session_id), set()))
-                    )
-
                 analysis_result = await (
                     supabase.table('stream_analysis')
-                    .select('stream_session_id, analysis_mode, summary_text, created_at')
+                    .select('stream_session_id, summary_text, analysis_source, created_at')
                     .eq('user_id', user_id)
                     .in_('stream_session_id', stream_session_ids)
                     .order('created_at', desc=True)
                     .execute()
                 )
-
-                latest_analysis_by_stream_session: Dict[str, Dict[str, Any]] = {}
                 for row in (analysis_result.data or []):
                     stream_session_id = row.get('stream_session_id')
                     if not stream_session_id:
@@ -203,37 +196,49 @@ async def get_user_history(request):
                     if key not in latest_analysis_by_stream_session:
                         latest_analysis_by_stream_session[key] = row
 
-                analysis_enabled_by_stream_session: Dict[str, bool] = {}
-                for row in stream_session_rows:
-                    stream_session_id = row.get('id')
-                    if not stream_session_id:
-                        continue
+            for row in stream_rows:
+                stream_session_id = str(row.get('id'))
+                if not stream_session_id:
+                    continue
 
-                    provider_session = row.get('provider_session')
-                    if not isinstance(provider_session, dict):
-                        continue
+                stream_settings = row.get('stream_settings')
+                stream_settings = stream_settings if isinstance(stream_settings, dict) else {}
+                analysis_settings = stream_settings.get('analysis')
+                analysis_settings = analysis_settings if isinstance(analysis_settings, dict) else {}
 
-                    metadata = provider_session.get('metadata')
-                    metadata = metadata if isinstance(metadata, dict) else {}
+                analysis_enabled_by_stream_session[stream_session_id] = bool(analysis_settings.get('enabled'))
+                analysis_mode_by_stream_session[stream_session_id] = analysis_settings.get('type')
 
-                    enabled_raw = provider_session.get('analysis_enabled')
-                    if enabled_raw is None:
-                        enabled_raw = metadata.get('analysis_enabled')
+                transcription = latest_transcription_by_stream.get(stream_session_id, {})
+                analysis = latest_analysis_by_stream_session.get(stream_session_id)
 
-                    analysis_enabled_by_stream_session[str(stream_session_id)] = bool(enabled_raw)
+                item = {
+                    **transcription,
+                    'id': transcription.get('id') or stream_session_id,
+                    'stream_session_id': stream_session_id,
+                    'stream_id': stream_session_id,
+                    'session_id': row.get('user_session_id'),
+                    'status': row.get('status'),
+                    'created_at': transcription.get('created_at') or row.get('created_at'),
+                    'updated_at': transcription.get('updated_at') or row.get('updated_at'),
+                    'language': transcription.get('language') or row.get('language'),
+                    'source_language': transcription.get('language') or row.get('language'),
+                    'text': transcription.get('text') or row.get('final_text') or '',
+                    'duration': transcription.get('duration') or 0,
+                    'word_count': transcription.get('word_count') or 0,
+                    'token_count': transcription.get('token_count') or 0,
+                    'source_type': transcription.get('source_type') or 'stream',
+                    'translated_languages': sorted(list(langs_by_stream_session.get(stream_session_id, set()))),
+                    'has_analysis': bool(analysis) or analysis_enabled_by_stream_session.get(stream_session_id, False),
+                    'analysis_mode': analysis_mode_by_stream_session.get(stream_session_id),
+                    'analysis_summary_text': analysis.get('summary_text') if analysis else None,
+                    'analysis_source': analysis.get('analysis_source') if analysis else None,
+                    '_type': 'transcription',
+                }
+                transcriptions.append(item)
 
-                for item in transcriptions:
-                    stream_session_id = str(item.get('stream_session_id'))
-                    analysis = latest_analysis_by_stream_session.get(stream_session_id)
-                    item['has_analysis'] = bool(analysis) or analysis_enabled_by_stream_session.get(stream_session_id, False)
-                    item['analysis_mode'] = analysis.get('analysis_mode') if analysis else None
-                    item['analysis_summary_text'] = analysis.get('summary_text') if analysis else None
-            else:
-                for item in transcriptions:
-                    item['translated_languages'] = []
-                    item['has_analysis'] = False
-                    item['analysis_mode'] = None
-                    item['analysis_summary_text'] = None
+            if source_type:
+                transcriptions = [item for item in transcriptions if item.get('source_type') == source_type]
 
         if item_type in ('all', 'translation'):
             tr_result = await supabase.table('translations').select('*').eq('user_id', user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
@@ -261,58 +266,6 @@ async def get_user_history(request):
 
 
 @require_user_auth
-async def get_user_history_analysis_previews(request):
-    """GET /api/v1/user/history-analysis-previews
-
-    Return latest analysis preview text per stream_session_id for the user.
-    Query params:
-      - stream_session_ids: comma-separated stream IDs
-    """
-    user_id = _get_user_id(request)
-    if not user_id:
-        return web.json_response({'error': 'Authentication required'}, status=401)
-
-    try:
-        raw_ids = request.query.get('stream_session_ids', '')
-        stream_session_ids = [s.strip() for s in raw_ids.split(',') if s.strip()]
-        if not stream_session_ids:
-            return web.json_response({'previews': {}})
-
-        result = await (
-            supabase.table('stream_analysis')
-            .select('stream_session_id, analysis_mode, summary_text, created_at')
-            .eq('user_id', user_id)
-            .in_('stream_session_id', stream_session_ids)
-            .order('created_at', desc=True)
-            .execute()
-        )
-
-        previews: Dict[str, Dict[str, Any]] = {}
-        for row in (result.data or []):
-            stream_session_id = row.get('stream_session_id')
-            summary_text = row.get('summary_text')
-            if not stream_session_id:
-                continue
-            if not isinstance(summary_text, str) or not summary_text.strip():
-                continue
-
-            key = str(stream_session_id)
-            if key in previews:
-                continue
-
-            previews[key] = {
-                'summary_text': summary_text,
-                'analysis_mode': row.get('analysis_mode'),
-                'created_at': row.get('created_at'),
-            }
-
-        return web.json_response({'previews': previews})
-    except Exception as e:
-        logger.error(f"Error getting history analysis previews: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-
-@require_user_auth
 async def get_stream_sentences(request):
     """GET /api/v1/streams/{id}/sentences
 
@@ -330,24 +283,19 @@ async def get_stream_sentences(request):
     try:
         ownership = await (
             supabase.table('stream_sessions')
-            .select('id, user_session_id')
+            .select('id, user_id, stream_settings')
             .eq('id', stream_id)
             .execute()
         )
         if not ownership.data:
             return web.json_response({'error': 'Not found'}, status=404)
 
-        parent_session_id = ownership.data[0].get('user_session_id')
-        parent_session = await (
-            supabase.table('user_sessions')
-            .select('id')
-            .eq('id', parent_session_id)
-            .eq('user_id', user_id)
-            .execute()
-        )
-        if not parent_session.data:
+        stream_owner_id = ownership.data[0].get('user_id')
+        if not stream_owner_id or str(stream_owner_id) != str(user_id):
             return web.json_response({'error': 'Not found'}, status=404)
 
+        stream_settings = ownership.data[0].get('stream_settings')
+        stream_settings = stream_settings if isinstance(stream_settings, dict) else {}
         if not stream_id:
             return web.json_response({
                 'sentences': [],
@@ -468,7 +416,9 @@ async def get_stream_sentences(request):
 async def get_stream_analysis(request):
     """GET /api/v1/streams/{id}/analysis
 
-    Return persisted analysis summaries for a transcription, newest first.
+        Return persisted analysis summaries for a transcription, newest first.
+        Query params:
+            - limit: optional max rows to return
     """
     user_id = _get_user_id(request)
     if not user_id:
@@ -479,41 +429,57 @@ async def get_stream_analysis(request):
         return web.json_response({'error': 'Stream ID required'}, status=400)
 
     try:
+        limit_raw = request.query.get('limit')
+        limit = int(limit_raw) if limit_raw is not None else None
+        if limit is not None and limit < 1:
+            limit = 1
+    except Exception:
+        return web.json_response({'error': 'Invalid limit'}, status=400)
+
+    try:
         ownership = await (
             supabase.table('stream_sessions')
-            .select('id, user_session_id')
+            .select('id, user_id, stream_settings')
             .eq('id', stream_id)
             .execute()
         )
         if not ownership.data:
             return web.json_response({'error': 'Not found'}, status=404)
 
-        parent_session_id = ownership.data[0].get('user_session_id')
-        parent_session = await (
-            supabase.table('user_sessions')
-            .select('id')
-            .eq('id', parent_session_id)
-            .eq('user_id', user_id)
-            .execute()
-        )
-        if not parent_session.data:
+        stream_owner_id = ownership.data[0].get('user_id')
+        if not stream_owner_id or str(stream_owner_id) != str(user_id):
             return web.json_response({'error': 'Not found'}, status=404)
+
+        stream_settings = ownership.data[0].get('stream_settings')
+        stream_settings = stream_settings if isinstance(stream_settings, dict) else {}
+        analysis_settings = stream_settings.get('analysis')
+        analysis_settings = analysis_settings if isinstance(analysis_settings, dict) else {}
+        stream_analysis_mode = analysis_settings.get('type')
 
         if not stream_id:
             return web.json_response({'analysis': [], 'count': 0})
 
-        result = await (
+        query = (
             supabase.table('stream_analysis')
-            .select('id, analysis_mode, summary_text, timestamp_ms, source_event_type, created_at')
+            .select('id, summary_text, analysis_source, timestamp_ms, source_event_type, created_at')
             .eq('user_id', user_id)
             .eq('stream_session_id', stream_id)
             .order('created_at', desc=True)
-            .execute()
         )
+        if limit is not None:
+            query = query.range(0, limit - 1)
+        result = await query.execute()
+
+        rows = []
+        for row in (result.data or []):
+            rows.append({
+                **row,
+                'analysis_mode': stream_analysis_mode,
+            })
 
         return web.json_response({
-            'analysis': result.data or [],
-            'count': len(result.data or []),
+            'analysis': rows,
+            'count': len(rows),
         })
     except Exception as e:
         logger.error(f"Error fetching stream analysis: {e}")

@@ -223,7 +223,6 @@ export default function HistoryPage() {
     if (requests.length === 0) return;
 
     const cardIds = requests.map((r) => r.cardId);
-    const streamIds = [...new Set(requests.map((r) => r.streamId))];
 
     setCardAnalysisLoadingById((current) => {
       const next = { ...current };
@@ -237,15 +236,39 @@ export default function HistoryPage() {
     });
 
     try {
-      const res = await api.getHistoryAnalysisPreviews(streamIds);
-      const previews = res?.previews || {};
-      setCardAnalysisPreviewById((current) => {
-        const next = { ...current };
-        requests.forEach(({ cardId, streamId }) => {
-          next[cardId] = previews?.[streamId]?.summary_text || '';
+      const CHUNK_SIZE = 10;
+      const previewByCardId = {};
+      const errorByCardId = {};
+
+      for (let i = 0; i < requests.length; i += CHUNK_SIZE) {
+        const batch = requests.slice(i, i + CHUNK_SIZE);
+        const settled = await Promise.allSettled(
+          batch.map(({ streamId }) => api.getStreamAnalysis(streamId, { limit: 10 }))
+        );
+
+        settled.forEach((result, idx) => {
+          const { cardId } = batch[idx];
+          if (result.status === 'fulfilled') {
+            const rows = Array.isArray(result.value?.analysis) ? result.value.analysis : [];
+            previewByCardId[cardId] = rows
+              .slice(0, 10)
+              .map((entry) => (typeof entry?.summary_text === 'string' ? entry.summary_text.trim() : ''))
+              .filter(Boolean)
+              .join('\n\n');
+          } else {
+            errorByCardId[cardId] = 'Could not load analysis preview.';
+          }
         });
-        return next;
-      });
+      }
+
+      setCardAnalysisPreviewById((current) => ({
+        ...current,
+        ...previewByCardId,
+      }));
+      setCardAnalysisErrorById((current) => ({
+        ...current,
+        ...errorByCardId,
+      }));
     } catch (_err) {
       setCardAnalysisErrorById((current) => {
         const next = { ...current };
@@ -262,8 +285,8 @@ export default function HistoryPage() {
   };
 
   useEffect(() => {
-    loadAnalysisPreviewsForItems(filtered);
-  }, [filtered]);
+    loadAnalysisPreviewsForItems(items);
+  }, [items]);
 
   const getModalSentencesForLanguage = () => {
     const baseSentences = modalSentences !== null
@@ -349,6 +372,12 @@ export default function HistoryPage() {
     if (mode === 'audio_only') return 'audio';
     if (mode === 'video_only') return 'video';
     if (mode === 'multimodal') return 'multimodal';
+    return '';
+  };
+
+  const formatAnalysisSource = (source) => {
+    if (source === 'audio') return 'audio';
+    if (source === 'video') return 'video';
     return '';
   };
 
@@ -467,7 +496,7 @@ export default function HistoryPage() {
                     disabled={!item.has_analysis}
                     title={!item.has_analysis ? 'Analysis not available for this item' : undefined}
                   >
-                    Analysis{item.analysis_mode ? ` • ${formatAnalysisMode(item.analysis_mode)}` : ''}
+                    Analysis{item.analysis_mode ? ` • ${formatAnalysisMode(item.analysis_mode)}` : ''}{item.analysis_source ? ` • ${formatAnalysisSource(item.analysis_source)}` : ''}
                   </button>
                 </div>
                 <div className="history-sentences preview" onClick={() => openModal(item)}>
@@ -579,7 +608,7 @@ export default function HistoryPage() {
                   disabled={!modalItem.has_analysis}
                   title={!modalItem.has_analysis ? 'Analysis not available for this stream' : undefined}
                 >
-                  Analysis{modalItem.analysis_mode ? ` • ${formatAnalysisMode(modalItem.analysis_mode)}` : ''}
+                  Analysis{modalItem.analysis_mode ? ` • ${formatAnalysisMode(modalItem.analysis_mode)}` : ''}{modalItem.analysis_source ? ` • ${formatAnalysisSource(modalItem.analysis_source)}` : ''}
                 </button>
               </div>
 
@@ -625,8 +654,10 @@ export default function HistoryPage() {
                 <div className="history-analysis-card panel-glass">
                   <div className="history-analysis-header">
                     <p className="history-modal-section-label">Live Analysis</p>
-                    {(latestModalAnalysis?.analysis_mode || modalItem.analysis_mode) ? (
-                      <span className="lang-tag secondary">{formatAnalysisMode(latestModalAnalysis?.analysis_mode || modalItem.analysis_mode)}</span>
+                    {((latestModalAnalysis?.analysis_mode || modalItem.analysis_mode) || (latestModalAnalysis?.analysis_source || modalItem.analysis_source)) ? (
+                      <span className="lang-tag secondary">
+                        {[formatAnalysisMode(latestModalAnalysis?.analysis_mode || modalItem.analysis_mode), formatAnalysisSource(latestModalAnalysis?.analysis_source || modalItem.analysis_source)].filter(Boolean).join(' • ')}
+                      </span>
                     ) : null}
                   </div>
 

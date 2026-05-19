@@ -129,6 +129,16 @@ class SessionStore:
 
         return " ".join(collected).strip()
 
+    @staticmethod
+    def _get_stream_owner_user_id(stream_data: Dict[str, Any]) -> Optional[str]:
+        """Return the owning user_id directly from stream session data."""
+        if not isinstance(stream_data, dict):
+            return None
+        user_id = stream_data.get("user_id")
+        if not user_id:
+            return None
+        return str(user_id)
+
     async def _record_stream_usage(self, stream_data: Dict[str, Any], duration_seconds: int, final_text: str = "") -> bool:
         """Persist a transcription_usage row for a live stream interval."""
         if not stream_data:
@@ -137,13 +147,7 @@ class SessionStore:
         if duration_seconds <= 0:
             return False
 
-        session_id = stream_data.get("session_id")
-        if not session_id:
-            logger.warning("Skipping stream usage log: stream has no parent session")
-            return False
-
-        parent_session = await self.get_session(session_id)
-        user_id = str(parent_session.get("user_id")) if parent_session and parent_session.get("user_id") else None
+        user_id = self._get_stream_owner_user_id(stream_data)
         if not user_id:
             logger.warning("Skipping stream usage log: missing user_id for stream %s", stream_data.get("id"))
             return False
@@ -329,45 +333,33 @@ class SessionStore:
         now = time.time()
         effective_source_language = source_language or language
         provider_session_payload = dict(provider_session_data or {})
-        metadata = provider_session_payload.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {}
-        metadata.update({
-            "live_transcription_enabled": bool(live_transcription_enabled),
-            "live_translation_enabled": bool(live_translation_enabled),
-            "source_language": effective_source_language,
-            "target_language": target_language,
-            "analysis_enabled": analysis_enabled,
-            "analysis_mode": analysis_mode,
-            "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
-            "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
-            "analysis_max_tokens": analysis_max_tokens,
-            "analysis_video_fps": analysis_video_fps,
-            "analysis_prompt": analysis_prompt,
-            "analysis_response_format": analysis_response_format,
-        })
-        provider_session_payload["metadata"] = metadata
-        provider_session_payload["live_transcription_enabled"] = bool(live_transcription_enabled)
-        provider_session_payload["live_translation_enabled"] = bool(live_translation_enabled)
-        provider_session_payload.setdefault("source_language", effective_source_language)
-        provider_session_payload.setdefault("target_language", target_language)
-        provider_session_payload.setdefault("analysis_prompt", analysis_prompt)
+        stream_settings = {
+            "transcription": {
+                "enabled": bool(live_transcription_enabled),
+                "source_language": effective_source_language,
+            },
+            "translation": {
+                "enabled": bool(live_translation_enabled),
+                "source_language": effective_source_language,
+                "target_language": target_language,
+            },
+            "analysis": {
+                "enabled": bool(analysis_enabled),
+                "type": analysis_mode,
+                "audio_chunk_seconds": analysis_audio_chunk_seconds,
+                "video_chunk_seconds": analysis_video_chunk_seconds,
+                "max_tokens": analysis_max_tokens,
+                "video_fps": analysis_video_fps,
+                "prompt": analysis_prompt,
+                "response_format": analysis_response_format,
+            },
+        }
         stream_data = {
             "id": stream_id,
+            "user_id": user_id,
             "session_id": session_id,
             "language": language,
-            "live_transcription_enabled": bool(live_transcription_enabled),
-            "live_translation_enabled": bool(live_translation_enabled),
-            "source_language": effective_source_language,
-            "target_language": target_language,
-            "analysis_enabled": analysis_enabled,
-            "analysis_mode": analysis_mode,
-            "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
-            "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
-            "analysis_max_tokens": analysis_max_tokens,
-            "analysis_video_fps": analysis_video_fps,
-            "analysis_prompt": analysis_prompt,
-            "analysis_response_format": analysis_response_format,
+            "stream_settings": stream_settings,
             "status": "active",
             "created_at": now,
             "updated_at": now,
@@ -392,8 +384,10 @@ class SessionStore:
         try:
             await supabase.table("stream_sessions").insert({
                 "id": stream_id,
+                "user_id": user_id,
                 "user_session_id": session_id,
                 "language": language,
+                "stream_settings": stream_settings,
                 "status": "active",
                 "provider_session": provider_session_payload,
                 "total_audio_bytes": 0,
@@ -515,31 +509,26 @@ class SessionStore:
             return None
 
         now = time.time()
+        stream_settings = dict(stream_session.get("stream_settings") or {})
+        transcription_settings = dict(stream_settings.get("transcription") or {})
+        translation_settings = dict(stream_settings.get("translation") or {})
         provider_session = dict(stream_session.get("provider_session") or {})
-        metadata = provider_session.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {}
-
-        metadata.update({
+        transcription_settings["source_language"] = source_language
+        translation_settings.update({
+            "enabled": bool(target_language),
             "source_language": source_language,
             "target_language": target_language,
-            "live_translation_enabled": bool(target_language),
         })
-        provider_session["metadata"] = metadata
-        provider_session["source_language"] = source_language
-        provider_session["target_language"] = target_language
-        provider_session["live_translation_enabled"] = bool(target_language)
+        stream_settings["transcription"] = transcription_settings
+        stream_settings["translation"] = translation_settings
 
-        stream_session["source_language"] = source_language
-        stream_session["target_language"] = target_language
-        stream_session["live_translation_enabled"] = bool(target_language)
-        stream_session["provider_session"] = provider_session
+        stream_session["stream_settings"] = stream_settings
         stream_session["updated_at"] = now
         self._stream_sessions_cache[stream_id] = stream_session
 
         try:
             await supabase.table("stream_sessions").update({
-                "provider_session": provider_session,
+                "stream_settings": stream_settings,
                 "updated_at": "now()",
             }).eq("id", stream_id).execute()
         except Exception as e:
@@ -565,46 +554,28 @@ class SessionStore:
             return None
 
         now = time.time()
+        stream_settings = dict(stream_session.get("stream_settings") or {})
+        analysis_settings = dict(stream_settings.get("analysis") or {})
         provider_session = dict(stream_session.get("provider_session") or {})
-        metadata = provider_session.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {}
-
-        metadata.update({
-            "analysis_enabled": bool(analysis_enabled),
-            "analysis_mode": analysis_mode,
-            "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
-            "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
-            "analysis_max_tokens": analysis_max_tokens,
-            "analysis_video_fps": analysis_video_fps,
-            "analysis_prompt": analysis_prompt,
-            "analysis_response_format": analysis_response_format,
+        analysis_settings.update({
+            "enabled": bool(analysis_enabled),
+            "type": analysis_mode,
+            "audio_chunk_seconds": analysis_audio_chunk_seconds,
+            "video_chunk_seconds": analysis_video_chunk_seconds,
+            "max_tokens": analysis_max_tokens,
+            "video_fps": analysis_video_fps,
+            "prompt": analysis_prompt,
+            "response_format": analysis_response_format,
         })
-        provider_session["metadata"] = metadata
-        provider_session["analysis_enabled"] = bool(analysis_enabled)
-        provider_session["analysis_mode"] = analysis_mode
-        provider_session["analysis_audio_chunk_seconds"] = analysis_audio_chunk_seconds
-        provider_session["analysis_video_chunk_seconds"] = analysis_video_chunk_seconds
-        provider_session["analysis_max_tokens"] = analysis_max_tokens
-        provider_session["analysis_video_fps"] = analysis_video_fps
-        provider_session["analysis_prompt"] = analysis_prompt
-        provider_session["analysis_response_format"] = analysis_response_format
+        stream_settings["analysis"] = analysis_settings
 
-        stream_session["analysis_enabled"] = bool(analysis_enabled)
-        stream_session["analysis_mode"] = analysis_mode
-        stream_session["analysis_audio_chunk_seconds"] = analysis_audio_chunk_seconds
-        stream_session["analysis_video_chunk_seconds"] = analysis_video_chunk_seconds
-        stream_session["analysis_max_tokens"] = analysis_max_tokens
-        stream_session["analysis_video_fps"] = analysis_video_fps
-        stream_session["analysis_prompt"] = analysis_prompt
-        stream_session["analysis_response_format"] = analysis_response_format
-        stream_session["provider_session"] = provider_session
+        stream_session["stream_settings"] = stream_settings
         stream_session["updated_at"] = now
         self._stream_sessions_cache[stream_id] = stream_session
 
         try:
             await supabase.table("stream_sessions").update({
-                "provider_session": provider_session,
+                "stream_settings": stream_settings,
                 "updated_at": "now()",
             }).eq("id", stream_id).execute()
         except Exception as e:
@@ -674,12 +645,7 @@ class SessionStore:
             logger.warning("upsert_stream_transcription: stream %s not found", stream_id)
             return None
 
-        # Resolve user_id via parent session (same pattern as _record_stream_usage)
-        session_id = stream_data.get("session_id")
-        user_id: Optional[str] = None
-        if session_id:
-            parent = await self.get_session(session_id)
-            user_id = str(parent.get("user_id")) if parent and parent.get("user_id") else None
+        user_id = self._get_stream_owner_user_id(stream_data)
         if not user_id:
             logger.warning("upsert_stream_transcription: missing user_id for stream %s", stream_id)
             return None
@@ -811,11 +777,7 @@ class SessionStore:
             logger.warning("store_stream_translation: stream %s not found", stream_id)
             return
 
-        session_id = stream_data.get("session_id")
-        user_id: Optional[str] = None
-        if session_id:
-            parent = await self.get_session(session_id)
-            user_id = str(parent.get("user_id")) if parent and parent.get("user_id") else None
+        user_id = self._get_stream_owner_user_id(stream_data)
         if not user_id:
             logger.warning("store_stream_translation: missing user_id for stream %s", stream_id)
             return
@@ -883,6 +845,7 @@ class SessionStore:
         stream_id: str,
         *,
         analysis_mode: str,
+        analysis_source: Optional[str] = None,
         summary_text: str,
         timestamp_ms: Optional[int] = None,
         source_event_type: str = "analysis.done",
@@ -896,16 +859,16 @@ class SessionStore:
         if normalized_mode not in {"multimodal", "audio_only", "video_only"}:
             normalized_mode = "multimodal"
 
+        normalized_source = (analysis_source or "").strip().lower()
+        if normalized_source not in {"audio", "video"}:
+            normalized_source = "audio" if normalized_mode == "audio_only" else "video"
+
         stream_data = self._stream_sessions_cache.get(stream_id) or await self.get_stream_session(stream_id)
         if not stream_data:
             logger.warning("store_stream_analysis: stream %s not found", stream_id)
             return False
 
-        session_id = stream_data.get("session_id")
-        user_id: Optional[str] = None
-        if session_id:
-            parent = await self.get_session(session_id)
-            user_id = str(parent.get("user_id")) if parent and parent.get("user_id") else None
+        user_id = self._get_stream_owner_user_id(stream_data)
         if not user_id:
             logger.warning("store_stream_analysis: missing user_id for stream %s", stream_id)
             return False
@@ -913,8 +876,8 @@ class SessionStore:
         payload: Dict[str, Any] = {
             "user_id": user_id,
             "stream_session_id": stream_id,
-            "analysis_mode": normalized_mode,
             "summary_text": normalized_summary,
+            "analysis_source": normalized_source,
             "source_event_type": source_event_type or "analysis.done",
             "timestamp_ms": timestamp_ms,
         }
@@ -949,92 +912,14 @@ class SessionStore:
     def _row_to_stream_session(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a Supabase stream_sessions row to in-memory format."""
         provider_session = row.get("provider_session", {})
-        metadata = provider_session.get("metadata") if isinstance(provider_session, dict) else {}
-        if not isinstance(metadata, dict):
-            metadata = {}
-        live_transcription_enabled = bool(
-            row.get("live_transcription_enabled")
-            if row.get("live_transcription_enabled") is not None
-            else (provider_session.get("live_transcription_enabled") if isinstance(provider_session, dict) else None)
-            if (provider_session.get("live_transcription_enabled") if isinstance(provider_session, dict) else None) is not None
-            else metadata.get("live_transcription_enabled", True)
-        )
-        live_translation_enabled = bool(
-            row.get("live_translation_enabled")
-            if row.get("live_translation_enabled") is not None
-            else (provider_session.get("live_translation_enabled") if isinstance(provider_session, dict) else None)
-            if (provider_session.get("live_translation_enabled") if isinstance(provider_session, dict) else None) is not None
-            else metadata.get("live_translation_enabled", False)
-        )
-        source_language = (
-            row.get("source_language")
-            or (provider_session.get("source_language") if isinstance(provider_session, dict) else None)
-            or metadata.get("source_language")
-            or row.get("language", "en")
-        )
-        target_language = (
-            row.get("target_language")
-            or (provider_session.get("target_language") if isinstance(provider_session, dict) else None)
-            or metadata.get("target_language")
-        )
-        analysis_enabled = bool(
-            row.get("analysis_enabled")
-            if row.get("analysis_enabled") is not None
-            else (provider_session.get("analysis_enabled") if isinstance(provider_session, dict) else None)
-            if (provider_session.get("analysis_enabled") if isinstance(provider_session, dict) else None) is not None
-            else metadata.get("analysis_enabled", False)
-        )
-        analysis_mode = (
-            row.get("analysis_mode")
-            or (provider_session.get("analysis_mode") if isinstance(provider_session, dict) else None)
-            or metadata.get("analysis_mode")
-            or "multimodal"
-        )
-        analysis_audio_chunk_seconds = (
-            row.get("analysis_audio_chunk_seconds")
-            or (provider_session.get("analysis_audio_chunk_seconds") if isinstance(provider_session, dict) else None)
-            or metadata.get("analysis_audio_chunk_seconds")
-            or 10.0
-        )
-        analysis_video_chunk_seconds = (
-            row.get("analysis_video_chunk_seconds")
-            or (provider_session.get("analysis_video_chunk_seconds") if isinstance(provider_session, dict) else None)
-            or metadata.get("analysis_video_chunk_seconds")
-            or 10.0
-        )
-        analysis_max_tokens = (
-            row.get("analysis_max_tokens")
-            or (provider_session.get("analysis_max_tokens") if isinstance(provider_session, dict) else None)
-            or metadata.get("analysis_max_tokens")
-            or 1024
-        )
-        analysis_video_fps = (
-            row.get("analysis_video_fps")
-            or (provider_session.get("analysis_video_fps") if isinstance(provider_session, dict) else None)
-            or metadata.get("analysis_video_fps")
-            or 3
-        )
-        analysis_prompt = (
-            row.get("analysis_prompt")
-            or (provider_session.get("analysis_prompt") if isinstance(provider_session, dict) else None)
-            or metadata.get("analysis_prompt")
-            or None
-        )
+        stream_settings_raw = row.get("stream_settings")
+        stream_settings = stream_settings_raw if isinstance(stream_settings_raw, dict) else {}
         return {
             "id": row["id"],
+            "user_id": row.get("user_id"),
             "session_id": row.get("user_session_id"),
             "language": row.get("language", "en"),
-            "live_transcription_enabled": live_transcription_enabled,
-            "live_translation_enabled": live_translation_enabled,
-            "source_language": source_language,
-            "target_language": target_language,
-            "analysis_enabled": analysis_enabled,
-            "analysis_mode": analysis_mode,
-            "analysis_audio_chunk_seconds": analysis_audio_chunk_seconds,
-            "analysis_video_chunk_seconds": analysis_video_chunk_seconds,
-            "analysis_max_tokens": analysis_max_tokens,
-            "analysis_video_fps": analysis_video_fps,
-            "analysis_prompt": analysis_prompt,
+            "stream_settings": stream_settings,
             "status": row.get("status", "active"),
             "created_at": row.get("created_at", time.time()),
             "updated_at": row.get("updated_at", time.time()),
@@ -1253,7 +1138,7 @@ async def _verify_session_ownership(request, session_id):
 async def _verify_stream_ownership(request, stream_id):
     """Verify that the authenticated entity owns the given stream session.
 
-    Checks via the stream session's parent user session.
+    Checks via stream_sessions.user_id.
     Returns True if ownership is verified, False otherwise.
     """
     entity_id, entity_type = _get_authenticated_entity_id(request)
@@ -1264,13 +1149,11 @@ async def _verify_stream_ownership(request, stream_id):
     if not stream_session:
         return False
 
-    # Check if the stream session's parent session belongs to the user
-    parent_session_id = stream_session.get('session_id')
-    if parent_session_id:
-        return await _verify_session_ownership(request, parent_session_id)
+    stream_user_id = stream_session.get('user_id')
+    if not stream_user_id:
+        return False
 
-    # Stream session has no parent session, allow access (legacy data)
-    return True
+    return str(stream_user_id) == str(entity_id)
 
 
 # ======================================================================

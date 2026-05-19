@@ -70,6 +70,18 @@ def _clamp_analysis_max_tokens(value: Any, default: int = ANALYSIS_MAX_TOKENS_DE
     return max(ANALYSIS_MAX_TOKENS_MIN, min(ANALYSIS_MAX_TOKENS_MAX, numeric))
 
 
+def _get_stream_settings_sections(stream_session: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    stream_settings_raw = stream_session.get('stream_settings')
+    stream_settings = stream_settings_raw if isinstance(stream_settings_raw, dict) else {}
+    transcription_raw = stream_settings.get('transcription')
+    translation_raw = stream_settings.get('translation')
+    analysis_raw = stream_settings.get('analysis')
+    transcription = transcription_raw if isinstance(transcription_raw, dict) else {}
+    translation = translation_raw if isinstance(translation_raw, dict) else {}
+    analysis = analysis_raw if isinstance(analysis_raw, dict) else {}
+    return transcription, translation, analysis
+
+
 def setup_routes(app):
     """Setup transcription-related routes."""
     # Streaming transcription endpoints
@@ -353,7 +365,7 @@ async def update_stream_translation(request):
 
     source_language = (
         data.get('source_language')
-        or stream_session.get('source_language')
+        or _get_stream_settings_sections(stream_session)[0].get('source_language')
         or stream_session.get('language')
         or 'en'
     )
@@ -378,22 +390,16 @@ async def update_stream_translation(request):
         relay.set_translation_callback(None)
 
         provider_session = (updated_session or stream_session).get('provider_session', {})
-        metadata = provider_session.get('metadata') if isinstance(provider_session, dict) else {}
-        if not isinstance(metadata, dict):
-            metadata = {}
         provider_name = provider_session.get('provider') if isinstance(provider_session, dict) else None
         provider_stream_id = provider_session.get('provider_stream_id') if isinstance(provider_session, dict) else None
+        transcription_settings, translation_settings, _ = _get_stream_settings_sections(updated_session or stream_session)
         effective_source_language = (
-            (updated_session or stream_session).get('source_language')
-            or (provider_session.get('source_language') if isinstance(provider_session, dict) else None)
-            or metadata.get('source_language')
+            transcription_settings.get('source_language')
             or (updated_session or stream_session).get('language')
             or 'en'
         )
         effective_target_language = (
-            (updated_session or stream_session).get('target_language')
-            or (provider_session.get('target_language') if isinstance(provider_session, dict) else None)
-            or metadata.get('target_language')
+            translation_settings.get('target_language')
         )
 
         if effective_target_language and provider_name and provider_stream_id:
@@ -475,46 +481,48 @@ async def update_stream_analysis(request):
     if not await _verify_stream_ownership(request, stream_id):
         return web.json_response({"error": "Access denied"}, status=403)
 
+    _transcription_settings, _translation_settings, analysis_settings = _get_stream_settings_sections(stream_session)
+
     analysis_enabled = bool(data.get('analysis_enabled', False))
-    analysis_mode = str(data.get('analysis_mode') or stream_session.get('analysis_mode') or 'multimodal')
+    analysis_mode = str(data.get('analysis_mode') or analysis_settings.get('type') or 'multimodal')
     if analysis_mode not in {'multimodal', 'audio_only', 'video_only'}:
         return web.json_response({"error": "Invalid analysis_mode"}, status=400)
 
     try:
         analysis_audio_chunk_seconds = _clamp_analysis_window_seconds(
-            data.get('analysis_audio_chunk_seconds', stream_session.get('analysis_audio_chunk_seconds', ANALYSIS_WINDOW_DEFAULT_SECONDS))
+            data.get('analysis_audio_chunk_seconds', analysis_settings.get('audio_chunk_seconds', ANALYSIS_WINDOW_DEFAULT_SECONDS))
         )
     except Exception:
         return web.json_response({"error": "Invalid analysis_audio_chunk_seconds"}, status=400)
 
     try:
         analysis_video_chunk_seconds = _clamp_analysis_window_seconds(
-            data.get('analysis_video_chunk_seconds', stream_session.get('analysis_video_chunk_seconds', ANALYSIS_WINDOW_DEFAULT_SECONDS))
+            data.get('analysis_video_chunk_seconds', analysis_settings.get('video_chunk_seconds', ANALYSIS_WINDOW_DEFAULT_SECONDS))
         )
     except Exception:
         return web.json_response({"error": "Invalid analysis_video_chunk_seconds"}, status=400)
 
     try:
         analysis_max_tokens = _clamp_analysis_max_tokens(
-            data.get('analysis_max_tokens', stream_session.get('analysis_max_tokens', ANALYSIS_MAX_TOKENS_DEFAULT))
+            data.get('analysis_max_tokens', analysis_settings.get('max_tokens', ANALYSIS_MAX_TOKENS_DEFAULT))
         )
     except Exception:
         return web.json_response({"error": "Invalid analysis_max_tokens"}, status=400)
 
     try:
-        analysis_video_fps = int(data.get('analysis_video_fps', stream_session.get('analysis_video_fps', 3)))
+        analysis_video_fps = int(data.get('analysis_video_fps', analysis_settings.get('video_fps', 3)))
     except (TypeError, ValueError):
         return web.json_response({"error": "Invalid analysis_video_fps"}, status=400)
 
     analysis_prompt = data.get('analysis_prompt')
     if analysis_prompt is None:
-        analysis_prompt = stream_session.get('analysis_prompt')
+        analysis_prompt = analysis_settings.get('prompt')
     if analysis_prompt is not None:
         analysis_prompt = str(analysis_prompt).strip() or None
 
     analysis_response_format = data.get('analysis_response_format')
     if analysis_response_format is None:
-        analysis_response_format = stream_session.get('analysis_response_format')
+        analysis_response_format = analysis_settings.get('response_format')
     elif not isinstance(analysis_response_format, dict):
         return web.json_response(
             {
@@ -653,11 +661,6 @@ async def whip_proxy(request):
 # LIST / GET / DELETE STREAMS (user-scoped)
 # ============================================================================
 
-async def _get_user_session_ids(user_id: str) -> list[str]:
-    result = await supabase.table('user_sessions').select('id').eq('user_id', user_id).execute()
-    return [str(row.get('id')) for row in (result.data or []) if row.get('id')]
-
-
 async def _build_stream_items(user_id: str, stream_rows: list[dict]) -> list[dict]:
     stream_ids = [str(row.get('id')) for row in stream_rows if row.get('id')]
     if not stream_ids:
@@ -693,7 +696,7 @@ async def _build_stream_items(user_id: str, stream_rows: list[dict]) -> list[dic
 
     analysis_result = await (
         supabase.table('stream_analysis')
-        .select('stream_session_id, analysis_mode, created_at')
+        .select('stream_session_id, created_at')
         .eq('user_id', user_id)
         .in_('stream_session_id', stream_ids)
         .order('created_at', desc=True)
@@ -713,6 +716,8 @@ async def _build_stream_items(user_id: str, stream_rows: list[dict]) -> list[dic
         stream_id = str(stream_row.get('id'))
         transcription = transcription_by_stream.get(stream_id, {})
         analysis = latest_analysis_by_stream.get(stream_id)
+        _transcription_settings, _translation_settings, analysis_settings = _get_stream_settings_sections(stream_row)
+        analysis_mode = analysis_settings.get('type')
 
         items.append({
             'id': stream_id,
@@ -732,7 +737,7 @@ async def _build_stream_items(user_id: str, stream_rows: list[dict]) -> list[dic
             'transcription_id': transcription.get('id'),
             'translated_languages': sorted(list(translated_languages_by_stream.get(stream_id, set()))),
             'has_analysis': bool(analysis),
-            'analysis_mode': analysis.get('analysis_mode') if analysis else None,
+            'analysis_mode': analysis_mode,
         })
 
     return items
@@ -751,14 +756,10 @@ async def list_streams(request):
         limit = int(request.query.get('limit', '100'))
         offset = int(request.query.get('offset', '0'))
 
-        session_ids = await _get_user_session_ids(user_id)
-        if not session_ids:
-            return web.json_response({"streams": [], "count": 0, "limit": limit, "offset": offset})
-
         stream_result = await (
             supabase.table('stream_sessions')
             .select('*')
-            .in_('user_session_id', session_ids)
+            .eq('user_id', user_id)
             .order('created_at', desc=True)
             .range(offset, offset + limit - 1)
             .execute()
@@ -791,15 +792,11 @@ async def get_stream(request):
         if not stream_id:
             return web.json_response({"error": "Missing stream ID"}, status=400)
 
-        session_ids = await _get_user_session_ids(user_id)
-        if not session_ids:
-            return web.json_response({"error": "Stream not found"}, status=404)
-
         stream_result = await (
             supabase.table('stream_sessions')
             .select('*')
             .eq('id', stream_id)
-            .in_('user_session_id', session_ids)
+            .eq('user_id', user_id)
             .limit(1)
             .execute()
         )
@@ -827,15 +824,11 @@ async def delete_stream(request):
         if not stream_id:
             return web.json_response({"error": "Missing stream ID"}, status=400)
 
-        session_ids = await _get_user_session_ids(user_id)
-        if not session_ids:
-            return web.json_response({"error": "Stream not found"}, status=404)
-
         stream_lookup = await (
             supabase.table('stream_sessions')
             .select('id')
             .eq('id', stream_id)
-            .in_('user_session_id', session_ids)
+            .eq('user_id', user_id)
             .limit(1)
             .execute()
         )
@@ -845,7 +838,7 @@ async def delete_stream(request):
         # Explicit cleanup for transcription headers since transcriptions.stream_session_id
         # may be nullable after stream deletion depending on DB FK mode.
         await supabase.table('transcriptions').delete().eq('user_id', user_id).eq('stream_session_id', stream_id).execute()
-        await supabase.table('stream_sessions').delete().eq('id', stream_id).in_('user_session_id', session_ids).execute()
+        await supabase.table('stream_sessions').delete().eq('id', stream_id).eq('user_id', user_id).execute()
 
         return web.json_response({
             'message': 'Stream deleted successfully',

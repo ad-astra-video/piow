@@ -40,12 +40,6 @@ export const api = {
     const q = new URLSearchParams(params);
     return _fetch(`/user/history?${q}`);
   },
-  getHistoryAnalysisPreviews: (streamSessionIds = []) => {
-    const ids = (Array.isArray(streamSessionIds) ? streamSessionIds : []).filter(Boolean);
-    if (ids.length === 0) return Promise.resolve({ previews: {} });
-    const q = new URLSearchParams({ stream_session_ids: ids.join(',') });
-    return _fetch(`/user/history-analysis-previews?${q}`);
-  },
   getUsageDetails: (days = 30) => _fetch(`/user/usage-details?days=${days}`),
 
   // Streams
@@ -69,7 +63,11 @@ export const api = {
   getStream: (id) => _fetch(`/streams/${id}`),
   deleteStream: (id) => _fetch(`/streams/${id}`, { method: 'DELETE' }),
   getSentences: (streamId) => _fetch(`/streams/${streamId}/sentences`),
-  getStreamAnalysis: (streamId) => _fetch(`/streams/${streamId}/analysis`),
+  getStreamAnalysis: (streamId, params = {}) => {
+    const q = new URLSearchParams(params);
+    const qs = q.toString();
+    return _fetch(`/streams/${streamId}/analysis${qs ? `?${qs}` : ''}`);
+  },
 
   // Translations (history only)
   listTranslations: (params = {}) => {
