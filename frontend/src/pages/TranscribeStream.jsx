@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages, Brain, X, FileCode } from 'lucide-react';
+import AnalysisContent from '../components/AnalysisContent';
 import Sentence from '../components/Sentence';
 import MarkdownText from '../components/MarkdownText';
 import useLiveTranscription from '../hooks/useLiveTranscription';
@@ -979,34 +980,18 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                 ) : (
                   <>
                     {analysisSignalRows.length > 0 && (
-                      <article className="analysis-entry analysis-signals-table-wrap">
+                      <article className="analysis-entry">
                         <div className="analysis-entry-meta">
                           <span className="analysis-entry-type">signal</span>
                           <span className="analysis-entry-mode">{getAnalysisModeLabel(analysisMode)}</span>
                           <span className="analysis-entry-ts">{analysisSignalRows.length} rows</span>
                         </div>
-                        <div className="analysis-signals-table-scroll">
-                          <table className="analysis-signals-table">
-                            <thead>
-                              <tr>
-                                <th>Timestamp</th>
-                                <th>Category</th>
-                                <th>Item</th>
-                                <th>Priority</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {analysisSignalRows.map((row, idx) => (
-                                <tr key={`signal-row-${idx}`}>
-                                  <td>{row.timestamp}</td>
-                                  <td>{row.category}</td>
-                                  <td>{row.item}</td>
-                                  <td>{row.priority}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                        <AnalysisContent
+                          content=""
+                          responseFormat={analysisResponseFormat}
+                          signalRows={analysisSignalRows}
+                          emptyMessage="No analysis rows yet."
+                        />
                       </article>
                     )}
                     {analysisNarrativeEntries.map((entry) => (
@@ -1016,7 +1001,12 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                           <span className="analysis-entry-mode">{getAnalysisModeLabel(entry.mode)}</span>
                           <span className="analysis-entry-ts">{formatDuration(entry.timestampMs || 0)}</span>
                         </div>
-                        <MarkdownText content={entry.text} />
+                        <AnalysisContent
+                          content={entry.text}
+                          responseFormat={analysisResponseFormat}
+                          signalRows={entry.signalRows}
+                          emptyMessage="No analysis text available."
+                        />
                       </article>
                     ))}
                   </>

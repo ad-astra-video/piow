@@ -2,48 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Trash2, Mic, Upload, Link as LinkIcon, Globe, Clock, Search, Filter, X, Download } from 'lucide-react';
 import { api } from '../lib/api';
+import AnalysisContent from '../components/AnalysisContent';
 import { downloadTranscription } from '../lib/download';
 import SentenceList from '../components/SentenceList';
 import { splitSentences, parseTranscriptSentences } from '../lib/download';
-
-function parseAnalysisDisplay(rawText) {
-  if (typeof rawText !== 'string') {
-    return { mode: 'text', text: '' };
-  }
-
-  const trimmed = rawText.trim();
-  if (!trimmed) {
-    return { mode: 'text', text: '' };
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items)) {
-      const rows = parsed.items
-        .map((row) => {
-          if (!row || typeof row !== 'object') return null;
-          const itemText = typeof row.item === 'string' ? row.item.trim() : '';
-          if (!itemText) return null;
-          const category = typeof row.category === 'string' ? row.category.trim() : '';
-          const priority = typeof row.priority === 'string' ? row.priority.trim() : '';
-          return {
-            category,
-            item: itemText,
-            priority,
-          };
-        })
-        .filter(Boolean);
-
-      if (rows.length > 0) {
-        return { mode: 'items', items: rows };
-      }
-    }
-
-    return { mode: 'json', text: JSON.stringify(parsed, null, 2) };
-  } catch (_err) {
-    return { mode: 'text', text: trimmed };
-  }
-}
 
 export default function HistoryPage() {
   const [items, setItems] = useState([]);
@@ -52,6 +14,7 @@ export default function HistoryPage() {
   const [search, setSearch] = useState('');
   const [cardViewById, setCardViewById] = useState({});
   const [cardAnalysisPreviewById, setCardAnalysisPreviewById] = useState({});
+  const [cardAnalysisResponseFormatById, setCardAnalysisResponseFormatById] = useState({});
   const [cardAnalysisLoadingById, setCardAnalysisLoadingById] = useState({});
   const [cardAnalysisErrorById, setCardAnalysisErrorById] = useState({});
   const [modalItem, setModalItem] = useState(null);
@@ -62,6 +25,7 @@ export default function HistoryPage() {
   const [showModalTranscript, setShowModalTranscript] = useState(true);
   const [showModalTranslation, setShowModalTranslation] = useState(false);
   const [modalAnalysisEntries, setModalAnalysisEntries] = useState([]);
+  const [modalAnalysisResponseFormat, setModalAnalysisResponseFormat] = useState(null);
   const [modalAnalysisLoading, setModalAnalysisLoading] = useState(false);
   const [modalAnalysisError, setModalAnalysisError] = useState('');
 
@@ -119,6 +83,7 @@ export default function HistoryPage() {
     setShowModalTranscript(true);
     setShowModalTranslation(false);
     setModalAnalysisEntries([]);
+    setModalAnalysisResponseFormat(item.analysis_response_format || null);
     setModalAnalysisError('');
     setModalAnalysisLoading(true);
 
@@ -146,12 +111,14 @@ export default function HistoryPage() {
       const analysisRows = Array.isArray(analysisResult.value?.analysis)
         ? analysisResult.value.analysis
         : [];
+      setModalAnalysisResponseFormat(analysisResult.value?.response_format || item.analysis_response_format || null);
       setModalAnalysisEntries(
         analysisRows.filter((entry) => typeof entry?.summary_text === 'string' && entry.summary_text.trim())
       );
       setModalAnalysisError('');
     } else {
       setModalAnalysisEntries([]);
+      setModalAnalysisResponseFormat(item.analysis_response_format || null);
       setModalAnalysisError('Could not load analysis summaries for this stream.');
     }
     setModalAnalysisLoading(false);
@@ -166,6 +133,7 @@ export default function HistoryPage() {
     setShowModalTranscript(true);
     setShowModalTranslation(false);
     setModalAnalysisEntries([]);
+    setModalAnalysisResponseFormat(null);
     setModalAnalysisError('');
     setModalAnalysisLoading(false);
   };
@@ -239,6 +207,7 @@ export default function HistoryPage() {
     try {
       const CHUNK_SIZE = 10;
       const previewByCardId = {};
+      const responseFormatByCardId = {};
       const errorByCardId = {};
 
       for (let i = 0; i < requests.length; i += CHUNK_SIZE) {
@@ -251,6 +220,7 @@ export default function HistoryPage() {
           const { cardId } = batch[idx];
           if (result.status === 'fulfilled') {
             const rows = Array.isArray(result.value?.analysis) ? result.value.analysis : [];
+            responseFormatByCardId[cardId] = result.value?.response_format || null;
             previewByCardId[cardId] = rows
               .slice(0, 10)
               .map((entry) => (typeof entry?.summary_text === 'string' ? entry.summary_text.trim() : ''))
@@ -265,6 +235,10 @@ export default function HistoryPage() {
       setCardAnalysisPreviewById((current) => ({
         ...current,
         ...previewByCardId,
+      }));
+      setCardAnalysisResponseFormatById((current) => ({
+        ...current,
+        ...responseFormatByCardId,
       }));
       setCardAnalysisErrorById((current) => ({
         ...current,
@@ -385,6 +359,11 @@ export default function HistoryPage() {
   const latestModalAnalysis = modalAnalysisEntries.length > 0 ? modalAnalysisEntries[0] : null;
   const olderModalAnalyses = modalAnalysisEntries.slice(1);
 
+  const getCardAnalysisResponseFormat = (item) => {
+    const cardId = getCardId(item);
+    return cardAnalysisResponseFormatById[cardId] || item.analysis_response_format || null;
+  };
+
   const getCardAnalysisPreviewText = (item) => {
     const cardId = getCardId(item);
     return item.analysis_summary_text || cardAnalysisPreviewById[cardId] || '';
@@ -405,30 +384,6 @@ export default function HistoryPage() {
         .join('\n\n');
     }
     return (modalItem?.analysis_summary_text || getCardAnalysisPreviewText(modalItem || {}) || '').trim();
-  };
-
-  const renderAnalysisContent = (rawText) => {
-    const parsed = parseAnalysisDisplay(rawText);
-
-    if (parsed.mode === 'items') {
-      return (
-        <ul className="history-analysis-items-list">
-          {parsed.items.map((row, idx) => (
-            <li key={`${row.item}-${idx}`} className="history-analysis-items-row">
-              {row.category ? <span className="history-analysis-item-category">{row.category}</span> : null}
-              <span className="history-analysis-item-text">{row.item}</span>
-              {row.priority ? <span className="history-analysis-item-priority">{row.priority}</span> : null}
-            </li>
-          ))}
-        </ul>
-      );
-    }
-
-    if (parsed.mode === 'json') {
-      return <pre className="history-analysis-json">{parsed.text}</pre>;
-    }
-
-    return <p className="history-analysis-preview-text">{parsed.text}</p>;
   };
 
 
@@ -505,7 +460,11 @@ export default function HistoryPage() {
                     getCardAnalysisPreviewText(item) ? (
                       <div className="history-analysis-preview">
                         <p className="history-analysis-preview-label">Latest analysis</p>
-                        {renderAnalysisContent(getCardAnalysisPreviewText(item))}
+                        <AnalysisContent
+                          content={getCardAnalysisPreviewText(item)}
+                          responseFormat={getCardAnalysisResponseFormat(item)}
+                          emptyMessage="No analysis text available."
+                        />
                       </div>
                     ) : cardAnalysisLoadingById[getCardId(item)] ? (
                       <div className="history-analysis-preview">
@@ -669,7 +628,11 @@ export default function HistoryPage() {
                     <div className="history-full-text-block">
                       <p className="history-modal-section-label">Full analysis</p>
                       <div className="history-analysis-text">
-                        {renderAnalysisContent(getFullAnalysisText() || 'No analysis text available.')}
+                        <AnalysisContent
+                          content={getFullAnalysisText()}
+                          responseFormat={modalAnalysisResponseFormat}
+                          emptyMessage="No analysis text available."
+                        />
                       </div>
                     </div>
                   )}
@@ -680,7 +643,13 @@ export default function HistoryPage() {
                       <div className="history-analysis-older-list">
                         {olderModalAnalyses.map((entry) => (
                           <div key={entry.id} className="history-analysis-older-item">
-                            <div className="history-analysis-text">{renderAnalysisContent(entry.summary_text)}</div>
+                            <div className="history-analysis-text">
+                              <AnalysisContent
+                                content={entry.summary_text}
+                                responseFormat={modalAnalysisResponseFormat}
+                                emptyMessage="No analysis text available."
+                              />
+                            </div>
                             <p className="history-analysis-meta">{formatDate(entry.created_at)}</p>
                           </div>
                         ))}

@@ -231,6 +231,7 @@ async def get_user_history(request):
                     'translated_languages': sorted(list(langs_by_stream_session.get(stream_session_id, set()))),
                     'has_analysis': bool(analysis) or analysis_enabled_by_stream_session.get(stream_session_id, False),
                     'analysis_mode': analysis_mode_by_stream_session.get(stream_session_id),
+                    'analysis_response_format': analysis_settings.get('response_format'),
                     'analysis_summary_text': analysis.get('summary_text') if analysis else None,
                     'analysis_source': analysis.get('analysis_source') if analysis else None,
                     '_type': 'transcription',
@@ -312,8 +313,12 @@ async def get_stream_sentences(request):
         base_sentences = result.data or []
         base_by_index = {row.get('sentence_index'): row for row in base_sentences}
 
-        # Fetch all translations in one query and split in Python.
-        # This avoids dialect differences around null filter operators.
+        translation_settings = stream_settings.get('translation')
+        translation_settings = translation_settings if isinstance(translation_settings, dict) else {}
+        configured_target_language = translation_settings.get('target_language')
+
+        # Fetch all translation header/legacy rows in one query.
+        # Sentence-level translated text now lives on transcription_sentences.
         all_translations_result = await (
             supabase.table('translations')
             .select('id, original_text, translated_text, target_language, sentence_index, created_at')
@@ -323,84 +328,116 @@ async def get_stream_sentences(request):
             .execute()
         )
 
-        # Group translations by language and sentence_index
-        translation_index_by_language: Dict[str, Dict[int, Dict[str, Any]]] = {}
         all_translation_rows = all_translations_result.data or []
+        translation_languages = {
+            str(row.get('target_language'))
+            for row in all_translation_rows
+            if row.get('target_language')
+        }
+        if configured_target_language:
+            translation_languages.add(str(configured_target_language))
 
-        # First, consume rows that have explicit sentence_index.
-        for row in all_translation_rows:
-            language = row.get('target_language')
-            translated_text = row.get('translated_text')
-            sentence_index = row.get('sentence_index')
-            if not language or not translated_text or sentence_index is None:
-                continue
-
-            bucket = translation_index_by_language.setdefault(language, {})
-            base_sentence = base_by_index.get(sentence_index, {})
-            bucket[sentence_index] = {
-                'sentence_index': sentence_index,
-                'text': row.get('original_text') or base_sentence.get('text') or '',
-                'translated_text': translated_text,
-                'timestamp': base_sentence.get('timestamp'),
-            }
-
-        # Backward compatibility: rows without sentence_index still use legacy
-        # text/fallback cursor matching.
-        legacy_translation_rows = [
-            row for row in all_translation_rows
-            if row.get('sentence_index') is None
+        translations_by_language: Dict[str, List[Dict[str, Any]]] = {}
+        sentence_rows_with_translations = [
+            row for row in base_sentences
+            if isinstance(row.get('translated_text'), str) and row.get('translated_text').strip()
         ]
 
-        sentence_indices = [row.get('sentence_index') for row in base_sentences]
-        text_to_indices: Dict[str, List[int]] = {}
-        for row in base_sentences:
-            sentence_text = row.get('text')
-            sentence_index = row.get('sentence_index')
-            if not sentence_text or sentence_index is None:
-                continue
-            text_to_indices.setdefault(sentence_text, []).append(sentence_index)
+        sentence_translation_language = None
+        if sentence_rows_with_translations:
+            if configured_target_language:
+                sentence_translation_language = str(configured_target_language)
+            elif len(translation_languages) == 1:
+                sentence_translation_language = next(iter(translation_languages))
 
-        text_match_cursors: Dict[str, Dict[str, int]] = {}
-        fallback_cursor_by_language: Dict[str, int] = {}
+        if sentence_translation_language:
+            translations_by_language[sentence_translation_language] = [
+                {
+                    'sentence_index': row.get('sentence_index'),
+                    'text': row.get('text') or '',
+                    'translated_text': row.get('translated_text'),
+                    'timestamp': row.get('timestamp'),
+                }
+                for row in sentence_rows_with_translations
+            ]
 
-        for row in legacy_translation_rows:
-            language = row.get('target_language')
-            translated_text = row.get('translated_text')
-            original_text = row.get('original_text')
-            if not language or not translated_text:
-                continue
+        if not translations_by_language:
+            # Backward compatibility for older rows that still stored one
+            # translations record per sentence.
+            translation_index_by_language: Dict[str, Dict[int, Dict[str, Any]]] = {}
 
-            language_cursor = text_match_cursors.setdefault(language, {})
-            sentence_index = None
+            # First, consume rows that have explicit sentence_index.
+            for row in all_translation_rows:
+                language = row.get('target_language')
+                translated_text = row.get('translated_text')
+                sentence_index = row.get('sentence_index')
+                if not language or not translated_text or sentence_index is None:
+                    continue
 
-            if isinstance(original_text, str) and original_text in text_to_indices:
-                candidate_indices = text_to_indices.get(original_text) or []
-                cursor_pos = language_cursor.get(original_text, 0)
-                if cursor_pos < len(candidate_indices):
-                    sentence_index = candidate_indices[cursor_pos]
-                    language_cursor[original_text] = cursor_pos + 1
+                bucket = translation_index_by_language.setdefault(language, {})
+                base_sentence = base_by_index.get(sentence_index, {})
+                bucket[sentence_index] = {
+                    'sentence_index': sentence_index,
+                    'text': row.get('original_text') or base_sentence.get('text') or '',
+                    'translated_text': translated_text,
+                    'timestamp': base_sentence.get('timestamp'),
+                }
 
-            if sentence_index is None:
-                fallback_pos = fallback_cursor_by_language.get(language, 0)
-                if fallback_pos < len(sentence_indices):
-                    sentence_index = sentence_indices[fallback_pos]
-                    fallback_cursor_by_language[language] = fallback_pos + 1
+            legacy_translation_rows = [
+                row for row in all_translation_rows
+                if row.get('sentence_index') is None
+            ]
 
-            if sentence_index is None:
-                continue
+            sentence_indices = [row.get('sentence_index') for row in base_sentences]
+            text_to_indices: Dict[str, List[int]] = {}
+            for row in base_sentences:
+                sentence_text = row.get('text')
+                sentence_index = row.get('sentence_index')
+                if not sentence_text or sentence_index is None:
+                    continue
+                text_to_indices.setdefault(sentence_text, []).append(sentence_index)
 
-            bucket = translation_index_by_language.setdefault(language, {})
-            bucket[sentence_index] = {
-                'sentence_index': sentence_index,
-                'text': original_text or base_by_index.get(sentence_index, {}).get('text') or '',
-                'translated_text': translated_text,
-                'timestamp': base_by_index.get(sentence_index, {}).get('timestamp'),
+            text_match_cursors: Dict[str, Dict[str, int]] = {}
+            fallback_cursor_by_language: Dict[str, int] = {}
+
+            for row in legacy_translation_rows:
+                language = row.get('target_language')
+                translated_text = row.get('translated_text')
+                original_text = row.get('original_text')
+                if not language or not translated_text:
+                    continue
+
+                language_cursor = text_match_cursors.setdefault(language, {})
+                sentence_index = None
+
+                if isinstance(original_text, str) and original_text in text_to_indices:
+                    candidate_indices = text_to_indices.get(original_text) or []
+                    cursor_pos = language_cursor.get(original_text, 0)
+                    if cursor_pos < len(candidate_indices):
+                        sentence_index = candidate_indices[cursor_pos]
+                        language_cursor[original_text] = cursor_pos + 1
+
+                if sentence_index is None:
+                    fallback_pos = fallback_cursor_by_language.get(language, 0)
+                    if fallback_pos < len(sentence_indices):
+                        sentence_index = sentence_indices[fallback_pos]
+                        fallback_cursor_by_language[language] = fallback_pos + 1
+
+                if sentence_index is None:
+                    continue
+
+                bucket = translation_index_by_language.setdefault(language, {})
+                bucket[sentence_index] = {
+                    'sentence_index': sentence_index,
+                    'text': original_text or base_by_index.get(sentence_index, {}).get('text') or '',
+                    'translated_text': translated_text,
+                    'timestamp': base_by_index.get(sentence_index, {}).get('timestamp'),
+                }
+
+            translations_by_language = {
+                language: sorted(bucket.values(), key=lambda r: r.get('sentence_index', 0))
+                for language, bucket in translation_index_by_language.items()
             }
-
-        translations_by_language = {
-            language: sorted(bucket.values(), key=lambda r: r.get('sentence_index', 0))
-            for language, bucket in translation_index_by_language.items()
-        }
 
         return web.json_response({
             'sentences': base_sentences,
@@ -455,6 +492,7 @@ async def get_stream_analysis(request):
         analysis_settings = stream_settings.get('analysis')
         analysis_settings = analysis_settings if isinstance(analysis_settings, dict) else {}
         stream_analysis_mode = analysis_settings.get('type')
+        stream_analysis_response_format = analysis_settings.get('response_format')
 
         if not stream_id:
             return web.json_response({'analysis': [], 'count': 0})
@@ -480,6 +518,7 @@ async def get_stream_analysis(request):
         return web.json_response({
             'analysis': rows,
             'count': len(rows),
+            'response_format': stream_analysis_response_format,
         })
     except Exception as e:
         logger.error(f"Error fetching stream analysis: {e}")

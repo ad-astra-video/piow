@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import './App.css';
 import AuthModal from './components/AuthModal';
+import AnalysisContent from './components/AnalysisContent';
 import BillingPage from './components/BillingPage';
 import SubscriptionPlans from './components/SubscriptionPlans';
 import { CheckoutSuccess, CheckoutCancel } from './components/CheckoutResult';
@@ -195,7 +196,11 @@ function LiveTranscriptSidebar({ onStreamStopped }) {
                     <span className="analysis-entry-mode">{getAnalysisModeLabel(entry.mode)}</span>
                     <span className="analysis-entry-ts">{formatDuration(entry.timestampMs || 0)}</span>
                   </div>
-                  <MarkdownText className="entry-text" content={entry.text} />
+                  <AnalysisContent
+                    content={entry.text}
+                    signalRows={entry.signalRows}
+                    emptyMessage="No analysis text available."
+                  />
                 </article>
               ))
             )}
