@@ -469,7 +469,7 @@ class SSERelay:
                         task_name=f"sse-translate-store-{self.stream_id}",
                     )
 
-                if msg_type == "analysis.done":
+                if msg_type in {"analysis.done", "analysis.signal"}:
                     self._track_analysis_store_task(
                         self._store_analysis_to_db(message),
                         task_name=f"sse-analysis-store-{self.stream_id}",
@@ -548,6 +548,14 @@ class SSERelay:
         if not summary_text:
             raw_summary = message.get("summary")
             summary_text = raw_summary if isinstance(raw_summary, str) else ""
+        if not summary_text and "data" in message:
+            try:
+                summary_text = json.dumps(message.get("data"), ensure_ascii=True)
+            except TypeError:
+                logger.warning(
+                    "Failed to serialize structured analysis payload for stream %s",
+                    self.stream_id,
+                )
         summary_text = summary_text.strip()
         if not summary_text:
             return
@@ -556,6 +564,7 @@ class SSERelay:
         analysis_source = message.get("analysis_source") if isinstance(message.get("analysis_source"), str) else None
         timestamp_ms_raw = message.get("timestamp_ms")
         timestamp_ms: Optional[int] = timestamp_ms_raw if isinstance(timestamp_ms_raw, int) else None
+        source_event_type = message.get("type") if isinstance(message.get("type"), str) else "analysis.done"
 
         try:
             await self._session_store.store_stream_analysis(
@@ -564,7 +573,7 @@ class SSERelay:
                 analysis_source=analysis_source,
                 summary_text=summary_text,
                 timestamp_ms=timestamp_ms,
-                source_event_type="analysis.done",
+                source_event_type=source_event_type,
             )
         except Exception as exc:
             logger.warning(

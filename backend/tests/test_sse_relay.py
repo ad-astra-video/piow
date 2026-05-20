@@ -521,6 +521,85 @@ class TestSSERelayPersistence(unittest.IsolatedAsyncioTestCase):
         callback_gate.set()
         await asyncio.wait_for(stop_task, timeout=1)
 
+    async def test_analysis_done_persists_summary_to_db(self):
+        from sse_relay import SSERelay
+
+        session_store = AsyncMock()
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=session_store,
+        )
+
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {
+                    "type": "analysis.done",
+                    "mode": "audio_only",
+                    "analysis_source": "audio",
+                    "text": "Key risk identified",
+                    "timestamp_ms": 12000,
+                },
+                "id": None,
+            }
+        )
+
+        await asyncio.sleep(0)
+
+        session_store.store_stream_analysis.assert_awaited_once_with(
+            "test-stream",
+            analysis_mode="audio_only",
+            analysis_source="audio",
+            summary_text="Key risk identified",
+            timestamp_ms=12000,
+            source_event_type="analysis.done",
+        )
+
+    async def test_analysis_signal_persists_structured_payload_to_db(self):
+        from sse_relay import SSERelay
+
+        session_store = AsyncMock()
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="test-stream",
+            session_store=session_store,
+        )
+
+        signal_payload = {
+            "items": [
+                {
+                    "category": "risk",
+                    "item": "Queue depth is increasing",
+                    "priority": "high",
+                }
+            ]
+        }
+
+        await relay._handle_event(
+            {
+                "event": "message",
+                "data": {
+                    "type": "analysis.signal",
+                    "mode": "multimodal",
+                    "data": signal_payload,
+                    "timestamp_ms": 34000,
+                },
+                "id": None,
+            }
+        )
+
+        await asyncio.sleep(0)
+
+        session_store.store_stream_analysis.assert_awaited_once_with(
+            "test-stream",
+            analysis_mode="multimodal",
+            analysis_source=None,
+            summary_text=json.dumps(signal_payload, ensure_ascii=True),
+            timestamp_ms=34000,
+            source_event_type="analysis.signal",
+        )
+
     async def test_wait_for_pending_translation_tasks_times_out(self):
         from sse_relay import SSERelay
 
