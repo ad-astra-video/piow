@@ -460,6 +460,7 @@ class LiveTranscriptionWorker:
         self._analysis_pending_audio: bytes = b""
         self._analysis_audio_samples_total: int = 0
         self._transcription_audio_samples_sent: int = 0
+        self._last_transcription_timestamp_ms: int = 0
         self._analysis_last_run_ts_ms: int = 0
         self._analysis_last_seen_ts_ms: int = 0
         self._analysis_audio_request_count: int = 0
@@ -493,6 +494,18 @@ class LiveTranscriptionWorker:
         if not audio_pcm16:
             return
         self._transcription_audio_samples_sent += len(audio_pcm16) // 2
+
+    def _resolve_transcription_timestamp_ms(self, text: str, is_final: bool) -> int:
+        """Keep punctuation-only non-final transcript updates pinned to the last content timestamp."""
+        current_timestamp_ms = self._transcription_sent_timestamp_ms()
+        normalized_text = (text or "").strip()
+        has_word_content = any(char.isalnum() for char in normalized_text)
+
+        if is_final or has_word_content or self._last_transcription_timestamp_ms <= 0:
+            self._last_transcription_timestamp_ms = current_timestamp_ms
+            return current_timestamp_ms
+
+        return self._last_transcription_timestamp_ms
 
     def _parse_structured_analysis_text(self, analysis_text: str) -> Optional[Any]:
         """Parse structured JSON output from analysis text, including fenced JSON blocks."""
@@ -682,6 +695,7 @@ class LiveTranscriptionWorker:
         self._analysis_pending_audio = b""
         self._analysis_audio_samples_total = 0
         self._transcription_audio_samples_sent = 0
+        self._last_transcription_timestamp_ms = 0
         self._analysis_last_run_ts_ms = 0
         self._analysis_last_seen_ts_ms = 0
         self._stream_started_monotonic_s = time.monotonic()
@@ -721,7 +735,7 @@ class LiveTranscriptionWorker:
                     delta = message.get("delta", "")
                     if not delta:
                         return
-                    timestamp_ms = self._transcription_sent_timestamp_ms()
+                    timestamp_ms = self._resolve_transcription_timestamp_ms(delta, is_final=is_final)
                     message["timestamp_ms"] = timestamp_ms
                 payload = json.dumps(message)
                 await processor.send_data(payload)
@@ -736,7 +750,7 @@ class LiveTranscriptionWorker:
             text = message if isinstance(message, str) else str(message)
             if not text or not text.strip():
                 return
-            timestamp_ms = self._transcription_sent_timestamp_ms()
+            timestamp_ms = self._resolve_transcription_timestamp_ms(text, is_final=is_final)
             payload = json.dumps({
                 "type": "transcription",
                 "text": text,

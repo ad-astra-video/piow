@@ -250,6 +250,23 @@ async def test_transcription_send_chunk_window_is_80ms():
     assert worker._transcription_sent_timestamp_ms() == 80
 
 
+async def test_punctuation_only_non_final_transcription_reuses_last_content_timestamp():
+    worker = worker_app.LiveTranscriptionWorker()
+
+    worker._mark_transcription_audio_sent(b"\x00" * worker_app.LiveTranscriptionWorker._SEND_CHUNK_BYTES)
+    first_timestamp = worker._resolve_transcription_timestamp_ms("hello", is_final=False)
+
+    worker._mark_transcription_audio_sent(b"\x00" * worker_app.LiveTranscriptionWorker._SEND_CHUNK_BYTES)
+    second_timestamp = worker._resolve_transcription_timestamp_ms(".", is_final=False)
+
+    worker._mark_transcription_audio_sent(b"\x00" * worker_app.LiveTranscriptionWorker._SEND_CHUNK_BYTES)
+    third_timestamp = worker._resolve_transcription_timestamp_ms(".", is_final=True)
+
+    assert first_timestamp == 80
+    assert second_timestamp == 80
+    assert third_timestamp == 240
+
+
 async def test_queue_live_analysis_triggers_on_chunk_window():
     worker = worker_app.LiveTranscriptionWorker()
     worker.analysis_enabled = True
