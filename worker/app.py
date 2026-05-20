@@ -440,8 +440,8 @@ class LiveTranscriptionWorker:
 
     _audio_frame_count: int = 0
     _resampler: av.AudioResampler = av.AudioResampler(format='s16', layout='mono', rate=16000)
-    # 320ms @ 16kHz s16 mono = 16000 * 0.32 * 2 bytes = 10240 bytes
-    _SEND_CHUNK_BYTES: int = 10240
+    # 80ms @ 16kHz s16 mono = 16000 * 0.08 * 2 bytes = 2560 bytes
+    _SEND_CHUNK_BYTES: int = 2560
     _audio_buffer: bytes = b""
     # Cycle the VLLM WebSocket connection every 15 minutes to avoid
     # long-lived connection issues (stale state, memory growth, etc.).

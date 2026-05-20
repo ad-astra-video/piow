@@ -240,6 +240,16 @@ async def test_apply_analysis_params_updates_worker_state():
     assert worker.analysis_prompt == "Track visual cues"
 
 
+async def test_transcription_send_chunk_window_is_80ms():
+    worker = worker_app.LiveTranscriptionWorker()
+
+    assert worker_app.LiveTranscriptionWorker._SEND_CHUNK_BYTES == 2560
+
+    worker._mark_transcription_audio_sent(b"\x00" * worker_app.LiveTranscriptionWorker._SEND_CHUNK_BYTES)
+
+    assert worker._transcription_sent_timestamp_ms() == 80
+
+
 async def test_queue_live_analysis_triggers_on_chunk_window():
     worker = worker_app.LiveTranscriptionWorker()
     worker.analysis_enabled = True
