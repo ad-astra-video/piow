@@ -307,6 +307,107 @@ class TestSessionStoreStreamPersistence(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["provider_session"]["metadata"]["target_language"], "es")
         stream_sessions_table.update.assert_called_once()
 
+    async def test_store_stream_translation_creates_aggregated_header_and_updates_sentence(self):
+        sessions = self._import_sessions_with_stubbed_supabase()
+
+        store = sessions.SessionStore()
+        stream_id = "stream-translation-header"
+        store._stream_sessions_cache[stream_id] = {
+            "id": stream_id,
+            "user_id": "user-1",
+            "language": "en",
+            "provider_session": {"model": "voxtral-realtime", "hardware": "gpu"},
+        }
+
+        transcription_sentences_table = MagicMock()
+        transcription_sentences_table.update.return_value.eq.return_value.eq.return_value.execute = AsyncMock(return_value=SimpleNamespace(data=[]))
+
+        translations_table = MagicMock()
+        translations_table.select.return_value.eq.return_value.eq.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute = AsyncMock(return_value=SimpleNamespace(data=[]))
+        translations_table.insert.return_value.execute = AsyncMock(return_value=SimpleNamespace(data=[{"id": "tr-1"}]))
+
+        supabase_mock = MagicMock()
+
+        def table_side_effect(table_name):
+            if table_name == "transcription_sentences":
+                return transcription_sentences_table
+            if table_name == "translations":
+                return translations_table
+            raise AssertionError(f"Unexpected table: {table_name}")
+
+        supabase_mock.table.side_effect = table_side_effect
+
+        with patch.object(sessions, "supabase", supabase_mock):
+            await store.store_stream_translation(
+                stream_id,
+                "Hello",
+                "Hola",
+                "en",
+                "es",
+                sentence_index=0,
+            )
+
+        transcription_sentences_table.update.assert_called_once_with({"translated_text": "Hola"})
+        translations_table.insert.assert_called_once()
+        payload = translations_table.insert.call_args[0][0]
+        self.assertEqual(payload["stream_session_id"], stream_id)
+        self.assertEqual(payload["original_text"], "Hello")
+        self.assertEqual(payload["translated_text"], "Hola")
+        self.assertEqual(payload["target_language"], "es")
+        self.assertEqual(payload["mode"], "stream")
+
+    async def test_store_stream_translation_appends_to_existing_aggregated_header(self):
+        sessions = self._import_sessions_with_stubbed_supabase()
+
+        store = sessions.SessionStore()
+        stream_id = "stream-translation-update"
+        store._stream_sessions_cache[stream_id] = {
+            "id": stream_id,
+            "user_id": "user-1",
+            "language": "en",
+            "provider_session": {},
+        }
+
+        transcription_sentences_table = MagicMock()
+        transcription_sentences_table.update.return_value.eq.return_value.eq.return_value.execute = AsyncMock(return_value=SimpleNamespace(data=[]))
+
+        translations_table = MagicMock()
+        translations_table.select.return_value.eq.return_value.eq.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute = AsyncMock(
+            return_value=SimpleNamespace(data=[{
+                "id": "tr-1",
+                "original_text": "Hello",
+                "translated_text": "Hola",
+            }])
+        )
+        translations_table.update.return_value.eq.return_value.execute = AsyncMock(return_value=SimpleNamespace(data=[]))
+
+        supabase_mock = MagicMock()
+
+        def table_side_effect(table_name):
+            if table_name == "transcription_sentences":
+                return transcription_sentences_table
+            if table_name == "translations":
+                return translations_table
+            raise AssertionError(f"Unexpected table: {table_name}")
+
+        supabase_mock.table.side_effect = table_side_effect
+
+        with patch.object(sessions, "supabase", supabase_mock):
+            await store.store_stream_translation(
+                stream_id,
+                "How are you?",
+                "Como estas?",
+                "en",
+                "es",
+                sentence_index=1,
+            )
+
+        translations_table.insert.assert_not_called()
+        translations_table.update.assert_called_once_with({
+            "original_text": "Hello\nHow are you?",
+            "translated_text": "Hola\nComo estas?",
+        })
+
     async def test_stream_payload_indicates_running(self):
         sessions = self._import_sessions_with_stubbed_supabase()
 

@@ -622,6 +622,17 @@ class SessionStore:
             return m.group(1), segment[m.end():]
         return '', segment
 
+    @staticmethod
+    def _append_combined_text(existing_text: str, new_text: str) -> str:
+        """Append a new line of text to an aggregated transcript/translation field."""
+        current = (existing_text or '').strip()
+        incoming = (new_text or '').strip()
+        if not current:
+            return incoming
+        if not incoming:
+            return current
+        return f"{current}\n{incoming}"
+
     async def upsert_stream_transcription(self, stream_id: str, new_segments: List[str]) -> Optional[str]:
         """Create or incrementally update the transcriptions row for a live stream.
 
@@ -760,9 +771,11 @@ class SessionStore:
         target_language: str,
         sentence_index: Optional[int] = None,
     ) -> None:
-        """Insert a translation row into the translations table for a live stream sentence.
+        """Persist a live stream translation.
 
-        Linked to the stream's transcription record (if already created).
+        Sentence-level translated text is stored on transcription_sentences.
+        The translations table keeps one aggregated row per stream and target
+        language, similar to how transcriptions stores the combined transcript.
         
         Args:
             stream_id: The stream session ID
@@ -782,52 +795,6 @@ class SessionStore:
             logger.warning("store_stream_translation: missing user_id for stream %s", stream_id)
             return
 
-        payload: Dict[str, Any] = {
-            "user_id": user_id,
-            "stream_session_id": stream_id,
-            "original_text": original_text,
-            "translated_text": translated_text,
-            "source_language": source_language,
-            "target_language": target_language,
-            "mode": "stream",
-        }
-        if sentence_index is not None:
-            payload["sentence_index"] = sentence_index
-
-        try:
-            await supabase.table("translations").insert(payload).execute()
-            logger.info(
-                "Stored translation for stream %s: original='%s...' target_lang=%s sentence_index=%s",
-                stream_id,
-                original_text[:50],
-                target_language,
-                sentence_index,
-            )
-        except Exception as exc:
-            # Backward compatibility when DB migration has not been applied yet.
-            # If sentence_index is unknown to the schema, retry without it.
-            err_text = str(exc).lower()
-            if sentence_index is not None and "sentence_index" in err_text and (
-                "column" in err_text or "schema cache" in err_text
-            ):
-                payload.pop("sentence_index", None)
-                try:
-                    await supabase.table("translations").insert(payload).execute()
-                    logger.warning(
-                        "Stored translation for stream %s without sentence_index; migration likely pending",
-                        stream_id,
-                    )
-                except Exception as retry_exc:
-                    logger.warning(
-                        "Failed to store stream translation for stream %s after fallback: %s",
-                        stream_id,
-                        retry_exc,
-                    )
-            else:
-                logger.warning(
-                    "Failed to store stream translation for stream %s: %s", stream_id, exc
-                )
-
         # Also update the matching transcription_sentences row with translated_text if sentence_index is known
         if sentence_index is not None:
             try:
@@ -839,6 +806,87 @@ class SessionStore:
                     "Failed to update transcription_sentences translated_text for stream %s: %s",
                     stream_id, exc
                 )
+
+        provider_session = stream_data.get("provider_session") or {}
+        model = provider_session.get("model")
+        hardware = provider_session.get("hardware")
+
+        try:
+            existing_result = await (
+                supabase.table("translations")
+                .select("id, original_text, translated_text")
+                .eq("user_id", user_id)
+                .eq("stream_session_id", stream_id)
+                .eq("target_language", target_language)
+                .eq("mode", "stream")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            existing_row = existing_result.data[0] if existing_result.data else None
+        except Exception as exc:
+            logger.warning(
+                "Failed to load aggregated translation row for stream %s: %s",
+                stream_id,
+                exc,
+            )
+            existing_row = None
+
+        if existing_row and existing_row.get("id"):
+            combined_original = self._append_combined_text(existing_row.get("original_text", ""), original_text)
+            combined_translated = self._append_combined_text(existing_row.get("translated_text", ""), translated_text)
+            try:
+                await (
+                    supabase.table("translations")
+                    .update({
+                        "original_text": combined_original,
+                        "translated_text": combined_translated,
+                    })
+                    .eq("id", existing_row["id"])
+                    .execute()
+                )
+                logger.info(
+                    "Updated aggregated translation for stream %s: target_lang=%s sentence_index=%s",
+                    stream_id,
+                    target_language,
+                    sentence_index,
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Failed to update aggregated translation row for stream %s: %s",
+                    stream_id,
+                    exc,
+                )
+
+        payload: Dict[str, Any] = {
+            "user_id": user_id,
+            "stream_session_id": stream_id,
+            "original_text": original_text,
+            "translated_text": translated_text,
+            "source_language": source_language,
+            "target_language": target_language,
+            "mode": "stream",
+        }
+        if model in ("granite-4.0-1b", "voxtral-realtime"):
+            payload["model_used"] = model
+        if hardware in ("cpu", "gpu"):
+            payload["hardware"] = hardware
+
+        try:
+            await supabase.table("translations").insert(payload).execute()
+            logger.info(
+                "Created aggregated translation row for stream %s: target_lang=%s sentence_index=%s",
+                stream_id,
+                target_language,
+                sentence_index,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to create aggregated translation row for stream %s: %s",
+                stream_id,
+                exc,
+            )
 
     async def store_stream_analysis(
         self,
