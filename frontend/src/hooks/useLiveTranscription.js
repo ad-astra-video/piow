@@ -13,6 +13,7 @@ export default function useLiveTranscription() {
     start: (accessToken, sourceConfig, translationConfig, analysisConfig, serviceConfig) => streamManager.start(accessToken, sourceConfig, translationConfig, analysisConfig, serviceConfig),
     stop: (opts) => streamManager.stop(opts),
     dismissQuotaError: () => streamManager.dismissQuotaError(),
+    regenerateAnalysisSchema: () => streamManager.regenerateAnalysisSchema(),
     addLocalAnnotation: (sentenceIndex, sentenceTimestamp, type, content) => streamManager.addLocalAnnotation(sentenceIndex, sentenceTimestamp, type, content),
     updateLocalAnnotation: (annotationId, updates) => streamManager.updateLocalAnnotation(annotationId, updates),
     deleteLocalAnnotation: (annotationId) => streamManager.deleteLocalAnnotation(annotationId),

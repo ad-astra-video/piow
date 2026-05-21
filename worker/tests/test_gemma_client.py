@@ -5,6 +5,7 @@ import os
 import sys
 import unittest
 import base64
+import json
 from unittest.mock import AsyncMock, patch
 
 # Add the worker directory to the path

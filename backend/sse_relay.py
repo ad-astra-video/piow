@@ -475,6 +475,14 @@ class SSERelay:
                         task_name=f"sse-analysis-store-{self.stream_id}",
                     )
 
+                if msg_type == "analysis_response_format":
+                    schema = message.get("schema")
+                    if schema is not None and self._session_store is not None:
+                        self._track_analysis_store_task(
+                            self._persist_analysis_schema_to_db(schema),
+                            task_name=f"sse-schema-store-{self.stream_id}",
+                        )
+
             # Relay messages to frontend as-is.
             await self._broadcast(message)
 
@@ -504,6 +512,44 @@ class SSERelay:
                 "Translation callback failed for stream %s (failures=%d): %s",
                 self.stream_id,
                 self._translation_callback_failures,
+                exc,
+            )
+
+    async def _persist_analysis_schema_to_db(self, schema: Dict[str, Any]) -> None:
+        """Write an auto-generated analysis schema into the stream session DB record."""
+        if not self._session_store:
+            return
+        try:
+            stream_session = await self._session_store.get_stream_session(self.stream_id)
+            if not stream_session:
+                logger.warning(
+                    "Cannot persist schema: stream session %s not found",
+                    self.stream_id,
+                )
+                return
+
+            stream_settings = dict(stream_session.get("stream_settings") or {})
+            analysis_settings = dict(stream_settings.get("analysis") or {})
+
+            await self._session_store.update_stream_analysis_config(
+                stream_id=self.stream_id,
+                analysis_enabled=analysis_settings.get("enabled", True),
+                analysis_mode=analysis_settings.get("type", "multimodal"),
+                analysis_audio_chunk_seconds=analysis_settings.get("audio_chunk_seconds", 10.0),
+                analysis_video_chunk_seconds=analysis_settings.get("video_chunk_seconds", 10.0),
+                analysis_max_tokens=analysis_settings.get("max_tokens", 1024),
+                analysis_video_fps=analysis_settings.get("video_fps", 3),
+                analysis_prompt=analysis_settings.get("prompt"),
+                analysis_response_format={"type": "json_object", "schema": schema},
+            )
+            logger.info(
+                "Persisted auto-generated analysis schema for stream %s",
+                self.stream_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist analysis schema for stream %s: %s",
+                self.stream_id,
                 exc,
             )
 

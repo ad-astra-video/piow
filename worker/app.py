@@ -701,6 +701,10 @@ class LiveTranscriptionWorker:
         self._stream_started_monotonic_s = time.monotonic()
         self._apply_analysis_params(params)
 
+        # Auto-generate schema if analysis is enabled but no response format was provided
+        if self.analysis_enabled and self.analysis_response_format is None and self.analysis_prompt:
+            await self._generate_and_emit_schema()
+
         # Close any stale client from a previous stream just in case
         if vllm_client is not None:
             try:
@@ -880,6 +884,9 @@ class LiveTranscriptionWorker:
         """Handle mid-stream parameter updates delivered via the stream update route."""
         self._apply_analysis_params(params)
 
+        if params.get("generate_analysis_schema"):
+            await self._generate_and_emit_schema()
+
         sentence = params.get("translate_sentence")
         if not isinstance(sentence, str) or not sentence.strip() or processor is None:
             return
@@ -952,6 +959,56 @@ class LiveTranscriptionWorker:
                 self.analysis_response_format = analysis_response_format
             else:
                 self.analysis_response_format = None
+
+    async def _generate_and_emit_schema(self) -> None:
+        """Generate a JSON schema from the current analysis prompt and emit it on the data channel."""
+        if not self.analysis_enabled or not self.analysis_prompt:
+            return
+
+        logger.info(
+            "Generating analysis schema: mode=%s prompt_len=%d",
+            self.analysis_mode,
+            len(self.analysis_prompt),
+        )
+
+        result = await gemma_translator.generate_analysis_schema(
+            analysis_prompt=self.analysis_prompt,
+            mode=self.analysis_mode,
+            max_tokens=2048,
+        )
+
+        if isinstance(result, dict) and result.get("error"):
+            logger.warning(
+                "Schema generation failed: %s",
+                result.get("error"),
+            )
+            # Emit error so frontend knows generation was attempted but failed
+            if processor is not None:
+                await processor.send_data(json.dumps({
+                    "type": "analysis_response_format",
+                    "schema": None,
+                    "error": result.get("error"),
+                    "mode": self.analysis_mode,
+                }))
+            return
+
+        schema = result.get("schema") if isinstance(result, dict) else None
+        if not isinstance(schema, dict):
+            logger.warning("Schema generation returned no valid schema")
+            return
+
+        self.analysis_response_format = {"type": "json_object", "schema": schema}
+        logger.info(
+            "Schema generated successfully: keys=%s",
+            sorted(schema.keys()),
+        )
+
+        if processor is not None:
+            await processor.send_data(json.dumps({
+                "type": "analysis_response_format",
+                "schema": schema,
+                "mode": self.analysis_mode,
+            }))
 
     def _queue_live_analysis(self, text: str, timestamp_ms: int, is_final: bool) -> None:
         """Schedule analysis only on elapsed chunk windows for stable cadence."""

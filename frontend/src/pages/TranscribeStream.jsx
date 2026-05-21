@@ -70,6 +70,8 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     analysisEntries,
     transcriptionEnabled: activeTranscriptionEnabled,
     analysisEnabled: activeAnalysisEnabled,
+    analysisSchemaStatus: activeSchemaStatus,
+    analysisResponseFormat: activeResponseFormat,
     hasAudioTrack,
     hasVideoTrack,
     start,
@@ -78,6 +80,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     updateLocalAnnotation,
     deleteLocalAnnotation,
     toggleLocalTodo,
+    regenerateAnalysisSchema,
   } = useLiveTranscription();
 
   const scrollRef = useRef(null);
@@ -640,6 +643,9 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                           </button>
                           {analysisResponseFormat && (
                             <span className="response-format-badge">Schema active</span>
+                          )}
+                          {!analysisResponseFormat && (
+                            <span className="response-format-badge auto">Auto-generate on start</span>
                           )}
                         </div>
                         <div className="form-row analysis-window-row">

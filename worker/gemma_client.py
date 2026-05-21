@@ -6,6 +6,7 @@ vLLM container and normalizes the result into the worker's translation event
 shape.
 """
 
+import json
 import logging
 import os
 import re
@@ -16,7 +17,7 @@ import wave
 from typing import Any, Dict, Optional
 
 import aiohttp
-from gemma_prompts import get_analysis_prompt
+from gemma_prompts import get_analysis_prompt, get_schema_generation_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +402,93 @@ class GemmaClient:
             return {
                 "error": str(exc),
                 "analysis_text": "",
+                "model": self.model,
+                "backend": "gemma-4-e4b",
+            }
+
+    async def generate_analysis_schema(
+        self,
+        analysis_prompt: str,
+        mode: str = "multimodal",
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Generate a JSON Schema from an analysis prompt using Gemma 4 E4B.
+
+        Returns a dict with either:
+          - {"schema": <dict>, "model": ..., "backend": ...}
+          - {"error": <str>, "model": ..., "backend": ...}
+        """
+        start_time = time.time()
+
+        if not self.is_configured:
+            return {
+                "error": "Gemma 4 E4B is not configured",
+                "model": self.model,
+                "backend": "gemma-4-e4b",
+            }
+
+        prompt_text = get_schema_generation_prompt(analysis_prompt, mode)
+
+        try:
+            data = await self._chat_completion(
+                [{"role": "user", "content": prompt_text}],
+                max_tokens=max_tokens or self.max_tokens,
+            )
+            if isinstance(data, dict) and data.get("error"):
+                return {
+                    "error": data.get("error"),
+                    "model": self.model,
+                    "backend": "gemma-4-e4b",
+                    "response": data.get("response", ""),
+                }
+
+            raw_content = self._extract_content(data)
+            if not raw_content:
+                return {
+                    "error": "Gemma returned empty schema content",
+                    "model": self.model,
+                    "backend": "gemma-4-e4b",
+                }
+
+            # Strip markdown fences if present
+            cleaned = raw_content.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else ""
+            if cleaned.endswith("```"):
+                cleaned = cleaned.rsplit("\n", 1)[0] if "\n" in cleaned else ""
+            cleaned = cleaned.strip()
+            if cleaned.lower().startswith("json"):
+                cleaned = cleaned[4:].strip()
+
+            schema = json.loads(cleaned)
+            if not isinstance(schema, dict):
+                return {
+                    "error": f"Gemma returned non-dict JSON: {type(schema).__name__}",
+                    "model": self.model,
+                    "backend": "gemma-4-e4b",
+                }
+
+            # Minimal validation: ensure root type is present
+            if "type" not in schema:
+                schema["type"] = "object"
+
+            processing_time = time.time() - start_time
+            return {
+                "schema": schema,
+                "model": self.model,
+                "backend": "gemma-4-e4b",
+                "processing_time": processing_time,
+            }
+        except json.JSONDecodeError as exc:
+            return {
+                "error": f"Failed to parse schema JSON: {exc}",
+                "model": self.model,
+                "backend": "gemma-4-e4b",
+            }
+        except Exception as exc:
+            logger.exception("Gemma schema generation failed")
+            return {
+                "error": str(exc),
                 "model": self.model,
                 "backend": "gemma-4-e4b",
             }

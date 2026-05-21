@@ -295,6 +295,8 @@ class StreamManager {
       transcriptionEnabled: true,
       analysisEnabled: false,
       analysisMode: 'multimodal',
+      analysisSchemaStatus: null,
+      analysisResponseFormat: null,
       quotaError: null,
       hasAudioTrack: false,
       hasVideoTrack: false,
@@ -779,6 +781,30 @@ class StreamManager {
     }
   }
 
+  async regenerateAnalysisSchema() {
+    if (!this.streamId) return;
+    this._setState({ analysisSchemaStatus: 'generating' });
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(this.accessToken ? { 'Authorization': `Bearer ${this.accessToken}` } : {}),
+      };
+      const response = await fetch(`${API_BASE}/stream/${this.streamId}/update`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ generate_analysis_schema: true }),
+      });
+      if (!response.ok) {
+        console.warn('Failed to trigger schema regeneration:', response.status);
+        this._setState({ analysisSchemaStatus: 'error' });
+      }
+      // The actual schema will arrive asynchronously via the data channel
+    } catch (err) {
+      console.error('Schema regeneration request failed:', err);
+      this._setState({ analysisSchemaStatus: 'error' });
+    }
+  }
+
   async start(accessToken, sourceConfig, translationConfig = null, analysisConfig = null, serviceConfig = null) {
     if (this.state.isStarted) return;
     this.accessToken = accessToken || null;
@@ -1163,6 +1189,21 @@ class StreamManager {
               if (statusText) {
                 this._setState({ status: statusText });
               }
+            } else if (msgType === 'analysis_response_format') {
+              const schema = message.schema;
+              const error = message.error;
+              if (schema) {
+                this._setState({
+                  analysisSchemaStatus: 'generated',
+                  analysisResponseFormat: { type: 'json_object', schema },
+                });
+              } else if (error) {
+                this._setState({
+                  analysisSchemaStatus: 'error',
+                  analysisResponseFormat: null,
+                });
+                console.warn('Schema generation failed:', error);
+              }
             } else if (msgType === 'analysis.error') {
               const errorText = typeof message.error === 'string' ? message.error : 'Analysis failed';
               const parseError = typeof message.parse_error === 'string' ? message.parse_error : '';
@@ -1326,6 +1367,8 @@ class StreamManager {
       localAnnotations: transcriptionId ? {} : this.state.localAnnotations,
       translationEntries: [],
       analysisEntries: [],
+      analysisSchemaStatus: null,
+      analysisResponseFormat: null,
       quotaError: null,
       hasAudioTrack: false,
       hasVideoTrack: false,
