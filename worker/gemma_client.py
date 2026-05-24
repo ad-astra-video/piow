@@ -17,7 +17,7 @@ import wave
 from typing import Any, Dict, Optional
 
 import aiohttp
-from gemma_prompts import get_analysis_prompt, get_schema_generation_prompt
+from gemma_prompts import get_analysis_prompt, get_analysis_prompt_with_schema, get_schema_generation_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +249,7 @@ class GemmaClient:
 
         default_prompt = self._default_analysis_prompt(mode)
         effective_prompt = (prompt or default_prompt).strip()
+        effective_prompt = get_analysis_prompt_with_schema(effective_prompt, response_format)
         user_prompt = (
             f"{effective_prompt}\n\n"
             f"Mode: {mode}\n"
@@ -334,6 +335,7 @@ class GemmaClient:
 
         default_prompt = self._default_analysis_prompt(mode)
         effective_prompt = (prompt or default_prompt).strip()
+        effective_prompt = get_analysis_prompt_with_schema(effective_prompt, response_format)
         user_text = (
             f"{effective_prompt}\\n\\n"
             f"Mode: {mode}\\n"

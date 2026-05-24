@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Shared prompt definitions for Gemma analysis workflows."""
 
-from typing import Dict
+import json
+from typing import Dict, Any, Optional
 
 ANALYSIS_PROMPTS: Dict[str, str] = {
     "multimodal": (
@@ -34,6 +35,92 @@ ANALYSIS_PROMPTS: Dict[str, str] = {
 def get_analysis_prompt(mode: str) -> str:
     """Return the analysis prompt for a given mode with multimodal fallback."""
     return ANALYSIS_PROMPTS.get(mode, ANALYSIS_PROMPTS["multimodal"])
+
+
+def _summarize_schema(schema: Dict[str, Any], indent: int = 0) -> str:
+    """Produce a human-readable summary of a JSON Schema object's properties."""
+    if not isinstance(schema, dict):
+        return ""
+
+    lines = []
+    props = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+
+    for key, prop in props.items():
+        if not isinstance(prop, dict):
+            continue
+        prefix = "  " * indent
+        req_flag = " (required)" if key in required else ""
+        ptype = prop.get("type", "any")
+        desc = prop.get("description", "")
+        enum_vals = prop.get("enum")
+        title = prop.get("title", "")
+
+        label_parts = [ptype]
+        if enum_vals:
+            label_parts.append(f"enum: {json.dumps(enum_vals)}")
+        label = " | ".join(label_parts)
+
+        info_parts = []
+        if title:
+            info_parts.append(title)
+        if desc:
+            info_parts.append(desc)
+        info = " — ".join(info_parts)
+
+        lines.append(f"{prefix}- {key}{req_flag}: {label}{(' ' + info) if info else ''}")
+
+        if ptype == "object" and prop.get("properties"):
+            lines.append(_summarize_schema(prop, indent + 1))
+        elif ptype == "array":
+            items = prop.get("items") or {}
+            if items.get("properties"):
+                lines.append(f"{prefix}  items:")
+                lines.append(_summarize_schema(items, indent + 2))
+            elif items.get("type"):
+                lines.append(f"{prefix}  items: {items.get('type')}")
+
+    return "\n".join(lines)
+
+
+def get_analysis_prompt_with_schema(
+    base_prompt: str,
+    schema: Optional[Dict[str, Any]],
+) -> str:
+    """Return an analysis prompt that instructs the model to output JSON matching the schema.
+
+    When *schema* is None or empty, the original *base_prompt* is returned unchanged.
+    When a schema is provided, the prompt is rewritten to demand strict JSON output that
+    conforms to the schema, while preserving the NO_UPDATE suppression contract.
+    """
+    if not schema or not isinstance(schema, dict):
+        return base_prompt
+
+    inner_schema = schema.get("schema") if schema.get("type") == "json_object" else schema
+    if not inner_schema or not isinstance(inner_schema, dict):
+        return base_prompt
+
+    schema_summary = _summarize_schema(inner_schema)
+    title = inner_schema.get("title", "AnalysisResult")
+    description = inner_schema.get("description", "Structured analysis output")
+
+    return (
+        f"You are a structured analysis engine. Analyze the provided context and produce a "
+        f"JSON object that strictly conforms to the schema below.\n\n"
+        f"Schema: {title}\n"
+        f"{description}\n\n"
+        f"Fields:\n{schema_summary}\n\n"
+        f"Rules:\n"
+        f"- Output ONLY a single valid JSON object. No markdown, no code fences, no explanations.\n"
+        f"- Every required field must be present.\n"
+        f"- Use the exact property names shown above.\n"
+        f"- For array fields, always return a JSON array (use [] when there are no items).\n"
+        f"- Never use placeholder values like None, N/A, null, or unknown as standalone values.\n"
+        f"- If there is no meaningful update since the last analysis, respond with exactly NO_UPDATE.\n"
+        f"- The JSON must be parseable without any surrounding text.\n\n"
+        f"Original task: {base_prompt.strip()}\n\n"
+        f"Generate the JSON object now."
+    )
 
 
 SCHEMA_GENERATION_PROMPT_TEMPLATE = """You are a JSON Schema designer. Convert the user's natural-language analysis prompt into a valid JSON Schema (draft-07) that structures the expected output of an LLM analysis.
