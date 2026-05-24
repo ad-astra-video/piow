@@ -1423,6 +1423,13 @@ async def update_stream_session(request):
             "audio_bytes": audio_bytes,
             "transcription_segment": transcription_segment,
         }
+        if "generate_analysis_schema" in data:
+            update_payload["generate_analysis_schema"] = data["generate_analysis_schema"]
+        for key in ("analysis_enabled", "analysis_mode", "analysis_audio_chunk_seconds",
+                    "analysis_video_chunk_seconds", "analysis_max_tokens", "analysis_video_fps",
+                    "analysis_prompt", "analysis_response_format"):
+            if key in data:
+                update_payload[key] = data[key]
 
         provider_urls = await session_store.get_provider_urls(stream_id)
         provider_update_url = (provider_urls or {}).get("update_url")

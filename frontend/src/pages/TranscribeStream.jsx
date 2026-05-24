@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages, Brain, X, FileCode } from 'lucide-react';
+import { Mic, MicOff, AlertCircle, ChevronsDown, Monitor, Upload, ChevronDown, ChevronUp, Maximize2, Minimize2, Clock, Languages, Brain, X, FileCode, RefreshCw } from 'lucide-react';
 import AnalysisContent from '../components/AnalysisContent';
 import Sentence from '../components/Sentence';
 import MarkdownText from '../components/MarkdownText';
@@ -647,6 +647,18 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                           {!analysisResponseFormat && (
                             <span className="response-format-badge auto">Auto-generate on start</span>
                           )}
+                          {isStarted && analysisEnabled && (
+                            <button
+                              type="button"
+                              className="secondary-button regenerate-schema-btn"
+                              onClick={() => regenerateAnalysisSchema()}
+                              disabled={activeSchemaStatus === 'generating'}
+                              title="Regenerate analysis schema from current prompt"
+                            >
+                              <RefreshCw size={14} />
+                              {activeSchemaStatus === 'generating' ? 'Generating…' : 'Regenerate Schema'}
+                            </button>
+                          )}
                         </div>
                         <div className="form-row analysis-window-row">
                           <label htmlFor="analysis_max_tokens">
@@ -994,7 +1006,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                         </div>
                         <AnalysisContent
                           content=""
-                          responseFormat={analysisResponseFormat}
+                          responseFormat={activeResponseFormat || analysisResponseFormat}
                           signalRows={analysisSignalRows}
                           emptyMessage="No analysis rows yet."
                         />
@@ -1009,7 +1021,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                         </div>
                         <AnalysisContent
                           content={entry.text}
-                          responseFormat={analysisResponseFormat}
+                          responseFormat={activeResponseFormat || analysisResponseFormat}
                           signalRows={entry.signalRows}
                           emptyMessage="No analysis text available."
                         />
