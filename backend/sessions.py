@@ -1061,7 +1061,11 @@ def _get_stream_usage_multiplier(stream_data: Dict[str, Any]) -> int:
     if not stream_data:
         return 1
 
-    if bool(stream_data.get("live_transcription_enabled", True)) and bool(stream_data.get("analysis_enabled", False)):
+    settings = stream_data.get("stream_settings") or {}
+    transcription_settings = settings.get("transcription") or {}
+    analysis_settings = settings.get("analysis") or {}
+
+    if bool(transcription_settings.get("enabled", True)) and bool(analysis_settings.get("enabled", False)):
         return 2
 
     return 1
@@ -1071,7 +1075,7 @@ async def _bill_active_stream_minutes() -> None:
     """Bill one usage minute for each active stream confirmed running by provider status endpoint."""
     try:
         stream_result = await supabase.table("stream_sessions").select(
-            "id,user_session_id,language,provider_session,status,created_at,updated_at,total_audio_bytes,transcription_segments,final_text"
+            "id,user_id,user_session_id,language,provider_session,status,created_at,updated_at,total_audio_bytes,transcription_segments,final_text,stream_settings"
         ).eq("status", "active").execute()
     except Exception as e:
         logger.warning("Failed to query active stream sessions for usage monitor: %s", e)

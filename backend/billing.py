@@ -301,14 +301,18 @@ async def get_usage(request):
         )
 
         tier = 'free'
-        if sub_result.data and sub_result.data[0].get('status') in ('active', 'trialing'):
-            tier = sub_result.data[0].get('plan', 'free')
+        status = 'none'
+        if sub_result.data:
+            status = sub_result.data[0].get('status', 'none')
+            if status in ('active', 'trialing'):
+                tier = sub_result.data[0].get('plan', 'free')
 
         # Check quotas — transcription is a combined pool (CPU+GPU)
         transcribe_allowed, transcribe_info = await check_quota(user_id, 'transcribe_cpu', tier)
 
         return web.json_response({
             'tier': tier,
+            'status': status,
             'plan_limits': PLAN_LIMITS.get(tier, PLAN_LIMITS['free']),
             'usage': {
                 'transcription': transcribe_info,
