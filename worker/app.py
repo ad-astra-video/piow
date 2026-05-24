@@ -44,7 +44,7 @@ if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
 from gemma_client import GemmaClient
-from gemma_prompts import get_analysis_prompt
+from gemma_prompts import get_analysis_prompt, get_analysis_prompt_with_schema
 from vllm_client import VLLMRealtimeClient, warmup_transcription
 
 # ---------------------------------------------------------------------------
@@ -456,6 +456,7 @@ class LiveTranscriptionWorker:
         self.analysis_prompt: str = self._default_analysis_prompt(self.analysis_mode)
         self.analysis_prompt_custom: bool = False
         self.analysis_response_format: Optional[Dict[str, Any]] = None
+        self._analysis_prompt_with_schema: Optional[str] = None
         self._analysis_pending_text: str = ""
         self._analysis_pending_audio: bytes = b""
         self._analysis_audio_samples_total: int = 0
@@ -468,6 +469,16 @@ class LiveTranscriptionWorker:
 
     def _default_analysis_prompt(self, mode: str) -> str:
         return get_analysis_prompt(mode)
+
+    def _build_analysis_prompt(self) -> None:
+        """Cache the schema-augmented prompt so it is built once per schema change."""
+        if self.analysis_response_format and self.analysis_prompt:
+            self._analysis_prompt_with_schema = get_analysis_prompt_with_schema(
+                self.analysis_prompt,
+                self.analysis_response_format,
+            )
+        else:
+            self._analysis_prompt_with_schema = None
 
     def _resolve_analysis_timestamp_ms(self, timestamp_ms: Optional[int]) -> int:
         """Resolve a stable non-negative timestamp for emitted analysis events."""
@@ -960,6 +971,8 @@ class LiveTranscriptionWorker:
             else:
                 self.analysis_response_format = None
 
+        self._build_analysis_prompt()
+
     async def _generate_and_emit_schema(self) -> None:
         """Generate a JSON schema from the current analysis prompt and emit it on the data channel."""
         if not self.analysis_enabled or not self.analysis_prompt:
@@ -998,6 +1011,7 @@ class LiveTranscriptionWorker:
             return
 
         self.analysis_response_format = {"type": "json_object", "schema": schema}
+        self._build_analysis_prompt()
         logger.info(
             "Schema generated successfully: keys=%s",
             sorted(schema.keys()),
@@ -1092,7 +1106,7 @@ class LiveTranscriptionWorker:
         try:
             result = await gemma_translator.analyze(
                 text=text,
-                prompt=self.analysis_prompt,
+                prompt=self._analysis_prompt_with_schema or self.analysis_prompt,
                 mode=self.analysis_mode,
                 max_tokens=self.analysis_max_tokens,
                 response_format=self.analysis_response_format,
@@ -1178,7 +1192,7 @@ class LiveTranscriptionWorker:
             result = await gemma_translator.analyze_audio(
                 audio_pcm16=audio_pcm16,
                 sample_rate_hz=16000,
-                prompt=self.analysis_prompt,
+                prompt=self._analysis_prompt_with_schema or self.analysis_prompt,
                 mode=self.analysis_mode,
                 max_tokens=self.analysis_max_tokens,
                 response_format=self.analysis_response_format,
