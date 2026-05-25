@@ -456,6 +456,7 @@ class LiveTranscriptionWorker:
         self.analysis_prompt: str = self._default_analysis_prompt(self.analysis_mode)
         self.analysis_prompt_custom: bool = False
         self.analysis_response_format: Optional[Dict[str, Any]] = None
+        self.auto_generate_schema: bool = True
         self._analysis_prompt_with_schema: Optional[str] = None
         self._analysis_pending_text: str = ""
         self._analysis_pending_audio: bytes = b""
@@ -713,7 +714,7 @@ class LiveTranscriptionWorker:
         self._apply_analysis_params(params)
 
         # Auto-generate schema if analysis is enabled but no response format was provided
-        if self.analysis_enabled and self.analysis_response_format is None and self.analysis_prompt:
+        if self.analysis_enabled and self.auto_generate_schema and self.analysis_response_format is None and self.analysis_prompt:
             await self._generate_and_emit_schema()
 
         # Close any stale client from a previous stream just in case
@@ -970,6 +971,10 @@ class LiveTranscriptionWorker:
                 self.analysis_response_format = analysis_response_format
             else:
                 self.analysis_response_format = None
+
+        auto_generate_schema = params.get("auto_generate_schema")
+        if auto_generate_schema is not None:
+            self.auto_generate_schema = bool(auto_generate_schema)
 
         self._build_analysis_prompt()
 

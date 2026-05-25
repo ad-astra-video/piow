@@ -727,6 +727,9 @@ class StreamManager {
       if (analysisConfig.analysis_response_format != null) {
         body.analysis_response_format = analysisConfig.analysis_response_format;
       }
+      if (analysisConfig.auto_generate_schema != null) {
+        body.auto_generate_schema = analysisConfig.auto_generate_schema;
+      }
     }
     const response = await fetch(`${API_BASE}/stream/process`, {
       method: 'POST',

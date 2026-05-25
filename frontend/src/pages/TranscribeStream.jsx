@@ -113,6 +113,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
   const [analysisPrompt, setAnalysisPrompt] = useState(getDefaultAnalysisPrompt('multimodal'));
   const [analysisPromptTouched, setAnalysisPromptTouched] = useState(false);
   const [analysisResponseFormat, setAnalysisResponseFormat] = useState(null);
+  const [autoGenerateSchema, setAutoGenerateSchema] = useState(true);
   const [showResponseFormatModal, setShowResponseFormatModal] = useState(false);
   const [showAnalysisErrorsModal, setShowAnalysisErrorsModal] = useState(false);
   const [responseFormatDraft, setResponseFormatDraft] = useState('');
@@ -189,6 +190,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
       analysis_max_tokens: clampAnalysisMaxTokens(analysisMaxTokens),
       analysis_prompt: analysisPrompt,
       analysis_response_format: analysisResponseFormat,
+      auto_generate_schema: autoGenerateSchema,
     });
   }, [
     isStarted,
@@ -198,6 +200,7 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     analysisVideoWindowSeconds,
     analysisMaxTokens,
     analysisPrompt,
+    autoGenerateSchema,
   ]);
 
   useEffect(() => {
@@ -633,36 +636,55 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
                     {showAdvanced && (
                       <div className="advanced-dropdown-content">
                         <div className="form-row analysis-response-format-row">
-                          <label>Structured Output</label>
-                          <button
-                            type="button"
-                            className="secondary-button structured-output-btn"
-                            onClick={() => {
-                              setResponseFormatDraft(analysisResponseFormat ? JSON.stringify(analysisResponseFormat, null, 2) : '');
-                              setShowResponseFormatModal(true);
-                            }}
-                          >
-                            <FileCode size={14} />
-                            {analysisResponseFormat ? 'Edit JSON Schema' : 'Set JSON Schema'}
-                          </button>
-                          {analysisResponseFormat && (
-                            <span className="response-format-badge">Schema active</span>
-                          )}
-                          {!analysisResponseFormat && (
-                            <span className="response-format-badge auto">Auto-generate on start</span>
-                          )}
-                          {isStarted && analysisEnabled && (
+                          <label>Structured Output (JSON Schema)</label>
+                          <div className="structured-output-actions">
                             <button
                               type="button"
-                              className="secondary-button regenerate-schema-btn"
-                              onClick={() => regenerateAnalysisSchema()}
-                              disabled={activeSchemaStatus === 'generating'}
-                              title="Regenerate analysis schema from current prompt"
+                              className="secondary-button structured-output-btn"
+                              onClick={() => {
+                                setResponseFormatDraft(analysisResponseFormat ? JSON.stringify(analysisResponseFormat, null, 2) : '');
+                                setShowResponseFormatModal(true);
+                              }}
                             >
-                              <RefreshCw size={14} />
-                              {activeSchemaStatus === 'generating' ? 'Generating…' : 'Regenerate Schema'}
+                              <FileCode size={14} />
+                              {analysisResponseFormat ? 'Edit' : 'Set'}
                             </button>
-                          )}
+                            {analysisResponseFormat && (
+                              <button
+                                type="button"
+                                className="secondary-button structured-output-clear-btn"
+                                onClick={() => setAnalysisResponseFormat(null)}
+                                title="Clear manual schema"
+                              >
+                                Clear
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className={`auto-generate-toggle ${autoGenerateSchema ? 'active' : 'inactive'}`}
+                              onClick={() => setAutoGenerateSchema((v) => !v)}
+                              disabled={!!analysisResponseFormat}
+                              title={
+                                analysisResponseFormat
+                                  ? 'Manual schema is active — clear it to enable auto-generate'
+                                  : (autoGenerateSchema ? 'Auto-generate schema on start' : 'Turn on auto-generate schema')
+                              }
+                            >
+                              {autoGenerateSchema ? 'Auto-generate on start' : 'Turn On Auto-generate Schema'}
+                            </button>
+                            {isStarted && analysisEnabled && (
+                              <button
+                                type="button"
+                                className="secondary-button regenerate-schema-btn"
+                                onClick={() => regenerateAnalysisSchema()}
+                                disabled={activeSchemaStatus === 'generating'}
+                                title="Regenerate analysis schema from current prompt"
+                              >
+                                <RefreshCw size={14} />
+                                {activeSchemaStatus === 'generating' ? 'Generating…' : 'Regenerate Schema'}
+                              </button>
+                            )}
+                          </div>
                         </div>
                         <div className="form-row analysis-window-row">
                           <label htmlFor="analysis_max_tokens">
