@@ -81,6 +81,8 @@ class SSERelay:
         # Track sentence indices for matching translations to sentences
         self._sentence_text_to_index: Dict[str, int] = {}
         self._next_sentence_index: int = 0
+        # Queued sentence cut markers awaiting broadcast (see transcription.sentence event)
+        self._pending_sentence_markers: List[Dict[str, Any]] = []
 
     def set_translation_callback(
         self,
@@ -146,6 +148,14 @@ class SSERelay:
                 self._run_translation_callback(final_fragment),
                 task_name=f"sse-translate-final-fragment-{self.stream_id}",
             )
+
+        # Emit any sentence cut markers queued by the final fragment flush so
+        # clients can finalize the same in-progress sentence as the backend.
+        if self._pending_sentence_markers:
+            markers = self._pending_sentence_markers
+            self._pending_sentence_markers = []
+            for marker in markers:
+                await self._broadcast(marker)
 
         # Flush first so finalized fragments are persisted before stop continues.
         await self._flush_pending_segments()
@@ -224,6 +234,17 @@ class SSERelay:
         self._pending_transcription_sentences.append(
             f"{self._format_timestamp(ts_ms)} {final_fragment}"
         )
+        # Queue a sentence cut marker so frontend finalizes the same fragment.
+        index = self._next_sentence_index
+        self._sentence_text_to_index[final_fragment] = index
+        self._next_sentence_index += 1
+        end_ts_ms = int(self._db_last_ts_ms or ts_ms)
+        self._pending_sentence_markers.append({
+            "type": "transcription.sentence",
+            "sentence_index": index,
+            "end_ts_ms": end_ts_ms,
+            "next_start_ts_ms": end_ts_ms,
+        })
         self._db_text_buffer = ""
         self._db_text_buffer_start_ts_ms = 0
         return final_fragment
@@ -486,6 +507,14 @@ class SSERelay:
             # Relay messages to frontend as-is.
             await self._broadcast(message)
 
+            # Emit any queued sentence cut markers immediately after the delta/done
+            # event that produced them, so clients see "delta then cut" ordering.
+            if self._pending_sentence_markers:
+                markers = self._pending_sentence_markers
+                self._pending_sentence_markers = []
+                for marker in markers:
+                    await self._broadcast(marker)
+
             if (
                 self._session_store is not None
                 and msg_type == "text_timestamps"
@@ -721,6 +750,7 @@ class SSERelay:
         def _process_buffer(buffer: str, start_ts_ms: int, current_ts_ms: int):
             formatted_sentences: List[str] = []
             raw_sentences: List[str] = []
+            cut_end_ts_ms: List[int] = []
             sentence_start_ts = start_ts_ms or current_ts_ms
             last_end = 0
             for match in re.finditer(r"[.!?]+", buffer):
@@ -730,11 +760,24 @@ class SSERelay:
                 if sentence:
                     raw_sentences.append(sentence)
                     formatted_sentences.append(f"{self._format_timestamp(sentence_start_ts)} {sentence}")
+                    cut_end_ts_ms.append(current_ts_ms)
                 last_end = match.end()
                 sentence_start_ts = current_ts_ms
             remaining = buffer[last_end:].lstrip()
             remaining_start_ts = sentence_start_ts if remaining else 0
-            return formatted_sentences, raw_sentences, remaining, remaining_start_ts
+            return formatted_sentences, raw_sentences, remaining, remaining_start_ts, cut_end_ts_ms
+
+        def _assign_indices_and_queue_markers(raw_sentences: List[str], cut_end_ts_ms: List[int]) -> None:
+            for raw_sentence, end_ts_ms in zip(raw_sentences, cut_end_ts_ms):
+                index = self._next_sentence_index
+                self._sentence_text_to_index[raw_sentence.strip()] = index
+                self._next_sentence_index += 1
+                self._pending_sentence_markers.append({
+                    "type": "transcription.sentence",
+                    "sentence_index": index,
+                    "end_ts_ms": int(end_ts_ms),
+                    "next_start_ts_ms": int(end_ts_ms),
+                })
 
         if msg_type in delta_types:
             delta = message.get("delta")
@@ -743,17 +786,14 @@ class SSERelay:
             if not self._db_text_buffer:
                 self._db_text_buffer_start_ts_ms = ts_for_output
             self._db_text_buffer = self._append_text(self._db_text_buffer, delta)
-            sentences, raw_sentences, remaining, remaining_start_ts = _process_buffer(
+            sentences, raw_sentences, remaining, remaining_start_ts, cut_end_ts_ms = _process_buffer(
                 self._db_text_buffer,
                 self._db_text_buffer_start_ts_ms,
                 ts_for_output,
             )
             if sentences:
                 self._pending_transcription_sentences.extend(sentences)
-                # Track sentence indices as they're created
-                for raw_sentence in raw_sentences:
-                    self._sentence_text_to_index[raw_sentence.strip()] = self._next_sentence_index
-                    self._next_sentence_index += 1
+                _assign_indices_and_queue_markers(raw_sentences, cut_end_ts_ms)
             self._db_text_buffer = remaining
             self._db_text_buffer_start_ts_ms = remaining_start_ts
             return raw_sentences
@@ -769,24 +809,19 @@ class SSERelay:
             if not self._db_text_buffer.endswith(transcript):
                 self._db_text_buffer = self._append_text(self._db_text_buffer, transcript)
 
-            sentences, raw_sentences, remaining, remaining_start_ts = _process_buffer(
+            sentences, raw_sentences, remaining, remaining_start_ts, cut_end_ts_ms = _process_buffer(
                 self._db_text_buffer,
                 self._db_text_buffer_start_ts_ms,
                 ts_for_output,
             )
             if sentences:
                 self._pending_transcription_sentences.extend(sentences)
-                # Track sentence indices as they're created
-                for raw_sentence in raw_sentences:
-                    self._sentence_text_to_index[raw_sentence.strip()] = self._next_sentence_index
-                    self._next_sentence_index += 1
+                _assign_indices_and_queue_markers(raw_sentences, cut_end_ts_ms)
             if remaining:
                 self._pending_transcription_sentences.append(
                     f"{self._format_timestamp(remaining_start_ts or ts_for_output)} {remaining}"
                 )
-                # Track remaining sentence
-                self._sentence_text_to_index[remaining.strip()] = self._next_sentence_index
-                self._next_sentence_index += 1
+                _assign_indices_and_queue_markers([remaining], [ts_for_output])
                 raw_sentences.append(remaining)
             self._db_text_buffer = ""
             self._db_text_buffer_start_ts_ms = 0
@@ -802,25 +837,20 @@ class SSERelay:
 
             # 'transcription' messages carry full cumulative text in current providers.
             self._db_text_buffer = text
-            sentences, raw_sentences, remaining, remaining_start_ts = _process_buffer(
+            sentences, raw_sentences, remaining, remaining_start_ts, cut_end_ts_ms = _process_buffer(
                 self._db_text_buffer,
                 self._db_text_buffer_start_ts_ms,
                 ts_for_output,
             )
             if sentences:
                 self._pending_transcription_sentences.extend(sentences)
-                # Track sentence indices as they're created
-                for raw_sentence in raw_sentences:
-                    self._sentence_text_to_index[raw_sentence.strip()] = self._next_sentence_index
-                    self._next_sentence_index += 1
+                _assign_indices_and_queue_markers(raw_sentences, cut_end_ts_ms)
 
             if is_final and remaining:
                 self._pending_transcription_sentences.append(
                     f"{self._format_timestamp(remaining_start_ts or ts_for_output)} {remaining}"
                 )
-                # Track remaining sentence
-                self._sentence_text_to_index[remaining.strip()] = self._next_sentence_index
-                self._next_sentence_index += 1
+                _assign_indices_and_queue_markers([remaining], [ts_for_output])
                 raw_sentences.append(remaining)
                 self._db_text_buffer = ""
                 self._db_text_buffer_start_ts_ms = 0

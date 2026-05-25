@@ -372,6 +372,10 @@ class StreamManager {
     // Sentence buffering for timestamped transcript
     this._textBuffer = '';
     this._textBufferStartMs = null;
+    // Set true after the first transcription.sentence marker is observed.
+    // While true, sentence cuts are driven exclusively by backend markers
+    // (local punctuation-based cutting is disabled).
+    this._sawSentenceMarker = false;
   }
 
   _setState(partial) {
@@ -1022,7 +1026,8 @@ class StreamManager {
                 msgType === 'response.output_audio_transcript.done' ||
                 msgType === 'response.text.done' ||
                 msgType === 'response.audio_transcript.done' ||
-                msgType === 'transcription'
+                msgType === 'transcription' ||
+                msgType === 'transcription.sentence'
               )
             ) {
               return;
@@ -1038,11 +1043,28 @@ class StreamManager {
             ) {
               const delta = typeof message.delta === 'string' ? message.delta : '';
               if (!delta) return;
-              const currentMs = this.state.elapsedMs;
+              // Prefer the server sample-clock timestamp_ms (matches backend DB
+              // and analysis events). Fall back to local elapsedMs for providers
+              // that don't carry timestamp_ms.
+              const serverTs = typeof message.timestamp_ms === 'number' ? message.timestamp_ms : null;
+              const currentMs = serverTs !== null ? serverTs : this.state.elapsedMs;
               if (!this._textBuffer) {
                 this._textBufferStartMs = currentMs;
               }
               this._textBuffer = _appendText(this._textBuffer, delta);
+
+              // When backend-driven sentence cuts are active, do not cut locally;
+              // just render in-progress text. The transcription.sentence handler
+              // will finalize the sentence.
+              if (this._sawSentenceMarker) {
+                this._setState({
+                  partialTranscript: this._textBuffer,
+                  partialTranscriptTimestamp: this._textBuffer ? formatDuration(this._textBufferStartMs) : '',
+                  status: 'Connected.',
+                });
+                return;
+              }
+
               const { sentences, remaining, remainingStartMs } = _processBuffer(
                 this._textBuffer,
                 this._textBufferStartMs,
@@ -1064,6 +1086,34 @@ class StreamManager {
                   status: 'Connected.'
                 });
               }
+            } else if (msgType === 'transcription.sentence') {
+              // Backend-driven sentence cut. Promote any in-progress buffered
+              // text as a sentence using the server-provided end timestamp,
+              // then reset the buffer so the next delta starts a new sentence
+              // at next_start_ts_ms.
+              this._sawSentenceMarker = true;
+              const endTs = typeof message.end_ts_ms === 'number' ? message.end_ts_ms : null;
+              const nextStartTs = typeof message.next_start_ts_ms === 'number'
+                ? message.next_start_ts_ms
+                : endTs;
+              const pending = this._textBuffer.trim();
+              const startTs = typeof this._textBufferStartMs === 'number'
+                ? this._textBufferStartMs
+                : (endTs ?? this.state.elapsedMs);
+              const newEntries = pending
+                ? [
+                    ...this.state.transcriptEntries,
+                    { timestamp: formatDuration(startTs), text: pending },
+                  ]
+                : this.state.transcriptEntries;
+              this._textBuffer = '';
+              this._textBufferStartMs = nextStartTs;
+              this._setState({
+                transcriptEntries: newEntries,
+                partialTranscript: '',
+                partialTranscriptTimestamp: '',
+                status: 'Connected.',
+              });
             } else if (
               msgType === 'transcription.done' ||
               msgType === 'conversation.item.input_audio_transcription.completed' ||
@@ -1072,6 +1122,12 @@ class StreamManager {
               msgType === 'response.text.done' ||
               msgType === 'response.audio_transcript.done'
             ) {
+              // When backend-driven cuts are active, the done event is followed
+              // by a transcription.sentence marker that finalizes any remainder.
+              // Skip the legacy local cutting path to avoid double-cutting.
+              if (this._sawSentenceMarker) {
+                return;
+              }
               const transcript =
                 (typeof message.transcript === 'string' && message.transcript) ||
                 (typeof message.text === 'string' && message.text) ||
@@ -1404,6 +1460,7 @@ class StreamManager {
 
     this._textBuffer = '';
     this._textBufferStartMs = null;
+    this._sawSentenceMarker = false;
     this._setState({
       isStarted: false,
       partialTranscript: '',

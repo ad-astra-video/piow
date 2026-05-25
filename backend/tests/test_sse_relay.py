@@ -964,5 +964,167 @@ class TestSSERelayLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(relay.has_clients)
 
 
+class TestSSERelaySentenceMarkers(unittest.IsolatedAsyncioTestCase):
+    """Test transcription.sentence cut-marker emission."""
+
+    @staticmethod
+    def _make_relay():
+        from sse_relay import SSERelay
+        return SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="marker-test",
+            session_store=AsyncMock(),
+        )
+
+    @staticmethod
+    def _attach_recording_client(relay):
+        ws = AsyncMock()
+        ws.closed = False
+        relay.add_client(ws)
+        return ws
+
+    @staticmethod
+    def _calls(ws):
+        return [call.args[0] for call in ws.send_json.call_args_list]
+
+    async def test_marker_emitted_after_triggering_delta(self):
+        relay = self._make_relay()
+        ws = self._attach_recording_client(relay)
+
+        await relay._handle_event({
+            "event": "message",
+            "data": {"type": "response.output_text.delta", "delta": "Hello", "timestamp_ms": 1000},
+            "id": None,
+        })
+        await relay._handle_event({
+            "event": "message",
+            "data": {"type": "response.output_text.delta", "delta": " world.", "timestamp_ms": 2000},
+            "id": None,
+        })
+
+        calls = self._calls(ws)
+        # First delta: no marker (no boundary yet)
+        # Second delta: relayed, then marker follows
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0]["type"], "response.output_text.delta")
+        self.assertEqual(calls[1]["type"], "response.output_text.delta")
+        self.assertEqual(calls[2]["type"], "transcription.sentence")
+        self.assertEqual(calls[2]["sentence_index"], 0)
+        self.assertEqual(calls[2]["end_ts_ms"], 2000)
+        self.assertEqual(calls[2]["next_start_ts_ms"], 2000)
+
+    async def test_marker_sentence_index_is_monotonic(self):
+        relay = self._make_relay()
+        ws = self._attach_recording_client(relay)
+
+        await relay._handle_event({
+            "event": "message",
+            "data": {"type": "response.output_text.delta", "delta": "First sentence.", "timestamp_ms": 1000},
+            "id": None,
+        })
+        await relay._handle_event({
+            "event": "message",
+            "data": {"type": "response.output_text.delta", "delta": " Second sentence.", "timestamp_ms": 2000},
+            "id": None,
+        })
+        await relay._handle_event({
+            "event": "message",
+            "data": {"type": "response.output_text.delta", "delta": " Third sentence.", "timestamp_ms": 3000},
+            "id": None,
+        })
+
+        markers = [c for c in self._calls(ws) if c.get("type") == "transcription.sentence"]
+        self.assertEqual([m["sentence_index"] for m in markers], [0, 1, 2])
+        self.assertEqual([m["end_ts_ms"] for m in markers], [1000, 2000, 3000])
+
+    async def test_multiple_sentences_in_one_delta_emit_multiple_markers(self):
+        relay = self._make_relay()
+        ws = self._attach_recording_client(relay)
+
+        await relay._handle_event({
+            "event": "message",
+            "data": {
+                "type": "response.output_text.delta",
+                "delta": "First sentence. Second sentence. Third sentence.",
+                "timestamp_ms": 5000,
+            },
+            "id": None,
+        })
+
+        calls = self._calls(ws)
+        # delta then 3 markers
+        self.assertEqual(calls[0]["type"], "response.output_text.delta")
+        markers = [c for c in calls if c.get("type") == "transcription.sentence"]
+        self.assertEqual(len(markers), 3)
+        self.assertEqual([m["sentence_index"] for m in markers], [0, 1, 2])
+        # All cuts share the same end_ts_ms (the triggering delta's timestamp)
+        self.assertTrue(all(m["end_ts_ms"] == 5000 for m in markers))
+
+    async def test_transcription_done_emits_markers_for_closed_and_remainder(self):
+        relay = self._make_relay()
+        ws = self._attach_recording_client(relay)
+
+        await relay._handle_event({
+            "event": "message",
+            "data": {"type": "response.output_text.delta", "delta": "Closed sentence.", "timestamp_ms": 1000},
+            "id": None,
+        })
+        ws.send_json.reset_mock()
+
+        await relay._handle_event({
+            "event": "message",
+            "data": {
+                "type": "response.output_text.done",
+                "transcript": "Closed sentence. Trailing fragment without punctuation",
+                "timestamp_ms": 2000,
+            },
+            "id": None,
+        })
+
+        markers = [c for c in self._calls(ws) if c.get("type") == "transcription.sentence"]
+        # done emits a marker for the trailing remainder
+        self.assertGreaterEqual(len(markers), 1)
+        last_marker = markers[-1]
+        self.assertEqual(last_marker["end_ts_ms"], 2000)
+        # All sentence indices are monotonic past the first delta's marker (index 0)
+        self.assertTrue(all(m["sentence_index"] >= 1 for m in markers))
+
+    async def test_stop_flush_emits_final_marker_for_trailing_fragment(self):
+        relay = self._make_relay()
+        ws = self._attach_recording_client(relay)
+
+        await relay._handle_event({
+            "event": "message",
+            "data": {"type": "response.output_text.delta", "delta": "Unfinished thought", "timestamp_ms": 4000},
+            "id": None,
+        })
+        ws.send_json.reset_mock()
+
+        await relay.drain_pending_translation_work(timeout_seconds=1.0)
+
+        markers = [c for c in self._calls(ws) if c.get("type") == "transcription.sentence"]
+        self.assertEqual(len(markers), 1)
+        self.assertEqual(markers[0]["sentence_index"], 0)
+        self.assertEqual(markers[0]["end_ts_ms"], 4000)
+        self.assertEqual(markers[0]["next_start_ts_ms"], 4000)
+
+    async def test_no_marker_emitted_without_session_store(self):
+        from sse_relay import SSERelay
+        relay = SSERelay(
+            data_url="http://localhost:9999/stream/data",
+            stream_id="no-store",
+        )
+        ws = self._attach_recording_client(relay)
+
+        await relay._handle_event({
+            "event": "message",
+            "data": {"type": "response.output_text.delta", "delta": "Hello world.", "timestamp_ms": 1000},
+            "id": None,
+        })
+
+        markers = [c for c in self._calls(ws) if c.get("type") == "transcription.sentence"]
+        self.assertEqual(markers, [])
+
+
 if __name__ == '__main__':
     unittest.main()
