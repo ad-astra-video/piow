@@ -126,12 +126,9 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     return Array.isArray(entry.signalRows) ? entry.signalRows : [];
   });
   const analysisNarrativeEntries = analysisDisplayEntries.filter((entry) => {
-    // Signal entries with extractable rows render in the dedicated table;
-    // signal entries without rows fall back to narrative display.
-    if (entry.type === 'analysis.signal') {
-      return !Array.isArray(entry.signalRows) || entry.signalRows.length === 0;
-    }
-    return true;
+    // Signal entries always render in the aggregated table (or are dropped if
+    // they have no rows). They never appear as individual narrative cards.
+    return entry.type !== 'analysis.signal';
   });
 
   // Fetch available languages on mount
