@@ -20,13 +20,19 @@ function humanizeKey(key) {
 function parseJsonContent(content) {
   if (typeof content !== 'string') return { parsed: null, isJson: false, text: '' };
 
-  const text = content.trim();
+  let text = content.trim();
   if (!text) return { parsed: null, isJson: false, text: '' };
+
+  // Strip markdown code fences (```json ... ```)
+  const fenceMatch = text.match(/^```(?:\w+)?\s*([\s\S]*?)\s*```$/);
+  if (fenceMatch) {
+    text = fenceMatch[1].trim();
+  }
 
   try {
     return { parsed: JSON.parse(text), isJson: true, text };
   } catch (_error) {
-    return { parsed: null, isJson: false, text };
+    return { parsed: null, isJson: false, text: content.trim() };
   }
 }
 

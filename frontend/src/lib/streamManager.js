@@ -240,39 +240,85 @@ function normalizeSignalCellValue(value) {
   return value == null ? '' : String(value);
 }
 
+function humanizeKey(key) {
+  return String(key || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
 function extractAnalysisSignalRows(signalData, fallbackTimestampMs) {
-  if (!signalData || !Array.isArray(signalData.items)) {
+  if (!signalData || typeof signalData !== 'object') {
     return [];
   }
 
-  return signalData.items
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const rowTimestamp = normalizeSignalTimestamp(item.timestamp, fallbackTimestampMs || 0);
-      return {
+  // Legacy: explicit items array (old schema format)
+  if (Array.isArray(signalData.items)) {
+    return signalData.items
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const rowTimestamp = normalizeSignalTimestamp(item.timestamp, fallbackTimestampMs || 0);
+        return {
+          timestamp: rowTimestamp,
+          category: normalizeSignalCellValue(item.category),
+          item: normalizeSignalCellValue(item.item),
+          priority: normalizeSignalCellValue(item.priority),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  // Auto-generated schema: flatten any array-of-objects into rows
+  const rows = [];
+  const rowTimestamp = normalizeSignalTimestamp(null, fallbackTimestampMs || 0);
+
+  Object.entries(signalData).forEach(([key, value]) => {
+    if (!Array.isArray(value) || value.length === 0) return;
+
+    value.forEach((item) => {
+      if (item == null) return;
+
+      // Array of primitives (e.g., decisions: ["decision1", "decision2"])
+      if (typeof item !== 'object') {
+        rows.push({
+          timestamp: rowTimestamp,
+          category: humanizeKey(key),
+          [key.replace(/s$/, '') || key]: normalizeSignalCellValue(item),
+        });
+        return;
+      }
+
+      // Array of objects (e.g., risks: [{risk, severity, mitigation_plan}])
+      const row = {
         timestamp: rowTimestamp,
-        category: normalizeSignalCellValue(item.category),
-        item: normalizeSignalCellValue(item.item),
-        priority: normalizeSignalCellValue(item.priority),
+        category: humanizeKey(key),
       };
-    })
-    .filter(Boolean);
+      Object.entries(item).forEach(([k, v]) => {
+        row[k] = normalizeSignalCellValue(v);
+      });
+      rows.push(row);
+    });
+  });
+
+  return rows;
 }
 
 function formatAnalysisSignalData(signalData, fallbackTimestampMs) {
   const signalRows = extractAnalysisSignalRows(signalData, fallbackTimestampMs);
   if (signalRows.length > 0) {
+    // Dynamically build markdown table from all row keys
+    const allKeys = new Set();
+    signalRows.forEach((row) => Object.keys(row).forEach((k) => allKeys.add(k)));
+    const columns = Array.from(allKeys);
+
+    const header = `| ${columns.map((c) => humanizeKey(c)).join(' | ')} |`;
+    const separator = `| ${columns.map(() => '---').join(' | ')} |`;
     const rows = signalRows.map((row) => (
-      `| ${escapePipe(row.timestamp)} | ${escapePipe(row.category)} | ${escapePipe(row.item)} | ${escapePipe(row.priority)} |`
+      `| ${columns.map((c) => escapePipe(row[c] ?? '')).join(' | ')} |`
     ));
 
-    if (rows.length > 0) {
-      return [
-        '| Timestamp | Category | Item | Priority |',
-        '| --- | --- | --- | --- |',
-        ...rows,
-      ].join('\n');
-    }
+    return [header, separator, ...rows].join('\n');
   }
 
   return `\`\`\`json\n${JSON.stringify(signalData || {}, null, 2)}\n\`\`\``;

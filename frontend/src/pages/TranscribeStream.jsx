@@ -125,7 +125,14 @@ export default function TranscribeStream({ accessToken, onStreamStopped }) {
     if (entry.type !== 'analysis.signal') return [];
     return Array.isArray(entry.signalRows) ? entry.signalRows : [];
   });
-  const analysisNarrativeEntries = analysisDisplayEntries.filter((entry) => entry.type !== 'analysis.signal');
+  const analysisNarrativeEntries = analysisDisplayEntries.filter((entry) => {
+    // Signal entries with extractable rows render in the dedicated table;
+    // signal entries without rows fall back to narrative display.
+    if (entry.type === 'analysis.signal') {
+      return !Array.isArray(entry.signalRows) || entry.signalRows.length === 0;
+    }
+    return true;
+  });
 
   // Fetch available languages on mount
   useEffect(() => {
