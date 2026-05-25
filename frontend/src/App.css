@@ -1012,6 +1012,7 @@ html, body {
   min-height: 320px;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .analysis-panel-header {
@@ -1102,6 +1103,8 @@ html, body {
   border-left: 3px solid #34d399;
   border-radius: 8px;
   padding: 0.55rem 0.65rem;
+  overflow-x: auto;
+  min-width: 0;
 }
 
 .analysis-entry.error {
@@ -1201,6 +1204,7 @@ html, body {
   font-size: 0.78rem;
   line-height: 1.45;
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .analysis-empty-text {
