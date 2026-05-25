@@ -524,10 +524,18 @@ html, body {
 }
 
 /* Stream page */
+.stream-page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 56px);
+}
+
 .stream-layout {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
+  flex: 1;
+  min-height: 0;
 }
 
 .stream-controls {
@@ -838,7 +846,7 @@ html, body {
 .stat-strip article strong { font-size: 0.95rem; }
 .compact-strip { margin-bottom: 0.75rem; }
 
-.transcript-panel { padding: 0 1.25rem 1.25rem; min-height: 320px; display: flex; flex-direction: column; }
+.transcript-panel { padding: 0 1.25rem 1.25rem; height: 90px; min-height: 60px; max-height: 300px; resize: vertical; overflow: hidden; display: flex; flex-direction: column; }
 .transcript-heading { margin-bottom: 0.75rem; justify-content: space-between; align-items: center; }
 
 .stream-live-panels {
@@ -848,8 +856,11 @@ html, body {
 }
 
 .stream-live-panels.analysis-open {
-  grid-template-columns: 1fr 1fr;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
 }
 
 .transcript-session-bar {
@@ -1009,10 +1020,12 @@ html, body {
 
 .analysis-panel {
   padding: 1rem;
-  min-height: 320px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  overflow: hidden;
 }
 
 .analysis-panel-header {
@@ -1094,7 +1107,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
-  max-height: 420px;
+  min-height: 0;
 }
 
 .analysis-entry {
@@ -1105,6 +1118,7 @@ html, body {
   padding: 0.55rem 0.65rem;
   overflow-x: auto;
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .analysis-entry.error {
@@ -1145,9 +1159,9 @@ html, body {
 }
 
 .analysis-signals-table {
-  width: 100%;
+  width: max-content;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .analysis-signals-table th,
@@ -1157,6 +1171,7 @@ html, body {
   font-size: 0.8rem;
   vertical-align: top;
   text-align: left;
+  white-space: nowrap;
 }
 
 .analysis-signals-table th {
@@ -1172,20 +1187,12 @@ html, body {
 
 .analysis-signals-table th:nth-child(1),
 .analysis-signals-table td:nth-child(1) {
-  width: 90px;
-  white-space: nowrap;
+  min-width: 90px;
 }
 
 .analysis-signals-table th:nth-child(2),
 .analysis-signals-table td:nth-child(2) {
-  width: 95px;
-  white-space: nowrap;
-}
-
-.analysis-signals-table th:nth-child(4),
-.analysis-signals-table td:nth-child(4) {
-  width: 90px;
-  white-space: nowrap;
+  min-width: 95px;
 }
 
 .analysis-table-empty {
@@ -2452,7 +2459,7 @@ html, body {
 /* Responsive */
 @media (max-width: 600px) {
   .stream-live-panels.analysis-open {
-    grid-template-columns: 1fr;
+    flex-direction: column;
   }
 
   .main-content { padding: 0.75rem; }
