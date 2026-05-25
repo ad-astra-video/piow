@@ -1056,7 +1056,7 @@ def _stream_has_billable_activity(row: Dict[str, Any]) -> bool:
     return bool(segments)
 
 
-def _get_stream_usage_multiplier(stream_data: Dict[str, Any]) -> int:
+def _get_stream_usage_multiplier(stream_data: Dict[str, Any]) -> float:
     """Usage multiplier: 2x only when transcription and analysis are both enabled."""
     if not stream_data:
         return 1
@@ -1066,7 +1066,7 @@ def _get_stream_usage_multiplier(stream_data: Dict[str, Any]) -> int:
     analysis_settings = settings.get("analysis") or {}
 
     if bool(transcription_settings.get("enabled", True)) and bool(analysis_settings.get("enabled", False)):
-        return 2
+        return 1.75
 
     return 1
 
