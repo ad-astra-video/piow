@@ -376,12 +376,10 @@ export default function HistoryPage() {
     return (modalItem?.text || '').trim();
   };
 
-  const getFullAnalysisText = () => {
-    if (modalAnalysisEntries.length > 0) {
-      return modalAnalysisEntries
-        .map((entry) => (typeof entry?.summary_text === 'string' ? entry.summary_text.trim() : ''))
-        .filter(Boolean)
-        .join('\n\n');
+  const getLatestAnalysisText = () => {
+    if (typeof latestModalAnalysis?.summary_text === 'string') {
+      const latest = latestModalAnalysis.summary_text.trim();
+      if (latest) return latest;
     }
     return (modalItem?.analysis_summary_text || getCardAnalysisPreviewText(modalItem || {}) || '').trim();
   };
@@ -624,12 +622,12 @@ export default function HistoryPage() {
                   {modalAnalysisLoading && <p className="history-analysis-status">Loading analysis…</p>}
                   {!modalAnalysisLoading && modalAnalysisError && <p className="history-analysis-error">{modalAnalysisError}</p>}
 
-                  {!modalAnalysisLoading && (latestModalAnalysis || getFullAnalysisText()) && (
+                  {!modalAnalysisLoading && (latestModalAnalysis || getLatestAnalysisText()) && (
                     <div className="history-full-text-block">
-                      <p className="history-modal-section-label">Full analysis</p>
+                      <p className="history-modal-section-label">Latest analysis</p>
                       <div className="history-analysis-text">
                         <AnalysisContent
-                          content={getFullAnalysisText()}
+                          content={getLatestAnalysisText()}
                           responseFormat={modalAnalysisResponseFormat}
                           emptyMessage="No analysis text available."
                         />
