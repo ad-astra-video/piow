@@ -7,6 +7,108 @@ import { downloadTranscription } from '../lib/download';
 import SentenceList from '../components/SentenceList';
 import { splitSentences, parseTranscriptSentences } from '../lib/download';
 
+function parseSignalSummaryPayload(rawSummaryText) {
+  if (typeof rawSummaryText !== 'string') return null;
+  const trimmed = rawSummaryText.trim();
+  if (!trimmed) return null;
+
+  const fencedMatch = trimmed.match(/^```(?:\w+)?\s*([\s\S]*?)\s*```$/);
+  const payloadText = fencedMatch ? fencedMatch[1].trim() : trimmed;
+
+  try {
+    return JSON.parse(payloadText);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function formatSignalTimestamp(value, fallbackTimestampMs) {
+  const fallbackDate = Number.isFinite(fallbackTimestampMs) ? new Date(fallbackTimestampMs) : null;
+  const fallbackTimeLabel = fallbackDate && !Number.isNaN(fallbackDate.getTime())
+    ? fallbackDate.toLocaleTimeString()
+    : '00:00';
+
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim();
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleTimeString();
+    }
+  }
+
+  return fallbackTimeLabel;
+}
+
+function normalizeSignalCellValue(value) {
+  return value == null ? '' : String(value);
+}
+
+function humanizeSignalKey(key) {
+  return String(key || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function extractSignalRowsFromPayload(signalPayload, fallbackTimestampMs) {
+  if (!signalPayload || typeof signalPayload !== 'object') {
+    return [];
+  }
+
+  if (Array.isArray(signalPayload.items)) {
+    return signalPayload.items
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        return {
+          timestamp: formatSignalTimestamp(item.timestamp, fallbackTimestampMs),
+          category: normalizeSignalCellValue(item.category),
+          item: normalizeSignalCellValue(item.item),
+          priority: normalizeSignalCellValue(item.priority),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  const rows = [];
+  const rowTimestamp = formatSignalTimestamp(null, fallbackTimestampMs);
+
+  Object.entries(signalPayload).forEach(([key, value]) => {
+    if (!Array.isArray(value) || value.length === 0) return;
+
+    value.forEach((item) => {
+      if (item == null) return;
+
+      if (typeof item !== 'object') {
+        rows.push({
+          timestamp: rowTimestamp,
+          category: humanizeSignalKey(key),
+          [key.replace(/s$/, '') || key]: normalizeSignalCellValue(item),
+        });
+        return;
+      }
+
+      const row = {
+        timestamp: rowTimestamp,
+        category: humanizeSignalKey(key),
+      };
+      Object.entries(item).forEach(([itemKey, itemValue]) => {
+        row[itemKey] = normalizeSignalCellValue(itemValue);
+      });
+      rows.push(row);
+    });
+  });
+
+  return rows;
+}
+
+function isSignalAnalysisEntry(entry) {
+  return entry?.source_event_type === 'analysis.signal';
+}
+
 export default function HistoryPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -112,9 +214,7 @@ export default function HistoryPage() {
         ? analysisResult.value.analysis
         : [];
       setModalAnalysisResponseFormat(analysisResult.value?.response_format || item.analysis_response_format || null);
-      setModalAnalysisEntries(
-        analysisRows.filter((entry) => typeof entry?.summary_text === 'string' && entry.summary_text.trim())
-      );
+      setModalAnalysisEntries(analysisRows);
       setModalAnalysisError('');
     } else {
       setModalAnalysisEntries([]);
@@ -220,9 +320,10 @@ export default function HistoryPage() {
           const { cardId } = batch[idx];
           if (result.status === 'fulfilled') {
             const rows = Array.isArray(result.value?.analysis) ? result.value.analysis : [];
+            const narrativeRows = rows.filter((entry) => !isSignalAnalysisEntry(entry));
+            const previewRows = (narrativeRows.length > 0 ? narrativeRows : rows).slice(0, 10);
             responseFormatByCardId[cardId] = result.value?.response_format || null;
-            previewByCardId[cardId] = rows
-              .slice(0, 10)
+            previewByCardId[cardId] = previewRows
               .map((entry) => (typeof entry?.summary_text === 'string' ? entry.summary_text.trim() : ''))
               .filter(Boolean)
               .join('\n\n');
@@ -356,8 +457,29 @@ export default function HistoryPage() {
     return '';
   };
 
-  const latestModalAnalysis = modalAnalysisEntries.length > 0 ? modalAnalysisEntries[0] : null;
-  const olderModalAnalyses = modalAnalysisEntries.slice(1);
+  const modalAnalysisSignalRows = useMemo(() => {
+    const rows = [];
+    modalAnalysisEntries.forEach((entry) => {
+      if (!isSignalAnalysisEntry(entry)) return;
+      const payload = parseSignalSummaryPayload(entry?.summary_text);
+      if (!payload) return;
+      const fallbackTimestampMs = typeof entry?.timestamp_ms === 'number'
+        ? entry.timestamp_ms
+        : Date.parse(entry?.created_at || '');
+      rows.push(...extractSignalRowsFromPayload(payload, fallbackTimestampMs));
+    });
+    return rows;
+  }, [modalAnalysisEntries]);
+
+  const modalAnalysisNarrativeEntries = useMemo(() => {
+    return modalAnalysisEntries.filter((entry) => {
+      if (isSignalAnalysisEntry(entry)) return false;
+      return typeof entry?.summary_text === 'string' && entry.summary_text.trim();
+    });
+  }, [modalAnalysisEntries]);
+
+  const latestModalAnalysis = modalAnalysisNarrativeEntries.length > 0 ? modalAnalysisNarrativeEntries[0] : null;
+  const olderModalAnalyses = modalAnalysisNarrativeEntries.slice(1);
 
   const getCardAnalysisResponseFormat = (item) => {
     const cardId = getCardId(item);
@@ -621,6 +743,20 @@ export default function HistoryPage() {
 
                   {modalAnalysisLoading && <p className="history-analysis-status">Loading analysis…</p>}
                   {!modalAnalysisLoading && modalAnalysisError && <p className="history-analysis-error">{modalAnalysisError}</p>}
+
+                  {!modalAnalysisLoading && modalAnalysisSignalRows.length > 0 && (
+                    <div className="history-full-text-block">
+                      <p className="history-modal-section-label">Signal table</p>
+                      <div className="history-analysis-text">
+                        <AnalysisContent
+                          content=""
+                          responseFormat={modalAnalysisResponseFormat}
+                          signalRows={modalAnalysisSignalRows}
+                          emptyMessage="No analysis rows available."
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   {!modalAnalysisLoading && (latestModalAnalysis || getLatestAnalysisText()) && (
                     <div className="history-full-text-block">
