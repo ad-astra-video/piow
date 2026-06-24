@@ -1,0 +1,136 @@
+services:
+  orchestrator:
+    image: livepeer/go-livepeer:ja-live-runner
+    command:
+      - -orchestrator
+      - -useLiveRunners
+      - -serviceAddr=127.0.0.1:8935
+      - -httpAddr=0.0.0.0:8935
+      - -liveRunnerAddr=https://orchestrator:8935
+      - -orchSecret=${LIVERUNNER_SECRET}
+      - -network=offchain
+      - -monitor=false
+      - -v=6
+    ports:
+      - "8935:8935"
+      - "8935:8935/udp"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "https://localhost:8935/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+  worker_v2:
+    build:
+      context: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - HOST_IP=${HOST_IP:-127.0.0.1}
+      - WORKER_PORT=8000
+      - VLLM_WS_URL=ws://vllm:6000/v1/realtime
+      - GEMMA_VLLM_BASE_URL=http://gemma-vllm:${GEMMA_VLLM_PORT:-6100}
+      - LIVERUNNER_ORCHESTRATOR=https://orchestrator:8935
+      - LIVERUNNER_URL=http://worker_v2:8000
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+      vllm:
+        condition: service_healthy
+      gemma-vllm:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${WORKER_GPUS}"]
+              capabilities: [gpu]
+
+  gemma-vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+    ports:
+      - "6100:6100"
+    ipc: "host"
+    command:
+      - "--model"
+      - "${GEMMA_VLLM_MODEL}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "${GEMMA_VLLM_PORT}"
+      - "--gpu-memory-utilization"
+      - "${GEMMA_VLLM_GPU_MEMORY_UTILIZATION}"
+      - "--max-model-len"
+      - "${GEMMA_VLLM_MAX_MODEL_LEN}"
+      - "--limit-mm-per-prompt"
+      - '{"image": 30, "audio": 5}'
+      - "--trust-remote-code"
+    volumes:
+      - vllm_models:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GEMMA_VLLM_GPUS}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${GEMMA_VLLM_PORT}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+
+  vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+    ports:
+      - "6000:6000"
+    ipc: "host"
+    command:
+      - "--model"
+      - "mistralai/Voxtral-Mini-4B-Realtime-2602"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "6000"
+      - "--gpu-memory-utilization"
+      - "${REALTIME_GPU_MEMORY_UTILIZATION}"
+      - "--max-model-len"
+      - "16384"
+      - "--tokenizer-mode"
+      - "mistral"
+      - "--enforce-eager"
+      - "--trust-remote-code"
+    volumes:
+      - vllm_models:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${REALTIME_GPUS}"]
+              capabilities: [gpu]
+        limits:
+          cpus: "4.0"
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+
+volumes:
+  vllm_models:
