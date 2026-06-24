@@ -116,6 +116,7 @@ export default function HistoryPage() {
   const [search, setSearch] = useState('');
   const [cardViewById, setCardViewById] = useState({});
   const [cardAnalysisPreviewById, setCardAnalysisPreviewById] = useState({});
+  const [cardAnalysisSignalRowsById, setCardAnalysisSignalRowsById] = useState({});
   const [cardAnalysisResponseFormatById, setCardAnalysisResponseFormatById] = useState({});
   const [cardAnalysisLoadingById, setCardAnalysisLoadingById] = useState({});
   const [cardAnalysisErrorById, setCardAnalysisErrorById] = useState({});
@@ -282,8 +283,9 @@ export default function HistoryPage() {
       const streamId = item.stream_session_id || item.stream_id || item.id;
       if (!streamId) continue;
 
-      const hasExisting = Boolean(item.analysis_summary_text || cardAnalysisPreviewById[cardId]);
-      if (!force && hasExisting) continue;
+      const hasCachedPreview = Object.prototype.hasOwnProperty.call(cardAnalysisPreviewById, cardId);
+      const hasCachedSignalRows = Object.prototype.hasOwnProperty.call(cardAnalysisSignalRowsById, cardId);
+      if (!force && hasCachedPreview && hasCachedSignalRows) continue;
       if (cardAnalysisLoadingById[cardId]) continue;
 
       requests.push({ cardId, streamId: String(streamId) });
@@ -307,13 +309,14 @@ export default function HistoryPage() {
     try {
       const CHUNK_SIZE = 10;
       const previewByCardId = {};
+      const signalRowsByCardId = {};
       const responseFormatByCardId = {};
       const errorByCardId = {};
 
       for (let i = 0; i < requests.length; i += CHUNK_SIZE) {
         const batch = requests.slice(i, i + CHUNK_SIZE);
         const settled = await Promise.allSettled(
-          batch.map(({ streamId }) => api.getStreamAnalysis(streamId, { limit: 10 }))
+          batch.map(({ streamId }) => api.getStreamAnalysis(streamId))
         );
 
         settled.forEach((result, idx) => {
@@ -321,8 +324,18 @@ export default function HistoryPage() {
           if (result.status === 'fulfilled') {
             const rows = Array.isArray(result.value?.analysis) ? result.value.analysis : [];
             const narrativeRows = rows.filter((entry) => !isSignalAnalysisEntry(entry));
-            const previewRows = (narrativeRows.length > 0 ? narrativeRows : rows).slice(0, 10);
+            const previewRows = narrativeRows.slice(0, 10);
+            const aggregatedSignalRows = rows.flatMap((entry) => {
+              if (!isSignalAnalysisEntry(entry)) return [];
+              const payload = parseSignalSummaryPayload(entry?.summary_text);
+              if (!payload) return [];
+              const fallbackTimestampMs = typeof entry?.timestamp_ms === 'number'
+                ? entry.timestamp_ms
+                : Date.parse(entry?.created_at || '');
+              return extractSignalRowsFromPayload(payload, fallbackTimestampMs);
+            });
             responseFormatByCardId[cardId] = result.value?.response_format || null;
+            signalRowsByCardId[cardId] = aggregatedSignalRows;
             previewByCardId[cardId] = previewRows
               .map((entry) => (typeof entry?.summary_text === 'string' ? entry.summary_text.trim() : ''))
               .filter(Boolean)
@@ -336,6 +349,10 @@ export default function HistoryPage() {
       setCardAnalysisPreviewById((current) => ({
         ...current,
         ...previewByCardId,
+      }));
+      setCardAnalysisSignalRowsById((current) => ({
+        ...current,
+        ...signalRowsByCardId,
       }));
       setCardAnalysisResponseFormatById((current) => ({
         ...current,
@@ -488,7 +505,12 @@ export default function HistoryPage() {
 
   const getCardAnalysisPreviewText = (item) => {
     const cardId = getCardId(item);
-    return item.analysis_summary_text || cardAnalysisPreviewById[cardId] || '';
+    return cardAnalysisPreviewById[cardId] || '';
+  };
+
+  const getCardAnalysisSignalRows = (item) => {
+    const cardId = getCardId(item);
+    return Array.isArray(cardAnalysisSignalRowsById[cardId]) ? cardAnalysisSignalRowsById[cardId] : [];
   };
 
   const getFullTranscriptionText = () => {
@@ -577,14 +599,24 @@ export default function HistoryPage() {
                 </div>
                 <div className="history-sentences preview" onClick={() => openModal(item)}>
                   {getCardView(item) === 'analysis' && item.has_analysis ? (
-                    getCardAnalysisPreviewText(item) ? (
+                    (getCardAnalysisSignalRows(item).length > 0 || getCardAnalysisPreviewText(item)) ? (
                       <div className="history-analysis-preview">
                         <p className="history-analysis-preview-label">Latest analysis</p>
+                        {getCardAnalysisSignalRows(item).length > 0 && (
+                          <AnalysisContent
+                            content=""
+                            responseFormat={getCardAnalysisResponseFormat(item)}
+                            signalRows={getCardAnalysisSignalRows(item)}
+                            emptyMessage="No analysis rows available."
+                          />
+                        )}
+                        {getCardAnalysisPreviewText(item) && (
                         <AnalysisContent
                           content={getCardAnalysisPreviewText(item)}
                           responseFormat={getCardAnalysisResponseFormat(item)}
                           emptyMessage="No analysis text available."
                         />
+                        )}
                       </div>
                     ) : cardAnalysisLoadingById[getCardId(item)] ? (
                       <div className="history-analysis-preview">
